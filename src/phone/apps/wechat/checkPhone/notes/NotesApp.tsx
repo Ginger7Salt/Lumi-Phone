@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ComponentProps } from 'react'
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
 import { ChevronLeft, Sparkles, Trash2 } from 'lucide-react'
 import { useCurrentApiConfig } from '../../../api/ApiSettingsContext'
@@ -152,9 +152,21 @@ export function NotesApp({
               <motion.div
                 key={`detail-overlay-${activeMemo.id}`}
                 className="fixed inset-0 z-[1412] overflow-y-auto"
-                initial={{ opacity: 0, backdropFilter: 'blur(0px)', WebkitBackdropFilter: 'blur(0px)' }}
-                animate={{ opacity: 1, backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
-                exit={{ opacity: 0, backdropFilter: 'blur(0px)', WebkitBackdropFilter: 'blur(0px)' }}
+                initial={
+                  { opacity: 0, backdropFilter: 'blur(0px)', WebkitBackdropFilter: 'blur(0px)' } as ComponentProps<
+                    typeof motion.div
+                  >['initial']
+                }
+                animate={
+                  { opacity: 1, backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' } as ComponentProps<
+                    typeof motion.div
+                  >['animate']
+                }
+                exit={
+                  { opacity: 0, backdropFilter: 'blur(0px)', WebkitBackdropFilter: 'blur(0px)' } as ComponentProps<
+                    typeof motion.div
+                  >['exit']
+                }
                 transition={{ type: 'spring', stiffness: 200, damping: 25, mass: 0.5 }}
                 style={{ willChange: 'opacity, backdrop-filter' }}
               >

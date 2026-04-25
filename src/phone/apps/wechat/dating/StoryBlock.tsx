@@ -32,13 +32,6 @@ const suppressSystemTextUi: {
   onContextMenu: (e) => e.preventDefault(),
 }
 
-/** 禁止系统文本选中 / iOS 长按「拷贝、查询…」浮层，仅保留应用内长按菜单 */
-const NO_SYSTEM_TEXT_STYLE: React.CSSProperties = {
-  WebkitUserSelect: 'none',
-  userSelect: 'none',
-  WebkitTouchCallout: 'none',
-}
-
 function countPlotCharsExcludePunctuation(text: string): number {
   let n = 0
   for (const ch of text) {

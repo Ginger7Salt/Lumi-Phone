@@ -62,7 +62,6 @@ export function AssetChart({
 
   const values = useMemo(() => series.map((d) => d.value), [series])
   const { pts, min, max } = useMemo(() => buildPoints(values, width, height, padX, padY), [values])
-  const dLine = useMemo(() => linePath(pts), [pts])
   const dArea = useMemo(() => areaPath(pts, height, padY), [pts])
 
   const gold = '#b69457'

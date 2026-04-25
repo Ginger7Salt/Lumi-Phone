@@ -143,7 +143,9 @@ export function WalletBankCardsPage({ onBack }: { onBack: () => void }) {
 
       {sheetOpen ? (
         <div className="absolute inset-0 z-30 flex flex-col justify-end bg-black/25">
-          <Pressable type="button" onClick={() => setSheetOpen(false)} className="min-h-0 flex-1" />
+          <Pressable type="button" onClick={() => setSheetOpen(false)} className="min-h-0 flex-1" aria-label="关闭">
+            <span className="sr-only">关闭</span>
+          </Pressable>
           <div className="rounded-t-[28px] bg-white px-5 pb-6 pt-5">
             <p className="text-center text-[16px] font-semibold text-black">添加银行卡</p>
             <p className="mt-2 text-center text-[12px] text-gray-400">每家银行最多 {maxCardsPerBank} 张</p>

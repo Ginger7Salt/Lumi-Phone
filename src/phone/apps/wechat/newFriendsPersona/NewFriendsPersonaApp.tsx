@@ -1274,6 +1274,7 @@ function PersonaEditPage({
         setApiMissingOpen(true)
         return
       }
+      if (!data) return
       const identityContext =
         data.playerIdentityId && data.playerIdentityId.trim()
           ? await personaDb.getPlayerIdentity(data.playerIdentityId)

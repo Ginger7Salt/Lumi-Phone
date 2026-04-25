@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { CreditCard, HeartHandshake, Landmark, Plus, Settings2, ReceiptText, ChevronRight } from 'lucide-react'
+import { CreditCard, HeartHandshake, Settings2, ReceiptText, ChevronRight } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'

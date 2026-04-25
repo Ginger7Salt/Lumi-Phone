@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Bold, Eraser, Highlighter, Italic, Minus, Plus, Redo2, Strikethrough, Underline, Undo2 } from 'lucide-react'
 
-import type { ApiConfig } from '../api/types'
+import type { ApiConfig } from '../../api/types'
 import type { ScheduleTable, TableCell, TableCellStyle } from '../newFriendsPersona/types'
 import { cloneScheduleTemplate, SCHEDULE_TEMPLATE_DAILY, SCHEDULE_TEMPLATE_STUDENT } from './scheduleTemplates'
 import { requestScheduleTableFromAi } from '../wechatChatAi'
@@ -174,10 +174,6 @@ function rangeRect(a: { r: number; c: number }, b: { r: number; c: number }) {
   return { r0, r1, c0, c1 }
 }
 
-function inRect(rc: { r: number; c: number }, rect: { r0: number; r1: number; c0: number; c1: number }) {
-  return rc.r >= rect.r0 && rc.r <= rect.r1 && rc.c >= rect.c0 && rc.c <= rect.c1
-}
-
 function spanCoversCell(anchor: { r: number; c: number; rowspan: number; colspan: number }, cell: { r: number; c: number }): boolean {
   return (
     cell.r >= anchor.r &&
@@ -230,7 +226,7 @@ export function ScheduleEditorScreen({
   // ---- Undo / Redo（最多 20 步）----
   const undoPastRef = useRef<ScheduleTable[]>([])
   const undoFutureRef = useRef<ScheduleTable[]>([])
-  const [undoTick, setUndoTick] = useState(0)
+  const [, setUndoTick] = useState(0)
   const MAX_UNDO = 20
 
   const canUndo = undoPastRef.current.length > 0

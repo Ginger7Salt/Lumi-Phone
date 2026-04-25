@@ -3250,13 +3250,14 @@ function WeChatAppInner({ onBack }: Props) {
   /** 转账页对方信息 */
   const lumiTransferPeer = useMemo(() => {
     if (route.name !== 'lumi-transfer') return null
-    if (route.chat.kind === 'lumi') {
+    const chat = route.chat
+    if (chat.kind === 'lumi') {
       return weChatMergedContacts?.find((c) => c.id === 'wechat-lumi-assistant') ?? WECHAT_LUMI_ASSISTANT_CONTACT
     }
-    const row = state.wechatPersonaContacts.find((c) => c.characterId === route.chat.characterId)
+    const row = state.wechatPersonaContacts.find((c) => c.characterId === chat.characterId)
     if (!row) {
       return {
-        id: `persona-${route.chat.characterId}`,
+        id: `persona-${chat.characterId}`,
         remarkName: '聊天',
         avatarUrl: undefined as string | undefined,
       }
@@ -3690,7 +3691,6 @@ function WeChatAppInner({ onBack }: Props) {
       setBusyDetailOpen(false)
       return
     }
-    const now = getCurrentTimeMs()
     const row = await personaDb.getCharacterBusySettings(activeConversationCharacterId)
     if (!row?.isBusy) {
       setBusyDetailOpen(false)

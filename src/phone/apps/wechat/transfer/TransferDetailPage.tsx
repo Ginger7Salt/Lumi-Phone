@@ -37,7 +37,7 @@ export function TransferDetailPage({
   onBack: () => void
 }) {
   const [rec, setRec] = useState<LumiTransferRecord | null>(() => getLumiTransferFresh(transferId, getCurrentTime))
-  const [tick, setTick] = useState(0)
+  const [, setTick] = useState(0)
 
   const refresh = useCallback(() => {
     setRec(getLumiTransferFresh(transferId, getCurrentTime))

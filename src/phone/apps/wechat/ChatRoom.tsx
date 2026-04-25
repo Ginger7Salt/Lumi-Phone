@@ -1080,7 +1080,7 @@ export function ChatRoom({
   const opponentQueueStopRef = useRef(false)
   const oldestMsgTsRef = useRef<number | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
-  const [historyExhausted, setHistoryExhausted] = useState(false)
+  const [, setHistoryExhausted] = useState(false)
   const [hasOlderHistory, setHasOlderHistory] = useState(false)
   const [visibleMsgLimit, setVisibleMsgLimit] = useState(CHAT_VISIBLE_MSG_INITIAL)
   const topSentinelRef = useRef<HTMLDivElement>(null)

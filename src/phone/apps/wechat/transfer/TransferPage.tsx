@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
 import { personaDb } from '../newFriendsPersona/idb'
-import { WECHAT_LUMI_PEER_CHARACTER_ID } from '../wechatConversationKey'
 import { CustomNumericKeyboard } from '../redPacket/CustomNumericKeyboard'
 import { maskRealName } from '../redPacket/maskRealName'
 import { TransferPasswordSheet } from './TransferPasswordSheet'

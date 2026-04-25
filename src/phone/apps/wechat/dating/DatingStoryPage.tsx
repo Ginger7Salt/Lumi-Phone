@@ -220,20 +220,19 @@ export function DatingStoryPage({ onBackToSelect }: Props) {
   }, [floorsDraft, floorsDisplay, persistPlotTail])
 
   const buildTranscriptFromDatingPlots = useCallback((): ChatTranscriptTurn[] => {
-    return currentArchive.plots
-      .slice(-24)
-      .map((p) => {
-        const raw = String(p.content || '').trim()
-        if (!raw) return null
-        const text = p.type === 'ai' ? splitDatingAssistantOutput(raw).content.trim() : raw
-        if (!text) return null
-        return {
-          id: p.id,
-          from: p.type === 'player' ? ('self' as const) : ('other' as const),
-          text,
-        }
+    const out: ChatTranscriptTurn[] = []
+    for (const p of currentArchive.plots.slice(-24)) {
+      const raw = String(p.content || '').trim()
+      if (!raw) continue
+      const text = p.type === 'ai' ? splitDatingAssistantOutput(raw).content.trim() : raw
+      if (!text) continue
+      out.push({
+        id: p.id,
+        from: p.type === 'player' ? ('self' as const) : ('other' as const),
+        text,
       })
-      .filter((x): x is ChatTranscriptTurn => !!x)
+    }
+    return out
   }, [currentArchive.plots])
 
   const generateHeartWhisper = useCallback(async () => {

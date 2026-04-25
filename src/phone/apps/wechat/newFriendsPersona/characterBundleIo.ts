@@ -6,7 +6,6 @@ import type {
   WorldBackground,
 } from './types'
 import { emitWeChatStorageChanged, personaDb } from './idb'
-import { wechatConversationKey } from '../wechatConversationKey'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { uid } from './utils'
 
