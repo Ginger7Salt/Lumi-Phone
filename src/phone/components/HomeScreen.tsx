@@ -603,7 +603,7 @@ export function HomeScreen({ onOpenApp }: Props) {
     setHoverSlotIndex(target.zone === 'desktop' ? target.index : null)
   }, [])
 
-  const handlePointerDragStart = useCallback((id: AppSlot['id'], source: DropTarget, event: React.PointerEvent<HTMLDivElement | HTMLButtonElement>) => {
+  const handlePointerDragStart = useCallback((id: AppSlot['id'], source: DropTarget, event: React.PointerEvent<HTMLElement>) => {
     const tileNode = tileNodeMapRef.current.get(id)
     if (!tileNode) return
     const rect = tileNode.getBoundingClientRect()
