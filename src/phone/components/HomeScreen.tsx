@@ -240,7 +240,7 @@ type SortableDesktopTileProps = {
   onOpenApp: (id: AppSlot['id']) => void
   onEnterEditMode: (id: AppSlot['id']) => void
   registerNode: (id: AppSlot['id'], node: HTMLDivElement | null) => void
-  onPointerDragStart: (id: AppSlot['id'], event: React.PointerEvent<HTMLDivElement>) => void
+  onPointerDragStart: (id: AppSlot['id'], event: React.PointerEvent<HTMLElement>) => void
 }
 
 function SortableDesktopTile({
