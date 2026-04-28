@@ -157,6 +157,10 @@ function itemsToTranscript(items: ChatItem[]): ChatTranscriptTurn[] {
   return items
     .filter((x): x is ChatMsg => x.kind === 'msg')
     .map((m) => {
+      if (m.isRecalled) {
+        const who = m.from === 'self' ? '用户' : '对方'
+        return { id: m.id, from: m.from, text: `（${who}撤回了一条消息）` }
+      }
       if (m.voice) {
         const txt = m.voice.transcriptText?.trim() || m.text?.trim() || '（语音）'
         const emo = m.voice.emotionLabel?.trim()
@@ -346,7 +350,10 @@ function rebuildChatItemsWithTimestamps(msgs: ChatMsg[], formatWxTimeLabel: (ts:
   return next
 }
 
-function messagePlainPreview(msg: Pick<ChatMsg, 'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice'>): string {
+function messagePlainPreview(
+  msg: Pick<ChatMsg, 'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'isRecalled'>,
+): string {
+  if (msg.isRecalled) return '该消息已撤回'
   if (msg.transfer) return '[转账]'
   if (msg.callStatus) return '[通话]'
   if (msg.voice) return `[语音] ${Math.max(1, Math.round(msg.voice.durationSec || 1))}"`
@@ -1646,6 +1653,14 @@ export function ChatRoom({
         new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 300)),
       ])
       if (!msg) return null
+      if (msg.isRecalled) {
+        return {
+          messageId: msg.id,
+          senderName: resolveSenderName(msg.type === 'player'),
+          content: '该消息已撤回',
+          isUser: msg.type === 'player',
+        }
+      }
       const rp = msg.redPacket
       const snap = rp
         ? (`[红包] ${(rp.remark ?? '').trim()}`.trim() || '[红包]').slice(0, 300)
@@ -1792,6 +1807,16 @@ export function ChatRoom({
           return
         }
         case 'quote': {
+          const localQuote = itemsRef.current.find((it): it is ChatMsg => it.kind === 'msg' && it.id === mid)
+          if (localQuote?.isRecalled) {
+            showCenterToast('已撤回的消息无法引用')
+            return
+          }
+          const rowQuote = await personaDb.getWeChatChatMessageById(mid)
+          if (rowQuote?.isRecalled) {
+            showCenterToast('已撤回的消息无法引用')
+            return
+          }
           const meta = await buildReplyMetaById(mid)
           if (!meta) {
             showCenterToast('该消息不存在或已被删除')
@@ -1830,6 +1855,7 @@ export function ChatRoom({
           const original = row.content?.trim() || row.originalContent?.trim() || ''
           pendingRecalledUserTextRef.current = original
           await personaDb.patchWeChatChatMessageById(mid, {
+            content: '',
             isRecalled: true,
             recalledBy: 'player',
             recallTimestamp: recalledAt,
@@ -2333,10 +2359,17 @@ export function ChatRoom({
             })()
             const mergedReplyBias = [roundReplyBias, voiceEmotionBias].filter((x) => x.trim()).join('\n\n')
             const recallPreview = pendingRecalledUserTextRef.current?.trim() || ''
+            const recallVagueShape = (() => {
+              if (!recallPreview) return ''
+              const n = recallPreview.length
+              if (n <= 6) return '你只觉得那条气泡非常短，像一句直球或一句狠话。'
+              if (n <= 24) return '你只觉得那条不长，像吐槽、撒娇或一句追问。'
+              return '你只觉得那条不算短，但规则禁止你还原任何原词。'
+            })()
             const recallBias = recallPreview
               ? Math.random() < 0.2
-                ? `[系统提示] 用户刚刚撤回了一条消息，内容是：'${recallPreview}'。你的眼速很快，在撤回前看到了这句话。请在接下来的回复中，根据你的人设，选择是故意戳穿ta、暗暗窃喜，还是装作没看见。`
-                : `[系统提示] 用户刚刚撤回了一条消息，但你没看清内容。你可以选择好奇地追问“你刚才撤回了什么？”，或者不予理会。`
+                ? `[系统提示] 用户刚刚撤回了一条私聊消息；你手快，在消失前**瞥到一点氛围**（${recallVagueShape}）**硬性约束**：正文里**禁止**复述撤回原文、**禁止**用加粗/引号复刻措辞、**禁止**使用 \`[引用:消息ID]\` 指向该条或任何等价「引用条」展示原文；只能用人设口吻**旁敲侧击**一句（如「撤回什么呢，我都看见了」「当我瞎？」），让读者感觉你瞄到了又不当众拆穿。`
+                : `[系统提示] 用户刚刚撤回了一条消息，你没看清具体内容。**禁止**假装你看见了原文、**禁止**复述臆测的具体措辞；可以好奇追问，或照常接话。`
               : ''
             const finalReplyBias = [mergedReplyBias, recallBias].filter((x) => x.trim()).join('\n\n')
             pendingRecalledUserTextRef.current = null
@@ -2539,6 +2572,7 @@ export function ChatRoom({
                   original = local?.originalText?.trim() || local?.text?.trim() || ''
                 }
                 await personaDb.patchWeChatChatMessageById(lastId, {
+                  content: '',
                   isRecalled: true,
                   recalledBy: 'character',
                   recallTimestamp: recalledAt,
@@ -3803,7 +3837,14 @@ export function ChatRoom({
           timestamp: m.timestamp,
           replyTo: m.replyTo,
           images: m.images,
+          redPacket: m.redPacket,
+          transfer: m.transfer,
+          callStatus: m.callStatus,
           voice: m.voice,
+          originalText: m.originalContent,
+          isRecalled: m.isRecalled,
+          recallTimestamp: m.recallTimestamp,
+          recalledBy: m.recalledBy === 'character' ? 'other' : m.recalledBy === 'player' ? 'self' : undefined,
           status: 'sent',
         })
       }
@@ -3857,6 +3898,30 @@ export function ChatRoom({
     }
     return map
   }, [items])
+
+  const actionPanelTargetMsg = useMemo(() => {
+    const id = actionMessageId?.trim()
+    if (!id) return null
+    return items.find((it): it is ChatMsg => it.kind === 'msg' && it.id === id) ?? null
+  }, [actionMessageId, items])
+
+  const wechatActionPanelIds = useMemo((): WeChatMessageActionId[] => {
+    const withRecall: WeChatMessageActionId[] = [
+      'copy',
+      'forward',
+      'favorite',
+      'delete',
+      'multiSelect',
+      'quote',
+      'translate',
+      'edit',
+      'recall',
+    ]
+    const base: WeChatMessageActionId[] = ['copy', 'forward', 'favorite', 'delete', 'multiSelect', 'quote', 'translate', 'edit']
+    const list = actionMessageCanRecall ? [...withRecall] : [...base]
+    if (actionPanelTargetMsg?.isRecalled) return list.filter((x) => x !== 'quote')
+    return list
+  }, [actionMessageCanRecall, actionPanelTargetMsg?.isRecalled])
 
   const redPacketModalIdRef = useRef<string | null>(null)
   useEffect(() => {
@@ -3922,11 +3987,14 @@ export function ChatRoom({
     const resolveReplyPreview = (m: ChatMsg) => {
       const reply = m.replyTo
       if (!reply) return undefined
-      const targetExists = msgById.has(reply.messageId)
+      const target = msgById.get(reply.messageId)
+      const targetExists = !!target
+      const recalled = target?.isRecalled === true
       return {
         senderName: reply.senderName || '未知',
-        content: reply.content || '...',
-        deleted: !targetExists,
+        content: recalled ? '该消息已撤回' : reply.content || '...',
+        deleted: !targetExists || recalled,
+        recalled,
       }
     }
     const renderDetachedReply = (m: ChatMsg, isSelf: boolean) => {
@@ -3959,8 +4027,11 @@ export function ChatRoom({
                 <span className="block truncate text-[12px] italic" style={{ color: textColor }}>
                   {reply.senderName}：
                 </span>
-                <span className="line-clamp-2 block text-[14px] italic leading-[1.35]" style={{ color: textColor, opacity: reply.deleted ? 0.7 : 1 }}>
-                  {reply.deleted ? '该消息已被删除' : reply.content}
+                <span
+                  className="line-clamp-2 block text-[14px] italic leading-[1.35]"
+                  style={{ color: textColor, opacity: reply.deleted ? 0.7 : 1 }}
+                >
+                  {reply.recalled ? '该消息已撤回' : reply.deleted ? '该消息已被删除' : reply.content}
                 </span>
               </span>
             </span>
@@ -5204,11 +5275,7 @@ export function ChatRoom({
         open={actionPanelOpen}
         anchor={actionAnchor}
         onAction={onActionPanelAction}
-        actionIds={
-          actionMessageCanRecall
-            ? ['copy', 'forward', 'favorite', 'delete', 'multiSelect', 'quote', 'translate', 'edit', 'recall']
-            : ['copy', 'forward', 'favorite', 'delete', 'multiSelect', 'quote', 'translate', 'edit']
-        }
+        actionIds={wechatActionPanelIds}
       />
       {retryReplyPromptOpen ? (
         <div className="fixed inset-0 z-[1210] flex items-center justify-center bg-black/50 px-4" role="presentation">

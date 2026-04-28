@@ -13,7 +13,7 @@ const SUB_META: Record<SubApiType, { title: string; desc: string }> = {
   xinyu: { title: '心语', desc: '用于生成约会心语内容' },
   chatCard: { title: '聊天记录卡片', desc: '用于生成聊天记录卡片文案' },
   danmaku: { title: '弹幕', desc: '用于生成弹幕内容' },
-  voiceAsr: { title: '语音识别', desc: '用于语音通话长按麦克风转文字（模型：FunAudioLLM/SenseVoiceSmall）' },
+  voiceAsr: { title: '语音识别', desc: '用于语音通话长按麦克风转文字' },
 }
 
 function clonePreset(p: ApiPreset): ApiPreset {
@@ -161,7 +161,7 @@ export function ApiPresetEditPage() {
                 ) : (
                   <div className="flex items-center gap-2">
                     <p className="text-[12px]" style={{ color: apiTheme.subText }}>
-                      开启语音识别
+                      {sub.enabled ? '开启' : '关闭'}
                     </p>
                     <ToggleSwitch
                       checked={!!sub.enabled}

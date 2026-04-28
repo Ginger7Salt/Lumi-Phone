@@ -506,12 +506,10 @@ function ArchiveTab() {
   }, [creds, setVoices])
 
   useEffect(() => {
-    // 自动拉一次（如果用户已配置 key）
-    if (!apiKey.trim() || !groupId.trim()) return
-    if (voices.length) return
+    // 进入音色页时自动拉取（Group ID 可选）
+    if (!apiKey.trim()) return
     void refreshVoices()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [apiKey, refreshVoices])
 
   useEffect(() => {
     const a = audioRef.current

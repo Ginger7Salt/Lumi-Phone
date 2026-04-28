@@ -78,14 +78,7 @@ export function ApiConfigBlock({
             onChange={(v) => onChange({ ...config, apiUrl: v })}
             placeholder="https://api.example.com/v1"
           />
-        ) : (
-          <div
-            className="rounded-xl px-4 py-3 text-[13px]"
-            style={{ border: `1px solid ${apiTheme.border}`, background: '#fff', color: apiTheme.subText }}
-          >
-            语音识别 URL 已固定为：{config.apiUrl || 'https://api.siliconflow.cn/v1'}
-          </div>
-        )}
+        ) : null}
 
         <TextField
           label="API Key"
