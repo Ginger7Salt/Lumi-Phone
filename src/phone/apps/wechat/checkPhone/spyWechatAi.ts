@@ -117,6 +117,14 @@ function inferAvatarBucketFromPersona(text: string): ExtraAvatarBucket | undefin
 export type SpyWechatGenerateOptions = {
   contactCount: number
   contactBias: string
+  currentContactsSnapshot?: Array<{
+    id: string
+    nickname: string
+    remarkName: string
+    characterId?: string
+    isStarred?: boolean
+    blocked?: boolean
+  }>
   includeBlocked: boolean
   includeMomentsHideFromUser: boolean
   includeMomentsOnlyTaVisibleWithoutUser: boolean
@@ -142,7 +150,16 @@ export type SpyWechatGeneratedData = {
     isStarred?: boolean
     blocked?: boolean
     characterId?: string
-    messages: Array<{ from: 'player' | 'character'; content: string; timestamp: number }>
+    messages: Array<{
+      from: 'player' | 'character'
+      content: string
+      timestamp: number
+      special?:
+        | { kind: 'red_packet'; amountYuan?: number; remark?: string; opened?: boolean }
+        | { kind: 'transfer'; transferId?: string; amountYuan?: number; note?: string; status?: 'pending' | 'accepted' | 'returned' }
+        | { kind: 'sticker'; label?: string; imageUrl?: string }
+        | { kind: 'image'; imageUrl?: string; mime?: string }
+    }>
   }>
   moments: Array<{
     id: string
@@ -329,7 +346,8 @@ ${JSON.stringify(boundNpcSeedList, null, 2)}
   const messagesByContact = new Map<string, SpyWechatGeneratedData['contacts'][number]['messages']>()
   for (const cidOne of chatTargets) {
     const row = (profileAndContacts.contacts || []).find((c) => c.id === cidOne)
-    const npcMeta = row?.characterId?.trim() ? boundNpcs.find((n) => n.id === row.characterId.trim()) : undefined
+    const rowCharacterId = row?.characterId?.trim()
+    const npcMeta = rowCharacterId ? boundNpcs.find((n) => n.id === rowCharacterId) : undefined
     const peerCallName =
       (npcMeta?.name || npcMeta?.wechatNickname || row?.remarkName || row?.nickname || '该联系人').trim() || '该联系人'
     const payload = await askModelJsonWithRetry<{ messages: Array<{ from: 'player' | 'character'; content: string; timestamp: number }> }>(
