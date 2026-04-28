@@ -49,7 +49,11 @@ function audioElementMatchesUrl(audio: HTMLAudioElement, url: string): boolean {
   }
 }
 
-export function MusicWidget() {
+type Props = {
+  isEditMode?: boolean
+}
+
+export function MusicWidget({ isEditMode = false }: Props) {
   const { state, setMusic } = useCustomization()
   const { music, theme } = state
   const [open, setOpen] = useState(false)
@@ -877,6 +881,7 @@ export function MusicWidget() {
 
   return (
     <div
+      data-desktop-static="true"
       className="flex h-full w-full min-h-0 flex-col overflow-hidden p-2.5 shadow-[var(--phone-shadow)]"
       style={{
         background: theme.surface,
@@ -887,6 +892,7 @@ export function MusicWidget() {
       <Pressable
         className="flex h-full w-full min-h-0 flex-col"
         onClick={() => {
+          if (isEditMode) return
           setPanel('menu')
           setOpen(true)
         }}

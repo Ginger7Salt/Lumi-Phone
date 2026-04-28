@@ -2,8 +2,10 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useState } from 'react'
 import { AppPlaceholderScreen } from './components/AppPlaceholderScreen'
 import { CustomizeScreen } from './components/CustomizeScreen'
+import { EntryNoticeModal } from './components/EntryNoticeModal'
 import { HomeScreen } from './components/HomeScreen'
 import { PhoneShell } from './components/PhoneShell'
+import { SplashScreen } from './components/SplashScreen'
 import { useCustomization } from './CustomizationContext'
 import { ApiSettingsProvider } from './apps/api/ApiSettingsContext'
 import { ApiSettingsApp } from './apps/api/ApiSettingsApp'
@@ -24,11 +26,16 @@ const pageProps = {
   exit: { opacity: 0, y: -10 },
   transition,
 }
+const ENTRY_NOTICE_KEY = 'entry-notice-accepted-v1'
 
 export function PhoneApp() {
   const { state } = useCustomization()
   const fullScreen = state.ui.fullScreen
   const [route, setRoute] = useState<Route>({ name: 'home' })
+  const [showSplash, setShowSplash] = useState(true)
+  const [showEntryNotice, setShowEntryNotice] = useState(false)
+  const [ageConfirmed, setAgeConfirmed] = useState(false)
+  const [riskConfirmed, setRiskConfirmed] = useState(false)
 
   const goHome = useCallback(() => setRoute({ name: 'home' }), [])
 
@@ -41,6 +48,12 @@ export function PhoneApp() {
   }, [])
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
+    const accepted = window.localStorage.getItem(ENTRY_NOTICE_KEY) === '1'
+    setShowEntryNotice(!accepted)
+  }, [])
+
+  useEffect(() => {
     const onOpen = (e: Event) => {
       const ce = e as CustomEvent<{ id: AppSlot['id'] }>
       const id = ce.detail?.id
@@ -50,6 +63,12 @@ export function PhoneApp() {
     window.addEventListener('phone:open-app', onOpen as EventListener)
     return () => window.removeEventListener('phone:open-app', onOpen as EventListener)
   }, [openApp])
+
+  const handleNoticeConfirm = useCallback(() => {
+    if (!ageConfirmed || !riskConfirmed) return
+    window.localStorage.setItem(ENTRY_NOTICE_KEY, '1')
+    setShowEntryNotice(false)
+  }, [ageConfirmed, riskConfirmed])
 
   return (
     <div
@@ -87,6 +106,15 @@ export function PhoneApp() {
             )}
           </AnimatePresence>
         </PhoneShell>
+        {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
+        <EntryNoticeModal
+          open={!showSplash && showEntryNotice}
+          ageConfirmed={ageConfirmed}
+          riskConfirmed={riskConfirmed}
+          onToggleAge={setAgeConfirmed}
+          onToggleRisk={setRiskConfirmed}
+          onConfirm={handleNoticeConfirm}
+        />
       </ApiSettingsProvider>
     </div>
   )

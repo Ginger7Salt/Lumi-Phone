@@ -32,6 +32,7 @@ import {
   type WeChatPersonaContact,
   type GestureEffectsSettings,
   normalizeGestureEffects,
+  DESKTOP_LAYOUT_SLOT_COUNT,
 } from './types'
 import { migrateLegacyRootPublicUrl } from '../publicAssetUrl'
 
@@ -124,6 +125,7 @@ function normalizeState(raw: Partial<CustomizationState>): CustomizationState {
   const wechatTheme = normalizeWeChatTheme(raw.wechatTheme)
   const musicMerged = { ...DEFAULT_CUSTOMIZATION.music, ...raw.music }
   const profile = { ...DEFAULT_CUSTOMIZATION.profile, ...raw.profile }
+  const apps = normalizeApps(raw.apps)
   profile.avatarImageUrl = migrateLegacyRootPublicUrl(profile.avatarImageUrl)
   return {
     theme,
@@ -137,7 +139,8 @@ function normalizeState(raw: Partial<CustomizationState>): CustomizationState {
       playingAudioUrl:
         typeof musicMerged.playingAudioUrl === 'string' ? musicMerged.playingAudioUrl : '',
     },
-    apps: normalizeApps(raw.apps),
+    apps,
+    desktopLayout: normalizeDesktopLayout(raw.desktopLayout, apps),
     ui: { ...DEFAULT_CUSTOMIZATION.ui, ...raw.ui },
     appPageStyles: normalizeAppPageStyles(raw.appPageStyles),
     dockStyle: normalizeDockStyle(raw.dockStyle),
@@ -450,12 +453,41 @@ function normalizeApps(parsedApps: unknown): AppSlot[] {
   })
 }
 
+function normalizeDesktopLayout(parsedLayout: unknown, apps: AppSlot[]): Array<AppSlot['id'] | null> {
+  const desktopIds = apps.slice(4).map((app) => app.id)
+  const desktopSet = new Set(desktopIds)
+  const fallback = Array.from({ length: DESKTOP_LAYOUT_SLOT_COUNT }, (_, index) => desktopIds[index] ?? null)
+  if (!Array.isArray(parsedLayout)) return fallback
+
+  const used = new Set<AppSlot['id']>()
+  const next = Array.from({ length: DESKTOP_LAYOUT_SLOT_COUNT }, (_, index) => {
+    const raw = parsedLayout[index]
+    if (typeof raw !== 'string') return null
+    const id = raw.trim() as AppSlot['id']
+    if (!desktopSet.has(id) || used.has(id)) return null
+    used.add(id)
+    return id
+  })
+
+  for (const id of desktopIds) {
+    if (used.has(id)) continue
+    const emptyIndex = next.findIndex((slot) => slot === null)
+    if (emptyIndex < 0) break
+    next[emptyIndex] = id
+    used.add(id)
+  }
+
+  return next
+}
+
 type Ctx = {
   state: CustomizationState
   setTheme: (patch: Partial<PhoneTheme>) => void
   setProfile: (patch: Partial<Profile>) => void
   setMusic: (patch: Partial<MusicInfo>) => void
   setUi: (patch: Partial<UiPreferences>) => void
+  reorderApps: (orderedIds: AppSlot['id'][]) => void
+  setDesktopLayout: (layout: Array<AppSlot['id'] | null>) => void
   setAppLabel: (id: AppSlot['id'], label: string) => void
   setAppIconImageUrl: (id: AppSlot['id'], iconImageUrl: string) => void
   setAppIconRadius: (id: AppSlot['id'], iconRadius: number) => void
@@ -758,6 +790,31 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, ui: { ...s.ui, ...patch } }))
   }, [])
 
+  const reorderApps = useCallback((orderedIds: AppSlot['id'][]) => {
+    const incoming = orderedIds.map((id) => String(id || '').trim()).filter(Boolean) as AppSlot['id'][]
+    setState((s) => {
+      const byId = new Map(s.apps.map((app) => [app.id, app] as const))
+      const next: AppSlot[] = []
+      for (const id of incoming) {
+        const app = byId.get(id)
+        if (!app) continue
+        next.push(app)
+        byId.delete(id)
+      }
+      for (const app of s.apps) {
+        if (byId.has(app.id)) next.push(app)
+      }
+      return next.length === s.apps.length ? { ...s, apps: next } : s
+    })
+  }, [])
+
+  const setDesktopLayout = useCallback((layout: Array<AppSlot['id'] | null>) => {
+    setState((s) => ({
+      ...s,
+      desktopLayout: normalizeDesktopLayout(layout, s.apps),
+    }))
+  }, [])
+
   const setAppPageStyle = useCallback((id: AppSlot['id'], patch: Partial<AppPageStyle>) => {
     setState((s) => ({
       ...s,
@@ -847,6 +904,8 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
       setProfile,
       setMusic,
       setUi,
+      reorderApps,
+      setDesktopLayout,
       setAppLabel,
       setAppIconImageUrl,
       setAppIconRadius,
@@ -868,6 +927,8 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
       setProfile,
       setMusic,
       setUi,
+      reorderApps,
+      setDesktopLayout,
       setAppLabel,
       setAppIconImageUrl,
       setAppIconRadius,

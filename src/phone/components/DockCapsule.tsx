@@ -63,18 +63,18 @@ export function DockCapsule({ theme, dockStyle, children, className, scale }: Ca
       <div
         className="relative w-full max-w-[360px] overflow-hidden rounded-full border px-2.5 py-2.5"
         style={{
-          borderColor: theme.border,
-          boxShadow: 'var(--phone-shadow)',
+          borderColor: 'rgba(255,255,255,0.42)',
+          boxShadow: '0 16px 40px rgba(28, 28, 30, 0.12)',
         }}
       >
-        <div className="absolute inset-0 rounded-[inherit]" style={base} aria-hidden />
+        <div className="absolute inset-0 rounded-[inherit]" style={{ ...base, opacity: dockStyle.glass ? 0.42 : 1 }} aria-hidden />
         {dockStyle.glass ? (
           <div
             className="pointer-events-none absolute inset-0 rounded-[inherit]"
             style={{
-              background: 'rgba(255, 255, 255, 0.28)',
-              backdropFilter: `saturate(1.15) blur(${dockStyle.blur}px)`,
-              WebkitBackdropFilter: `saturate(1.15) blur(${dockStyle.blur}px)`,
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.48), rgba(255,255,255,0.26))',
+              backdropFilter: `saturate(1.2) blur(${Math.max(16, dockStyle.blur + 4)}px)`,
+              WebkitBackdropFilter: `saturate(1.2) blur(${Math.max(16, dockStyle.blur + 4)}px)`,
             }}
             aria-hidden
           />

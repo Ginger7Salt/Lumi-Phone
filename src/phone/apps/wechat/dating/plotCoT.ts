@@ -19,6 +19,10 @@ function normalizeCoTAngleBrackets(s: string): string {
   return s.replace(/\uFF1C/g, '<').replace(/\uFF1E/g, '>').replace(/＜/g, '<').replace(/＞/g, '>')
 }
 
+function stripHtmlComments(s: string): string {
+  return s.replace(/<!--[\s\S]*?-->/g, '').trim()
+}
+
 function stripFirstCoTBlock(src: string): { inner: string; rest: string } | null {
   for (const re of DATING_COT_TAG_PATTERNS) {
     const m = src.match(re)
@@ -91,7 +95,7 @@ export function splitDatingAssistantOutput(raw: string): {
   } else {
     content = text
   }
-  const bodyTrim = content.trim()
+  const bodyTrim = stripHtmlComments(content)
   const original = String(raw || '').trim()
   const finalContent = bodyTrim || (logicPass || planSummary ? '' : original)
   return { logicPass, planSummary, content: finalContent }

@@ -30,6 +30,7 @@ export function PersonalCard() {
 
   return (
     <section
+      data-desktop-static="true"
       className="relative h-full overflow-hidden shadow-[var(--phone-shadow)]"
       style={{
         background: theme.surface,

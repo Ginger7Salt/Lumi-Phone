@@ -1034,6 +1034,7 @@ export function ChatRoom({
     },
     [conversationCharacterId, logger],
   )
+  const voiceSynthesisPromiseRef = useRef(new Map<string, Promise<string>>())
 
   const [peerAvatarResolved, setPeerAvatarResolved] = useState<string | undefined>(undefined)
   useEffect(() => {
@@ -1098,6 +1099,60 @@ export function ChatRoom({
     [currentTimeMs, formatWxTimeLabel],
   )
   const extractMessages = useCallback((list: ChatItem[]) => list.filter((it): it is ChatMsg => it.kind === 'msg'), [])
+  const ensureVoiceMessageAudio = useCallback(
+    async (messageId: string, voice?: ChatMsg['voice']): Promise<string> => {
+      const msgId = messageId.trim()
+      if (!msgId || !voice) return ''
+      const existingAudioUrl = voice.audioUrl?.trim() || ''
+      if (existingAudioUrl) return existingAudioUrl
+
+      const pending = voiceSynthesisPromiseRef.current.get(msgId)
+      if (pending) return pending
+
+      const task = (async () => {
+        const playableScript = stripEmotionTagsForTts(String(voice.ttsScript || '').trim())
+        if (!playableScript) return ''
+        const synthesizedAudioUrl = await synthCharacterVoiceAudioUrl(playableScript)
+        if (!synthesizedAudioUrl) return ''
+
+        setItems((prev) => {
+          const next = rebuildWithCurrentTime(
+            extractMessages(prev).map((msg) =>
+              msg.id !== msgId || !msg.voice
+                ? msg
+                : {
+                    ...msg,
+                    voice: {
+                      ...msg.voice,
+                      audioUrl: synthesizedAudioUrl,
+                    },
+                  },
+            ),
+          )
+          itemsRef.current = next
+          return next
+        })
+
+        try {
+          await personaDb.patchWeChatChatMessageById(msgId, {
+            voice: { audioUrl: synthesizedAudioUrl },
+          })
+        } catch (e) {
+          logger.log('error', `角色语音缓存落库失败 id=${msgId} err=${e instanceof Error ? e.message : String(e)}`)
+        }
+
+        return synthesizedAudioUrl
+      })()
+
+      voiceSynthesisPromiseRef.current.set(msgId, task)
+      try {
+        return await task
+      } finally {
+        voiceSynthesisPromiseRef.current.delete(msgId)
+      }
+    },
+    [extractMessages, logger, rebuildWithCurrentTime, synthCharacterVoiceAudioUrl],
+  )
   const mergeIncomingMessage = useCallback(
     (prev: ChatItem[], incoming: ChatMsg) => {
       // 与异步 hydrate 并发时，可能已存在同 id 行；先去重再追加，避免短暂双气泡闪烁
@@ -2612,8 +2667,6 @@ export function ChatRoom({
               if (!rawScript) continue
               const normalizedScript = normalizeVoiceScriptForTts(rawScript)
               const seg = sanitizeVoiceTranscriptDisplay(normalizedScript)
-              const ttsPlayableScript = stripEmotionTagsForTts(normalizedScript)
-              const audioUrl = await synthCharacterVoiceAudioUrl(ttsPlayableScript)
               const ts = getCurrentTimeMs()
               const oid = `wxm-${ts}-ov-${i}-${Math.random().toString(36).slice(2, 6)}`
               const replyToMeta = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
@@ -2623,7 +2676,6 @@ export function ChatRoom({
                 emotionAnalyzed: true,
                 ttsScript: normalizedScript,
                 transcriptText: seg || '（语音）',
-                audioUrl: audioUrl || undefined,
               }
               try {
                 await withTimeout(
@@ -4244,15 +4296,16 @@ export function ChatRoom({
             duration={d}
             audioUrl={m.voice.audioUrl || ''}
             transcriptText={m.voice.transcriptText || '（暂未生成转写文本）'}
-                onTranscriptToggle={() => {
-                  if (!isAtBottomRef.current) return
-                  requestAnimationFrame(() => {
-                    scrollToBottomSmooth({ force: true })
-                    window.setTimeout(() => {
-                      scrollToBottomSmooth({ force: true })
-                    }, 240)
-                  })
-                }}
+            onRequestAudio={isSelf ? undefined : () => ensureVoiceMessageAudio(m.id, m.voice)}
+            onTranscriptToggle={() => {
+              if (!isAtBottomRef.current) return
+              requestAnimationFrame(() => {
+                scrollToBottomSmooth({ force: true })
+                window.setTimeout(() => {
+                  scrollToBottomSmooth({ force: true })
+                }, 240)
+              })
+            }}
           />
         )
         const voiceRow = (
@@ -4609,6 +4662,9 @@ export function ChatRoom({
     expandedThinkingIds,
     toggleThinkingFold,
     recallAnimatingIds,
+    ensureVoiceMessageAudio,
+    items,
+    scrollToBottomSmooth,
   ])
 
   const btnPx = chatTheme.inputBar.buttonSize

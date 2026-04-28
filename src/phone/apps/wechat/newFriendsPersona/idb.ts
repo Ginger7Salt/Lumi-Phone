@@ -1826,10 +1826,11 @@ export class PersonaDb {
     patch: Partial<
       Pick<
         WeChatChatMessage,
-        'content' | 'replyTo' | 'images' | 'isRead' | 'originalContent' | 'isRecalled' | 'recallTimestamp' | 'recalledBy'
+      'content' | 'replyTo' | 'images' | 'isRead' | 'originalContent' | 'isRecalled' | 'recallTimestamp' | 'recalledBy'
       >
     > & {
       redPacket?: Partial<WeChatRedPacketPayload>
+    voice?: Partial<WeChatVoicePayload>
     },
   ): Promise<void> {
     const tid = messageId.trim()
@@ -1845,6 +1846,12 @@ export class PersonaDb {
             ? ({ ...existing.redPacket, ...patch.redPacket } as WeChatRedPacketPayload)
             : (patch.redPacket as WeChatRedPacketPayload)
           : existing.redPacket,
+      voice:
+        patch.voice !== undefined
+          ? existing.voice
+            ? ({ ...existing.voice, ...patch.voice } as WeChatVoicePayload)
+            : (patch.voice as WeChatVoicePayload)
+          : existing.voice,
     }
     const normalized = normalizeWeChatChatMessage(merged)
     if (!normalized) return

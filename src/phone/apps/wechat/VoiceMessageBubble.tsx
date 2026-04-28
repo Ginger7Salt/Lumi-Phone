@@ -8,6 +8,7 @@ export type VoiceMessageBubbleProps = {
   audioUrl: string
   transcriptText: string
   onTranscriptToggle?: (expanded: boolean) => void
+  onRequestAudio?: () => Promise<string>
 }
 
 const SPRING = { type: 'spring', stiffness: 300, damping: 30 } as const
@@ -26,23 +27,22 @@ export function VoiceMessageBubble({
   audioUrl,
   transcriptText,
   onTranscriptToggle,
+  onRequestAudio,
 }: VoiceMessageBubbleProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
+  const [isGeneratingAudio, setIsGeneratingAudio] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [resolvedAudioUrl, setResolvedAudioUrl] = useState(audioUrl.trim())
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const boundAudioUrlRef = useRef('')
   const fallbackTimerRef = useRef<number | null>(null)
 
   const waveBars = useMemo(() => buildWaveHeights(duration || 1), [duration])
 
-  useEffect(() => {
-    if (typeof window === 'undefined' || !audioUrl.trim()) {
-      audioRef.current = null
-      return
-    }
-    const audio = new Audio(audioUrl)
+  const bindAudio = (url: string) => {
+    const audio = new Audio(url)
     audio.preload = 'metadata'
-    audioRef.current = audio
     const onTimeUpdate = () => {
       if (!audio.duration || !Number.isFinite(audio.duration)) {
         setProgress(0)
@@ -56,13 +56,39 @@ export function VoiceMessageBubble({
     }
     audio.addEventListener('timeupdate', onTimeUpdate)
     audio.addEventListener('ended', onEnded)
-    return () => {
-      audio.pause()
-      audio.removeEventListener('timeupdate', onTimeUpdate)
-      audio.removeEventListener('ended', onEnded)
-      audioRef.current = null
+    audioRef.current = audio
+    boundAudioUrlRef.current = url
+    return {
+      audio,
+      dispose: () => {
+        audio.pause()
+        audio.removeEventListener('timeupdate', onTimeUpdate)
+        audio.removeEventListener('ended', onEnded)
+        if (audioRef.current === audio) {
+          audioRef.current = null
+        }
+      },
     }
+  }
+
+  useEffect(() => {
+    setResolvedAudioUrl(audioUrl.trim())
   }, [audioUrl])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !resolvedAudioUrl) {
+      audioRef.current = null
+      boundAudioUrlRef.current = ''
+      return
+    }
+    if (audioRef.current && boundAudioUrlRef.current === resolvedAudioUrl) {
+      return
+    }
+    const { dispose } = bindAudio(resolvedAudioUrl)
+    return () => {
+      dispose()
+    }
+  }, [resolvedAudioUrl])
 
   useEffect(() => {
     return () => {
@@ -73,9 +99,27 @@ export function VoiceMessageBubble({
     }
   }, [])
 
-  const togglePlay = () => {
-    const fallbackMode = !audioUrl.trim()
+  const togglePlay = async () => {
+    if (isGeneratingAudio) return
     const audio = audioRef.current
+    if (!resolvedAudioUrl) {
+      if (!onRequestAudio) return
+      try {
+        setIsGeneratingAudio(true)
+        const nextUrl = (await onRequestAudio()).trim()
+        if (!nextUrl) return
+        setResolvedAudioUrl(nextUrl)
+        const existing = audioRef.current
+        existing?.pause()
+        const { audio: nextAudio } = bindAudio(nextUrl)
+        await nextAudio.play()
+        setIsPlaying(true)
+      } finally {
+        setIsGeneratingAudio(false)
+      }
+      return
+    }
+    const fallbackMode = !resolvedAudioUrl.trim()
     if (fallbackMode) {
       if (isPlaying) {
         if (fallbackTimerRef.current != null) {
@@ -109,7 +153,7 @@ export function VoiceMessageBubble({
       setIsPlaying(false)
       return
     }
-    void audio.play()
+    await audio.play()
     setIsPlaying(true)
   }
 
@@ -135,7 +179,9 @@ export function VoiceMessageBubble({
     <div className={`w-[206px] ${isUser ? 'ml-auto' : ''}`}>
       <motion.button
         type="button"
-        onClick={togglePlay}
+        onClick={() => {
+          void togglePlay()
+        }}
         whileTap={{ scale: 0.985 }}
         transition={SPRING}
         className={`w-full rounded-[18px] border px-2.5 pt-3 text-left ${bubbleClass}`}
@@ -147,7 +193,13 @@ export function VoiceMessageBubble({
             animate={isPlaying ? { scale: [1, 1.04, 1] } : { scale: 1 }}
             transition={isPlaying ? { repeat: Infinity, duration: 1.1, ease: 'easeInOut' } : SPRING}
           >
-            {isPlaying ? <Pause size={15} /> : <Play size={15} className="ml-[1px]" />}
+            {isGeneratingAudio ? (
+              <span className="text-[10px] font-medium tracking-[0.08em] text-[#8c7a37]">...</span>
+            ) : isPlaying ? (
+              <Pause size={15} />
+            ) : (
+              <Play size={15} className="ml-[1px]" />
+            )}
           </motion.span>
 
           <div className="flex w-[94px] shrink-0 items-end gap-[2px]">

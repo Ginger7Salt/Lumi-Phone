@@ -319,6 +319,7 @@ export type CustomizationState = {
   profile: Profile
   music: MusicInfo
   apps: AppSlot[]
+  desktopLayout: Array<AppSlot['id'] | null>
   ui: UiPreferences
   appPageStyles: Record<AppSlot['id'], AppPageStyle>
   dockStyle: DockStyle
@@ -330,6 +331,7 @@ export type CustomizationState = {
 }
 
 export const DEFAULT_WALLPAPER_URL = publicAssetUrl('/image/手机壁纸1.png')
+export const DESKTOP_LAYOUT_SLOT_COUNT = 6
 
 /** 微信「信息」列表与聊天会话页默认背景图（放在 `public/image/`，经 {@link publicAssetUrl} 带 base） */
 export const DEFAULT_WECHAT_CHAT_WALLPAPER_URL = publicAssetUrl('/image/聊天壁纸默认1.jpg')
@@ -412,6 +414,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     { id: 'voiceprint', label: '声纹档案', iconImageUrl: '', iconRadius: 18 },
     { id: 'appearance', label: '外观', iconImageUrl: '', iconRadius: 18 },
   ],
+  desktopLayout: ['voiceprint', 'appearance', null, null, null, null],
   ui: {
     showStatusBar: true,
     fullScreen: false,
