@@ -240,17 +240,28 @@ function buildFriendRequestReplyBias(params: { messages: FriendRequest['messages
   )
 }
 
-const pageProps = {
-  initial: { opacity: 0, y: 10 },
-  animate: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -8 },
-  transition,
-  style: {
-    willChange: 'transform, opacity',
-    transform: 'translateZ(0)',
-    backfaceVisibility: 'hidden' as const,
-    WebkitBackfaceVisibility: 'hidden' as const,
-  },
+function buildPageProps(disableTransitions: boolean) {
+  if (disableTransitions) {
+    return {
+      initial: false as const,
+      animate: { opacity: 1, y: 0 },
+      exit: { opacity: 1, y: 0 },
+      transition: { duration: 0 },
+      style: { willChange: 'auto' },
+    }
+  }
+  return {
+    initial: { opacity: 0, y: 10 },
+    animate: { opacity: 1, y: 0 },
+    exit: { opacity: 0, y: -8 },
+    transition,
+    style: {
+      willChange: 'transform, opacity',
+      transform: 'translateZ(0)',
+      backfaceVisibility: 'hidden' as const,
+      WebkitBackfaceVisibility: 'hidden' as const,
+    },
+  }
 }
 
 type WxFillStyleWithNaturalness = WxFillStyle & { gradientNaturalness?: number }
@@ -3213,6 +3224,8 @@ function ThemePanel({
 function WeChatAppInner({ onBack }: Props) {
   const { consoleOpen, closeConsole } = useWeChatConsole()
   const { state, wechatThemeStyle, setProfile, replaceWeChatPersonaContacts, removeWeChatPersonaContactsByCharacterIds } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
+  const pageProps = buildPageProps(disableTransitions)
   const apiConfig = useCurrentApiConfig('chatCard')
   const { appPageStyles, wechatTheme } = state
   const pageStyle = appPageStyles.wechat
@@ -5024,10 +5037,10 @@ function WeChatAppInner({ onBack }: Props) {
           {wxGlobalNav && route.name === 'tabs' && route.tab === 'profile' ? (
             <motion.div
               key="wx-global-stack"
-              initial={{ x: '100%' }}
+              initial={disableTransitions ? false : { x: '100%' }}
               animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              exit={disableTransitions ? { x: 0 } : { x: '100%' }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="absolute inset-0 z-[230] flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-[#f5f5f5]"
             >
               {wxGlobalNav.screen === 'root' ? (
@@ -5092,10 +5105,10 @@ function WeChatAppInner({ onBack }: Props) {
           activeConversationKey ? (
             <motion.div
               key="wx-chat-settings"
-              initial={{ x: '100%' }}
+              initial={disableTransitions ? false : { x: '100%' }}
               animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              exit={disableTransitions ? { x: 0 } : { x: '100%' }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="absolute inset-0 z-[220] flex flex-col bg-[#ededed]"
             >
               <ChatSettingsScreen

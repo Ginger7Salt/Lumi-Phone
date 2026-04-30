@@ -20,23 +20,38 @@ type Route =
 
 const transition = { duration: 0.32, ease: [0.22, 1, 0.36, 1] as const }
 
-const pageProps = {
-  initial: { opacity: 0, y: 12 },
-  animate: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -10 },
-  transition,
-  style: {
-    willChange: 'transform, opacity',
-    transform: 'translateZ(0)',
-    backfaceVisibility: 'hidden' as const,
-    WebkitBackfaceVisibility: 'hidden' as const,
-  },
+function buildPageProps(disableTransitions: boolean) {
+  if (disableTransitions) {
+    return {
+      initial: false as const,
+      animate: { opacity: 1, y: 0 },
+      exit: { opacity: 1, y: 0 },
+      transition: { duration: 0 },
+      style: {
+        willChange: 'auto',
+      },
+    }
+  }
+  return {
+    initial: { opacity: 0, y: 12 },
+    animate: { opacity: 1, y: 0 },
+    exit: { opacity: 0, y: -10 },
+    transition,
+    style: {
+      willChange: 'transform, opacity',
+      transform: 'translateZ(0)',
+      backfaceVisibility: 'hidden' as const,
+      WebkitBackfaceVisibility: 'hidden' as const,
+    },
+  }
 }
 const ENTRY_NOTICE_KEY = 'entry-notice-accepted-v1'
 
 export function PhoneApp() {
   const { state } = useCustomization()
   const fullScreen = state.ui.fullScreen
+  const disableTransitions = state.ui.disablePageTransitions
+  const pageProps = buildPageProps(disableTransitions)
   const [route, setRoute] = useState<Route>({ name: 'home' })
   const [showSplash, setShowSplash] = useState(true)
   const [showEntryNotice, setShowEntryNotice] = useState(false)
@@ -88,17 +103,29 @@ export function PhoneApp() {
         <PhoneShell>
           <AnimatePresence mode="wait" initial={false}>
             {route.name === 'home' && (
-              <motion.div key="home" className="route-page-layer relative flex h-full min-h-0 flex-col transform-gpu" {...pageProps}>
+              <motion.div
+                key="home"
+                className={`route-page-layer relative flex h-full min-h-0 flex-col ${disableTransitions ? '' : 'transform-gpu'}`}
+                {...pageProps}
+              >
                 <HomeScreen onOpenApp={openApp} />
               </motion.div>
             )}
             {route.name === 'customize' && (
-              <motion.div key="customize" className="route-page-layer flex h-full min-h-0 flex-col transform-gpu" {...pageProps}>
+              <motion.div
+                key="customize"
+                className={`route-page-layer flex h-full min-h-0 flex-col ${disableTransitions ? '' : 'transform-gpu'}`}
+                {...pageProps}
+              >
                 <CustomizeScreen onBack={goHome} />
               </motion.div>
             )}
             {route.name === 'app' && (
-              <motion.div key={`app-${route.id}`} className="route-page-layer flex h-full min-h-0 flex-col transform-gpu" {...pageProps}>
+              <motion.div
+                key={`app-${route.id}`}
+                className={`route-page-layer flex h-full min-h-0 flex-col ${disableTransitions ? '' : 'transform-gpu'}`}
+                {...pageProps}
+              >
                 {route.id === 'wechat' ? (
                   <WeChatApp onBack={goHome} />
                 ) : route.id === 'api' ? (

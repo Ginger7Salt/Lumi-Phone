@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Image, Link as LinkIcon, Sparkles } from 'lucide-react'
 import { useRef, useState } from 'react'
 
+import { useCustomization } from '../../../CustomizationContext'
 import { Pressable } from '../../../components/Pressable'
 
 type Props = {
@@ -26,6 +27,8 @@ function fileToDataUrl(file: File): Promise<string> {
 }
 
 export function StickerUploadSheet({ open, onClose, onSave }: Props) {
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const [tab, setTab] = useState<'local' | 'link'>('local')
   const [url, setUrl] = useState('')
   const [description, setDescription] = useState('')
@@ -54,15 +57,21 @@ export function StickerUploadSheet({ open, onClose, onSave }: Props) {
   return (
     <AnimatePresence>
       {open ? (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[170] flex flex-col justify-end bg-black/30">
+        <motion.div
+          initial={disableTransitions ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+          transition={disableTransitions ? { duration: 0 } : undefined}
+          className="absolute inset-0 z-[170] flex flex-col justify-end bg-black/30"
+        >
           <Pressable type="button" className="min-h-0 flex-1" onClick={onClose}>
             <span className="sr-only">关闭</span>
           </Pressable>
           <motion.div
-            initial={{ y: '100%' }}
+            initial={disableTransitions ? false : { y: '100%' }}
             animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            exit={disableTransitions ? { y: 0 } : { y: '100%' }}
+            transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             className="max-h-[100dvh] overflow-y-auto border-t border-[#eee] bg-white px-5 pb-[max(18px,env(safe-area-inset-bottom,0px))] pt-0 shadow-sm"
           >
             <div

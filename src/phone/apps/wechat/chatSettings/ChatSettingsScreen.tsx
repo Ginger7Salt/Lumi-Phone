@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 
 import { ImageCropperModal } from '../../../components/ImageCropperModal'
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 import type {
   ChatConversationSettingsRow,
   CharacterBusySettingsRow,
@@ -114,6 +115,8 @@ export function ChatSettingsScreen({
   onJumpToChatMessage,
   onOpenPeerProfile,
 }: ChatSettingsScreenProps) {
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const [settings, setSettings] = useState<ChatConversationSettingsRow | null>(null)
   const [gs, setGs] = useState<WeChatGlobalSettingsRow | null>(null)
   const [characterNotify, setCharacterNotify] = useState<CharacterNotificationSettingsRow | null>(null)
@@ -628,9 +631,9 @@ export function ChatSettingsScreen({
             {null}
           </Pressable>
           <motion.div
-            initial={{ y: '100%' }}
+            initial={disableTransitions ? false : { y: '100%' }}
             animate={{ y: 0 }}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             className="max-h-[72vh] overflow-hidden rounded-t-[16px] bg-white"
             style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom, 0px))' }}
           >
@@ -721,10 +724,10 @@ export function ChatSettingsScreen({
         {findHistoryOpen ? (
           <motion.div
             key="wx-find-chat-history"
-            initial={{ x: '100%' }}
+            initial={disableTransitions ? false : { x: '100%' }}
             animate={{ x: 0 }}
-            exit={{ x: '100%' }}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            exit={disableTransitions ? { x: 0 } : { x: '100%' }}
+            transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             className="absolute inset-0 z-[80] flex min-h-0 flex-col overflow-hidden bg-[#f5f5f5]"
           >
             <ChatFindChatHistoryScreen

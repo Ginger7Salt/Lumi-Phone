@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useId, useMemo, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 
 export type WealthTutorialPick = 'vault' | 'deposit' | 'market'
 
@@ -41,6 +42,8 @@ export function WealthTutorial({
   canGoPrev: boolean
   nextLabel: string
 }) {
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const maskId = useId().replace(/:/g, '')
   const [viewport, setViewport] = useState(() => ({
     w: typeof window !== 'undefined' ? window.innerWidth : 390,
@@ -199,15 +202,17 @@ export function WealthTutorial({
     return (
       <AnimatePresence>
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={disableTransitions ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+          transition={disableTransitions ? { duration: 0 } : undefined}
           className="pointer-events-none absolute inset-0 z-[150]"
         >
           <motion.div
-            initial={{ y: 20, opacity: 0 }}
+            initial={disableTransitions ? false : { y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 10, opacity: 0 }}
+            exit={disableTransitions ? { y: 0, opacity: 1 } : { y: 10, opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
             className="pointer-events-auto absolute max-h-[min(520px,86vh)] overflow-y-auto rounded-[24px] border border-white/60 bg-white/92 px-4 py-4 shadow-[0_12px_40px_rgba(0,0,0,0.12)] backdrop-blur-[14px] [-webkit-backdrop-filter:blur(14px)]"
             style={{
               left: panelPos.left,
@@ -227,9 +232,10 @@ export function WealthTutorial({
     <AnimatePresence>
       {open ? (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={disableTransitions ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+          transition={disableTransitions ? { duration: 0 } : undefined}
           className="pointer-events-none absolute inset-0 z-[150]"
         >
           {focus ? (
@@ -268,9 +274,9 @@ export function WealthTutorial({
 
           {focus ? (
             <motion.div
-              initial={{ opacity: 0.5, scale: 0.96 }}
+              initial={disableTransitions ? false : { opacity: 0.5, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.22 }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.22 }}
               className="absolute rounded-[22px] border-2 border-[#d7be8d]"
               style={{
                 left: focus.left,
@@ -283,9 +289,10 @@ export function WealthTutorial({
           ) : null}
 
           <motion.div
-            initial={{ y: 20, opacity: 0 }}
+            initial={disableTransitions ? false : { y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 10, opacity: 0 }}
+            exit={disableTransitions ? { y: 0, opacity: 1 } : { y: 10, opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
             className="pointer-events-auto absolute max-h-[min(520px,86vh)] overflow-y-auto rounded-[24px] border border-white/60 bg-white/92 px-4 py-4 backdrop-blur-[14px] [-webkit-backdrop-filter:blur(14px)]"
             style={{ left: panelPos.left, top: panelPos.top, width: panelPos.width }}
           >

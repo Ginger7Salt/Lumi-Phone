@@ -2,6 +2,7 @@ import { ChevronLeft } from 'lucide-react'
 import { motion } from 'framer-motion'
 
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 import { WalletAuthGuard } from './WalletAuthGuard'
 import { WalletDashboard } from './WalletDashboard'
 import { useWalletMockStore } from './walletMockStore'
@@ -22,13 +23,15 @@ export function WalletCardsPage({
   onOpenWealth: () => void
 }) {
   const { snapshot, balanceText, verifyPaymentPassword, setPaymentPassword, addBankCard, topUp, withdraw } = useWalletMockStore()
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 24 }}
+      initial={disableTransitions ? false : { opacity: 0, x: 24 }}
       animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 20 }}
-      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+      exit={disableTransitions ? { opacity: 1, x: 0 } : { opacity: 0, x: 20 }}
+      transition={disableTransitions ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
       className="relative flex h-full min-h-0 flex-col overflow-hidden bg-transparent"
     >
       {/* 全页背景图（不影响交互与滚动） */}

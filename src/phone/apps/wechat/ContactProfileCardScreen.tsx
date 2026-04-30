@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, MessageCircle, MoreHorizontal, Phone } from 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { Pressable } from '../../components/Pressable'
+import { useCustomization } from '../../CustomizationContext'
 import {
   ContactProfileGenderGlyph,
   type ContactProfileGenderUi,
@@ -126,6 +127,8 @@ export function ContactProfileCardScreen({
   onOpenContactSettings,
   onOpenMoments,
 }: ContactProfileCardScreenProps) {
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const [character, setCharacter] = useState<Character | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [callPanelOpen, setCallPanelOpen] = useState(false)
@@ -218,10 +221,10 @@ export function ContactProfileCardScreen({
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 18 }}
+      initial={disableTransitions ? false : { opacity: 0, x: 18 }}
       animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 18 }}
-      transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+      exit={disableTransitions ? { opacity: 1, x: 0 } : { opacity: 0, x: 18 }}
+      transition={disableTransitions ? { duration: 0 } : { duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
       className="flex h-full min-h-0 flex-col bg-[#f9f9f9]"
     >
       <header className="flex shrink-0 items-center justify-between border-b-[0.5px] border-gray-100 bg-white px-1 pb-1 pt-[max(6px,env(safe-area-inset-top,0px))]">

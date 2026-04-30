@@ -3,6 +3,7 @@ import { Plus, MoreHorizontal } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 import type { StickerGroup, StickerItem } from './stickerStore'
 import { StickerUploadSheet } from './StickerUploadSheet'
 
@@ -27,6 +28,8 @@ export function StickerDetail({
   onMove,
   onAddSticker,
 }: Props) {
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const [uploadOpen, setUploadOpen] = useState(false)
   const [menuItem, setMenuItem] = useState<StickerItem | null>(null)
   const [descDraft, setDescDraft] = useState('')
@@ -134,15 +137,21 @@ export function StickerDetail({
 
       <AnimatePresence>
         {menuItem ? (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[190] flex flex-col justify-end bg-black/35">
+          <motion.div
+            initial={disableTransitions ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
+            className="absolute inset-0 z-[190] flex flex-col justify-end bg-black/35"
+          >
             <Pressable type="button" className="min-h-0 flex-1" onClick={() => setMenuItem(null)}>
               <span className="sr-only">关闭</span>
             </Pressable>
             <motion.div
-              initial={{ y: '100%' }}
+              initial={disableTransitions ? false : { y: '100%' }}
               animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+              exit={disableTransitions ? { y: 0 } : { y: '100%' }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
               className="rounded-t-[24px] border-t border-[#eee] bg-white px-4 pb-[max(16px,env(safe-area-inset-bottom,0px))] pt-4"
             >
               <p className="text-[11px] tracking-[0.2em] text-gray-500">AI DESCRIPTION</p>

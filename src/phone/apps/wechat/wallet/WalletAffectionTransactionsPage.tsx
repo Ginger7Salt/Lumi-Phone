@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { useMemo } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 import { TransactionHistory } from './TransactionHistory'
 import { useWalletMockStore } from './walletMockStore'
 
@@ -17,6 +18,8 @@ export function WalletAffectionTransactionsPage({
   giverName: string
   onBack: () => void
 }) {
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const { snapshot } = useWalletMockStore()
 
   const items = useMemo(() => {
@@ -31,10 +34,10 @@ export function WalletAffectionTransactionsPage({
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 24 }}
+      initial={disableTransitions ? false : { opacity: 0, x: 24 }}
       animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 20 }}
-      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+      exit={disableTransitions ? { opacity: 1, x: 0 } : { opacity: 0, x: 20 }}
+      transition={disableTransitions ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
       className="relative flex h-full min-h-0 flex-col overflow-hidden bg-transparent"
     >
       <div className="pointer-events-none absolute inset-0 z-0">

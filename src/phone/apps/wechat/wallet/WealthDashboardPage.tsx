@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 import { useWeChatCurrentTime } from '../time/useWeChatCurrentTime'
 import { AssetBreakdown } from './AssetBreakdown'
 import { AssetChart, type AssetChartPoint } from './AssetChart'
@@ -220,6 +221,8 @@ const COPY: Record<WealthTutorialPick, Record<number, { title: string; text: str
 }
 
 function WealthDashboardInner({ onBack }: { onBack: () => void }) {
+  const { state: customizationState } = useCustomization()
+  const disableTransitions = customizationState.ui.disablePageTransitions
   const {
     totalAssets,
     yesterdayPnl,
@@ -697,10 +700,10 @@ function WealthDashboardInner({ onBack }: { onBack: () => void }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 24 }}
+      initial={disableTransitions ? false : { opacity: 0, x: 24 }}
       animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 20 }}
-      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+      exit={disableTransitions ? { opacity: 1, x: 0 } : { opacity: 0, x: 20 }}
+      transition={disableTransitions ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
       className="relative flex h-full min-h-0 flex-col overflow-hidden bg-transparent"
     >
       <div className="pointer-events-none absolute inset-0 z-0">
@@ -759,9 +762,9 @@ function WealthDashboardInner({ onBack }: { onBack: () => void }) {
             >
               <motion.span
                 key={`${moneyPulse}-${Math.round(displayAssets * 100)}`}
-                initial={{ opacity: 0.88, y: 1 }}
+                initial={disableTransitions ? false : { opacity: 0.88, y: 1 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.22 }}
+                transition={disableTransitions ? { duration: 0 } : { duration: 0.22 }}
               >
                 {formatCurrency(displayAssets)}
               </motion.span>
@@ -1093,19 +1096,20 @@ function WealthDashboardInner({ onBack }: { onBack: () => void }) {
       <AnimatePresence>
         {pendingSell ? (
           <motion.div
-            initial={{ opacity: 0 }}
+            initial={disableTransitions ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
             className="absolute inset-0 z-[158] flex items-end justify-center bg-black/35 p-4"
           >
             <Pressable type="button" className="absolute inset-0" onClick={() => setPendingSell(null)} aria-label="关闭卖出确认">
               <span className="sr-only">关闭</span>
             </Pressable>
             <motion.div
-              initial={{ y: 24, opacity: 0 }}
+              initial={disableTransitions ? false : { y: 24, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 16, opacity: 0 }}
-              transition={{ duration: 0.22 }}
+              exit={disableTransitions ? { y: 0, opacity: 1 } : { y: 16, opacity: 0 }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.22 }}
               className="relative z-[1] w-full max-w-[560px] rounded-[24px] border border-white/70 bg-white/90 px-5 py-5 shadow-[0_20px_48px_rgba(0,0,0,0.18)] backdrop-blur-[16px] [-webkit-backdrop-filter:blur(16px)]"
             >
               <p className="text-[11px] tracking-[0.24em] text-gray-500">SELL CONFIRM · 卖出确认</p>
@@ -1141,19 +1145,20 @@ function WealthDashboardInner({ onBack }: { onBack: () => void }) {
       <AnimatePresence>
         {ledgerOpen ? (
           <motion.div
-            initial={{ opacity: 0 }}
+            initial={disableTransitions ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
             className="absolute inset-0 z-[160] flex flex-col justify-end bg-black/35"
           >
             <Pressable type="button" className="min-h-0 flex-1" onClick={() => setLedgerOpen(false)} aria-label="关闭收益明细">
               <span className="sr-only">关闭</span>
             </Pressable>
             <motion.div
-              initial={{ y: '100%' }}
+              initial={disableTransitions ? false : { y: '100%' }}
               animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              exit={disableTransitions ? { y: 0 } : { y: '100%' }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="relative max-h-[86vh] overflow-y-auto rounded-t-[30px] border-t border-white/60 bg-white/70 px-5 pb-[max(18px,env(safe-area-inset-bottom,0px))] pt-0 backdrop-blur-[18px] [-webkit-backdrop-filter:blur(18px)]"
             >
               <div

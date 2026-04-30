@@ -371,6 +371,12 @@ export function CustomizeScreen({ onBack }: Props) {
               onChange={(v) => setUi({ showDeviceFrame: v })}
             />
             <SettingToggle
+              label="关闭页面切换动画"
+              description="PPT 式切换（无过渡动画），可降低部分 iOS Safari 切页闪屏"
+              checked={ui.disablePageTransitions}
+              onChange={(v) => setUi({ disablePageTransitions: v })}
+            />
+            <SettingToggle
               label="启用键盘抬升调试"
               description="开启后，可在桌面与聊天页手动调试输入栏贴键盘高度"
               checked={ui.keyboardDebugEnabled}

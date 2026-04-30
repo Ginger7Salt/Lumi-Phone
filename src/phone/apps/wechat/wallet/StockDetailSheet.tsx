@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useMemo, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 import { AssetChart, type AssetChartPoint } from './AssetChart'
 
 function formatMoney(v: number) {
@@ -117,6 +118,8 @@ export function StockDetailSheet({
   stock: { id: string; code: string; companyName: string; quote: number; quoteChangePct: number } | null
   wallNow: number
 }) {
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const [range, setRange] = useState<'day' | '7d'>('day')
 
   const series = useMemo(() => {
@@ -135,15 +138,21 @@ export function StockDetailSheet({
   return (
     <AnimatePresence>
       {open && stock ? (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[155] flex flex-col justify-end bg-black/35">
+        <motion.div
+          initial={disableTransitions ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+          transition={disableTransitions ? { duration: 0 } : undefined}
+          className="absolute inset-0 z-[155] flex flex-col justify-end bg-black/35"
+        >
           <Pressable type="button" className="min-h-0 flex-1" onClick={onClose} aria-label="关闭股票详情">
             <span className="sr-only">关闭</span>
           </Pressable>
           <motion.div
-            initial={{ y: '100%' }}
+            initial={disableTransitions ? false : { y: '100%' }}
             animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            exit={disableTransitions ? { y: 0 } : { y: '100%' }}
+            transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             className="relative max-h-[86vh] overflow-y-auto rounded-t-[30px] border-t border-white/60 bg-white/70 px-5 pb-[max(18px,env(safe-area-inset-bottom,0px))] pt-0 backdrop-blur-[18px] [-webkit-backdrop-filter:blur(18px)]"
           >
             <div

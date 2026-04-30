@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useMemo, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 import { CustomNumericKeyboard } from '../redPacket/CustomNumericKeyboard'
 
 function applyAmountInput(prev: string, key: '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '.' | 'back') {
@@ -43,6 +44,8 @@ export function InvestmentSheet({
   /** 教程签约步需盖在 z-140 暗色层之上，默认 z-[120] */
   overlayClassName?: string
 }) {
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const [amount, setAmount] = useState('')
   const [phase, setPhase] = useState<SheetPhase>('input')
   const parsed = useMemo(() => {
@@ -78,19 +81,20 @@ export function InvestmentSheet({
     <AnimatePresence>
       {open ? (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={disableTransitions ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+          transition={disableTransitions ? { duration: 0 } : undefined}
           className={overlayClassName ?? 'absolute inset-0 z-[120] flex flex-col justify-end bg-black/28'}
         >
           <Pressable type="button" className="min-h-0 flex-1" onClick={onClose} aria-label="关闭">
             <span className="sr-only">关闭</span>
           </Pressable>
           <motion.div
-            initial={{ y: '100%' }}
+            initial={disableTransitions ? false : { y: '100%' }}
             animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            exit={disableTransitions ? { y: 0 } : { y: '100%' }}
+            transition={disableTransitions ? { duration: 0 } : { duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
             ref={panelRef}
             className="relative overflow-hidden rounded-t-[32px] border-t border-white/60 bg-white/65 px-5 pb-[max(18px,env(safe-area-inset-bottom,0px))] pt-5 backdrop-blur-[18px] [-webkit-backdrop-filter:blur(18px)]"
           >
@@ -134,26 +138,28 @@ export function InvestmentSheet({
             <AnimatePresence>
               {phase === 'sealing' ? (
                 <motion.div
-                  initial={{ opacity: 0 }}
+                  initial={disableTransitions ? false : { opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
+                  exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+                  transition={disableTransitions ? { duration: 0 } : undefined}
                   className="absolute inset-0 z-[2] flex items-center justify-center bg-white/76 backdrop-blur-[8px]"
                 >
                   <motion.div
-                    initial={{ opacity: 0, scale: 0.8 }}
+                    initial={disableTransitions ? false : { opacity: 0, scale: 0.8 }}
                     animate={{ opacity: 1, scale: 1 }}
+                    transition={disableTransitions ? { duration: 0 } : undefined}
                     className="relative rounded-[24px] border border-[#d6c39c] bg-white px-10 py-8 text-center shadow-[0_18px_46px_rgba(0,0,0,0.18)]"
                   >
                     <motion.div
-                      initial={{ x: '-120%', opacity: 0 }}
+                      initial={disableTransitions ? false : { x: '-120%', opacity: 0 }}
                       animate={{ x: '120%', opacity: [0, 0.8, 0] }}
-                      transition={{ duration: 0.78, ease: 'easeInOut' }}
+                      transition={disableTransitions ? { duration: 0 } : { duration: 0.78, ease: 'easeInOut' }}
                       className="pointer-events-none absolute inset-y-0 left-0 w-1/2 skew-x-[-20deg] bg-gradient-to-r from-transparent via-white to-transparent"
                     />
                     <motion.p
-                      initial={{ scale: 1.22, rotate: -8, opacity: 0 }}
+                      initial={disableTransitions ? false : { scale: 1.22, rotate: -8, opacity: 0 }}
                       animate={{ scale: 1, rotate: -8, opacity: 1 }}
-                      transition={{ duration: 0.32, ease: [0.2, 1.2, 0.2, 1] }}
+                      transition={disableTransitions ? { duration: 0 } : { duration: 0.32, ease: [0.2, 1.2, 0.2, 1] }}
                       className="text-[34px] font-semibold tracking-[0.08em] text-[#b8995d]"
                       style={{ fontFamily: '"DIN Alternate", "Times New Roman", serif' }}
                     >

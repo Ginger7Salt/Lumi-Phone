@@ -3,6 +3,7 @@ import { CreditCard, HeartHandshake, Settings2, ReceiptText, ChevronRight } from
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 import { CustomNumericKeyboard } from '../redPacket/CustomNumericKeyboard'
 import type { AffectionCard as AffectionCardModel, WalletBankCard, WalletBankName, WalletTransaction } from './walletMockStore'
 import { WealthNavCard } from './WealthNavCard'
@@ -59,6 +60,8 @@ export function WalletDashboard({
   onOpenBankCards,
   onOpenWealth,
 }: Props) {
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const [displayBalance, setDisplayBalance] = useState(0)
   const [toast, setToast] = useState<string | null>(null)
   const [sheet, setSheet] = useState<OperationType>(null)
@@ -277,11 +280,19 @@ export function WalletDashboard({
 
       <AnimatePresence>
         {menuOpen ? (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-20 bg-black/10" onMouseDown={() => setMenuOpen(false)}>
+          <motion.div
+            initial={disableTransitions ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
+            className="absolute inset-0 z-20 bg-black/10"
+            onMouseDown={() => setMenuOpen(false)}
+          >
             <motion.div
-              initial={{ opacity: 0, y: -8 }}
+              initial={disableTransitions ? false : { opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
+              exit={disableTransitions ? { opacity: 1, y: 0 } : { opacity: 0, y: -6 }}
+              transition={disableTransitions ? { duration: 0 } : undefined}
               className="absolute right-5 top-16 w-[220px] rounded-[20px] border border-gray-100 bg-white p-2 shadow-lg"
               onMouseDown={(e) => e.stopPropagation()}
             >
@@ -304,15 +315,21 @@ export function WalletDashboard({
 
       <AnimatePresence>
         {sheet ? (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-30 flex flex-col justify-end bg-black/25">
+          <motion.div
+            initial={disableTransitions ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
+            className="absolute inset-0 z-30 flex flex-col justify-end bg-black/25"
+          >
             <Pressable type="button" onClick={() => setSheet(null)} className="min-h-0 flex-1">
               {null}
             </Pressable>
             <motion.div
-              initial={{ y: '100%' }}
+              initial={disableTransitions ? false : { y: '100%' }}
               animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              exit={disableTransitions ? { y: 0 } : { y: '100%' }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="rounded-t-[30px] border-t border-[#ece8e2] bg-gradient-to-b from-white to-[#faf8f4] px-5 pb-[max(18px,env(safe-area-inset-bottom,0px))] pt-5"
             >
               {sheet === 'add-bank' ? (
@@ -402,15 +419,21 @@ export function WalletDashboard({
 
       <AnimatePresence>
         {passwordOpen ? (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-40 flex flex-col justify-end bg-black/25">
+          <motion.div
+            initial={disableTransitions ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
+            className="absolute inset-0 z-40 flex flex-col justify-end bg-black/25"
+          >
             <Pressable type="button" onClick={() => setPasswordOpen(false)} className="min-h-0 flex-1">
               {null}
             </Pressable>
             <motion.div
-              initial={{ y: '100%' }}
+              initial={disableTransitions ? false : { y: '100%' }}
               animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              exit={disableTransitions ? { y: 0 } : { y: '100%' }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="rounded-t-[30px] border-t border-[#ece8e2] bg-gradient-to-b from-white to-[#faf8f4] px-5 pb-[max(18px,env(safe-area-inset-bottom,0px))] pt-5"
             >
               <p className="text-center text-[11px] tracking-[0.28em] text-gray-400">SECURE PAY</p>
@@ -420,7 +443,7 @@ export function WalletDashboard({
                   <motion.span
                     key={i}
                     animate={i < pin.length ? { scale: [1.18, 1], backgroundColor: '#111111' } : { scale: 1, backgroundColor: 'rgba(255,255,255,0)' }}
-                    transition={{ duration: 0.18 }}
+                    transition={disableTransitions ? { duration: 0 } : { duration: 0.18 }}
                     className="h-3.5 w-3.5 rounded-full border border-gray-300"
                   />
                 ))}
@@ -447,15 +470,21 @@ export function WalletDashboard({
 
       <AnimatePresence>
         {changePwdOpen ? (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-50 flex flex-col justify-end bg-black/25">
+          <motion.div
+            initial={disableTransitions ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
+            className="absolute inset-0 z-50 flex flex-col justify-end bg-black/25"
+          >
             <Pressable type="button" onClick={() => setChangePwdOpen(false)} className="min-h-0 flex-1">
               {null}
             </Pressable>
             <motion.div
-              initial={{ y: '100%' }}
+              initial={disableTransitions ? false : { y: '100%' }}
               animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              exit={disableTransitions ? { y: 0 } : { y: '100%' }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="rounded-t-[30px] border-t border-[#ece8e2] bg-gradient-to-b from-white to-[#faf8f4] px-5 pb-[max(18px,env(safe-area-inset-bottom,0px))] pt-5"
             >
               <p className="text-center text-[11px] tracking-[0.28em] text-gray-400">PASSWORD RESET</p>
@@ -466,7 +495,7 @@ export function WalletDashboard({
                   <motion.span
                     key={i}
                     animate={i < activeChangeDots ? { scale: [1.18, 1], backgroundColor: '#111111' } : { scale: 1, backgroundColor: 'rgba(255,255,255,0)' }}
-                    transition={{ duration: 0.18 }}
+                    transition={disableTransitions ? { duration: 0 } : { duration: 0.18 }}
                     className="h-3.5 w-3.5 rounded-full border border-gray-300"
                   />
                 ))}
@@ -512,9 +541,10 @@ export function WalletDashboard({
       <AnimatePresence>
         {toast ? (
           <motion.div
-            initial={{ opacity: 0, y: 10 }}
+            initial={disableTransitions ? false : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
+            exit={disableTransitions ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
             className="pointer-events-none absolute left-1/2 top-6 z-[60] -translate-x-1/2 rounded-full bg-black px-4 py-2 text-[12px] text-white shadow-lg"
           >
             {toast}

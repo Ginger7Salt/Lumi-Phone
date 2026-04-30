@@ -20,7 +20,8 @@ export function ContactProfileSettingsScreen({
   onBlockedAndBack: () => void
   onDeleteContact: (notifyPeer: boolean) => void | Promise<void>
 }) {
-  const { replaceWeChatPersonaContacts } = useCustomization()
+  const { state, replaceWeChatPersonaContacts } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const [character, setCharacter] = useState<Character | null>(null)
   const [remarkDraft, setRemarkDraft] = useState('')
   const [remarkOpen, setRemarkOpen] = useState(false)
@@ -113,10 +114,10 @@ export function ContactProfileSettingsScreen({
         {remarkOpen ? (
           <ModalMask onClose={tryCloseRemarkSheet}>
             <motion.div
-              initial={{ y: '100%' }}
+              initial={disableTransitions ? false : { y: '100%' }}
               animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              exit={disableTransitions ? { y: 0 } : { y: '100%' }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
               className="rounded-t-[18px] bg-white px-4 pb-[max(16px,env(safe-area-inset-bottom,0px))] pt-4"
             >
               <div className="pb-3 text-center text-[17px] font-medium text-black">设置备注</div>
@@ -150,10 +151,10 @@ export function ContactProfileSettingsScreen({
         {remarkExitConfirmOpen ? (
           <ModalMask dark onClose={() => setRemarkExitConfirmOpen(false)}>
             <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
+              initial={disableTransitions ? false : { opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              transition={{ duration: 0.18 }}
+              exit={disableTransitions ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.96 }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.18 }}
               className="mx-8 overflow-hidden rounded-[14px] bg-white"
             >
               <div className="px-5 pb-4 pt-5 text-center">
@@ -191,10 +192,10 @@ export function ContactProfileSettingsScreen({
         {deletePanelOpen ? (
           <ModalMask dark center onClose={() => setDeletePanelOpen(false)}>
             <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
+              initial={disableTransitions ? false : { opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              transition={{ duration: 0.18 }}
+              exit={disableTransitions ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.96 }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.18 }}
               className="overflow-hidden rounded-[14px] bg-white"
             >
               <div className="px-5 pb-4 pt-5 text-center">
@@ -243,10 +244,10 @@ export function ContactProfileSettingsScreen({
         {blockConfirmOpen ? (
           <ModalMask dark onClose={() => setBlockConfirmOpen(false)}>
             <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
+              initial={disableTransitions ? false : { opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              transition={{ duration: 0.18 }}
+              exit={disableTransitions ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.96 }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.18 }}
               className="mx-8 overflow-hidden rounded-[14px] bg-white"
             >
               <div className="px-5 pb-4 pt-5 text-center">

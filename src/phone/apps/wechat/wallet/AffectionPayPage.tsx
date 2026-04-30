@@ -3,6 +3,7 @@ import { ChevronLeft, HeartHandshake } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 import { CustomNumericKeyboard } from '../redPacket/CustomNumericKeyboard'
 import type { AffectionCard } from './walletMockStore'
 import { useWalletMockStore } from './walletMockStore'
@@ -29,6 +30,8 @@ export function AffectionPayPage({
   onBack: () => void
   onPaid: (payload: { amountYuan: number; cardId: string; giverName: string; title: string }) => void | Promise<void>
 }) {
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const { snapshot, verifyPaymentPassword, payWithAffection } = useWalletMockStore()
   const [selectedCardId, setSelectedCardId] = useState(snapshot.affectionCards[0]?.id ?? '')
   const [amount, setAmount] = useState('')
@@ -102,10 +105,10 @@ export function AffectionPayPage({
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 24 }}
+      initial={disableTransitions ? false : { opacity: 0, x: 24 }}
       animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 20 }}
-      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+      exit={disableTransitions ? { opacity: 1, x: 0 } : { opacity: 0, x: 20 }}
+      transition={disableTransitions ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
       className="flex h-full min-h-0 flex-col bg-white"
     >
       <header className="flex shrink-0 items-center border-b border-gray-100 bg-white px-2 py-1" style={{ paddingTop: 'max(6px, env(safe-area-inset-top, 0px))' }}>
@@ -217,15 +220,21 @@ export function AffectionPayPage({
 
       <AnimatePresence>
         {pwdOpen ? (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2400] flex flex-col justify-end bg-black/25">
+          <motion.div
+            initial={disableTransitions ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
+            className="fixed inset-0 z-[2400] flex flex-col justify-end bg-black/25"
+          >
             <Pressable type="button" onClick={() => setPwdOpen(false)} className="min-h-0 flex-1" aria-label="关闭支付密码面板">
               {null}
             </Pressable>
             <motion.div
-              initial={{ y: '100%' }}
+              initial={disableTransitions ? false : { y: '100%' }}
               animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              exit={disableTransitions ? { y: 0 } : { y: '100%' }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="rounded-t-[30px] border-t border-[#ece8e2] bg-gradient-to-b from-white to-[#faf8f4] px-5 pb-[max(18px,env(safe-area-inset-bottom,0px))] pt-5"
             >
               <p className="text-center text-[11px] tracking-[0.28em] text-gray-400">SECURE PAY</p>
@@ -236,7 +245,7 @@ export function AffectionPayPage({
                   <motion.span
                     key={i}
                     animate={i < pin.length ? { scale: [1.18, 1], backgroundColor: '#111111' } : { scale: 1, backgroundColor: 'rgba(255,255,255,0)' }}
-                    transition={{ duration: 0.18 }}
+                    transition={disableTransitions ? { duration: 0 } : { duration: 0.18 }}
                     className="h-3.5 w-3.5 rounded-full border border-gray-300"
                   />
                 ))}

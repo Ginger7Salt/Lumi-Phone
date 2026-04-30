@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { WeChatTimeConfig } from '../newFriendsPersona/types'
 import { formatWeChatChatTimestamp, normalizeWeChatTimeConfig, parseDateTimeLocalValue, toDateTimeLocalValue } from '../time/wechatTimeUtils'
@@ -66,6 +67,8 @@ export function ChatTimeSettingsScreen({
   peerDisplayName: string
   onClose: () => void
 }) {
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const { currentTimeMs } = useWeChatCurrentTime({ characterId })
   const [form, setForm] = useState<WeChatTimeConfig>(() => normalizeWeChatTimeConfig())
   const [savedSnapshot, setSavedSnapshot] = useState('')
@@ -111,12 +114,19 @@ export function ChatTimeSettingsScreen({
     <AnimatePresence>
       {open ? (
         <>
-          <motion.div className="fixed inset-0 z-[1230] bg-black/22" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} onClick={requestClose} />
           <motion.div
-            initial={{ y: '100%', opacity: 0 }}
+            className="fixed inset-0 z-[1230] bg-black/22"
+            initial={disableTransitions ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : { duration: 0.2 }}
+            onClick={requestClose}
+          />
+          <motion.div
+            initial={disableTransitions ? false : { y: '100%', opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: '100%', opacity: 0 }}
-            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            exit={disableTransitions ? { y: 0, opacity: 1 } : { y: '100%', opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
             className="fixed inset-x-0 bottom-0 z-[1240] mx-auto w-full max-w-[560px] rounded-t-[24px] border border-[#e5e5e5] bg-[#f9f9f9] shadow-[0_-12px_48px_rgba(0,0,0,0.12)]"
             style={{ maxHeight: '92vh' }}
           >

@@ -251,6 +251,8 @@ export type UiPreferences = {
   fullScreen: boolean
   /** 显示圆角手机外壳与投影；关闭为无框贴边布局 */
   showDeviceFrame: boolean
+  /** 关闭页面切换动画（PPT 式切换，减少 iOS Safari 闪屏概率） */
+  disablePageTransitions: boolean
   /** 键盘抬升调试面板（桌面与聊天页） */
   keyboardDebugEnabled: boolean
   /** 仅保留兼容字段，不再用于抬升逻辑 */
@@ -425,6 +427,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     showStatusBar: true,
     fullScreen: false,
     showDeviceFrame: true,
+    disablePageTransitions: false,
     keyboardDebugEnabled: false,
     keyboardDebugSimulateOpen: false,
     keyboardDebugInsetPx: 0,

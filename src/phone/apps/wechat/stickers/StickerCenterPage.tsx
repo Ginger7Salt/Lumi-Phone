@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 
 import walletBg from '../../../../../image/钱包页背景图.png'
 import { Pressable } from '../../../components/Pressable'
+import { useCustomization } from '../../../CustomizationContext'
 import { CreateGroupModal } from './CreateGroupModal'
 import { StickerDetail } from './StickerDetail'
 import { StickerHub } from './StickerHub'
@@ -15,6 +16,8 @@ type Props = {
 
 export function StickerCenterPage({ onBack }: Props) {
   const store = useStickerStore()
+  const { state } = useCustomization()
+  const disableTransitions = state.ui.disablePageTransitions
   const [createOpen, setCreateOpen] = useState(false)
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
   const [pendingDeleteGroup, setPendingDeleteGroup] = useState<StickerGroup | null>(null)
@@ -50,9 +53,16 @@ export function StickerCenterPage({ onBack }: Props) {
         </div>
       </header>
 
-      <AnimatePresence mode="wait">
+      <AnimatePresence mode="wait" initial={false}>
         {!activeGroup ? (
-          <motion.div key="hub" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.22 }} className="relative min-h-0 flex-1">
+          <motion.div
+            key="hub"
+            initial={disableTransitions ? false : { opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={disableTransitions ? { opacity: 1, x: 0 } : { opacity: 0, x: -12 }}
+            transition={disableTransitions ? { duration: 0 } : { duration: 0.22 }}
+            className="relative min-h-0 flex-1"
+          >
             <StickerHub
               groups={store.groups}
               onCreate={() => setCreateOpen(true)}
@@ -64,7 +74,14 @@ export function StickerCenterPage({ onBack }: Props) {
             />
           </motion.div>
         ) : (
-          <motion.div key={`detail-${activeGroup.id}`} initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.22 }} className="relative min-h-0 flex-1">
+          <motion.div
+            key={`detail-${activeGroup.id}`}
+            initial={disableTransitions ? false : { opacity: 0, x: 18 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={disableTransitions ? { opacity: 1, x: 0 } : { opacity: 0, x: -12 }}
+            transition={disableTransitions ? { duration: 0 } : { duration: 0.22 }}
+            className="relative min-h-0 flex-1"
+          >
             <StickerDetail
               group={activeGroup}
               allGroups={store.groups}
@@ -93,18 +110,20 @@ export function StickerCenterPage({ onBack }: Props) {
       <AnimatePresence>
         {pendingDeleteGroup ? (
           <motion.div
-            initial={{ opacity: 0 }}
+            initial={disableTransitions ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            exit={disableTransitions ? { opacity: 1 } : { opacity: 0 }}
+            transition={disableTransitions ? { duration: 0 } : undefined}
             className="absolute inset-0 z-[180] flex items-end justify-center bg-black/30 p-4"
           >
             <Pressable type="button" className="absolute inset-0" onClick={() => setPendingDeleteGroup(null)}>
               <span className="sr-only">关闭</span>
             </Pressable>
             <motion.div
-              initial={{ y: 18, opacity: 0 }}
+              initial={disableTransitions ? false : { y: 18, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 12, opacity: 0 }}
+              exit={disableTransitions ? { y: 0, opacity: 1 } : { y: 12, opacity: 0 }}
+              transition={disableTransitions ? { duration: 0 } : undefined}
               className="relative z-[1] w-full max-w-[560px] rounded-[22px] border border-[#eee] bg-white px-5 py-5 shadow-sm"
             >
               <p className="text-[11px] tracking-[0.2em] text-gray-500">DELETE COLLECTION</p>
