@@ -992,8 +992,8 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
           ...themeStyle,
           fontFamily: 'var(--phone-font)',
           backgroundColor: 'var(--phone-bg)',
-          minHeight: state.ui.fullScreen ? '100vh' : 'var(--app-vh, 100dvh)',
-          height: state.ui.fullScreen ? '100vh' : undefined,
+          minHeight: 'var(--app-vh, 100dvh)',
+          height: 'var(--app-vh, 100dvh)',
         }}
       >
         {children}

@@ -68,9 +68,9 @@ select {
  */
 html[data-phone-layout='fullscreen'] {
   width: 100vw;
-  height: 100vh;
-  min-height: 100vh;
-  max-height: 100vh;
+  height: var(--app-vh, 100dvh);
+  min-height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
   margin: 0;
   padding: 0;
   overflow: hidden;
@@ -79,9 +79,9 @@ html[data-phone-layout='fullscreen'] {
 
 html[data-phone-layout='fullscreen'] body {
   width: 100vw;
-  height: 100vh;
-  min-height: 100vh;
-  max-height: 100vh;
+  height: var(--app-vh, 100dvh);
+  min-height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
   margin: 0;
   padding: 0;
   position: fixed;
@@ -92,9 +92,9 @@ html[data-phone-layout='fullscreen'] body {
 
 html[data-phone-layout='fullscreen'] #root {
   width: 100vw;
-  height: 100vh;
-  min-height: 100vh;
-  max-height: 100vh;
+  height: var(--app-vh, 100dvh);
+  min-height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
   position: fixed;
   inset: 0;
   overflow: hidden;
