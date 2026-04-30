@@ -144,7 +144,7 @@ export function PhoneShell({ children }: Props) {
                 width: NON_FULLSCREEN_BASE_W,
                 height: NON_FULLSCREEN_BASE_H,
                 transform: `scale(${nonFullscreenScale})`,
-                transformOrigin: 'top left',
+                transformOrigin: 'center center',
                 willChange: 'transform',
               }}
             >

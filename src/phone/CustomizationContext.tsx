@@ -607,6 +607,39 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
     })()
   }, [state, customizationHydrated])
 
+  /**
+   * 移动端（安卓/手机浏览器）默认应使用全屏无外壳，避免桌面预览壳在窄屏下产生“被截断”观感。
+   * 仅做一次性迁移，不反复覆盖用户后续手动设置。
+   */
+  useEffect(() => {
+    if (!customizationHydrated) return
+    const migrateKey = 'lumi-mobile-layout-migrated-v1'
+    if (typeof window === 'undefined') return
+    if (window.localStorage.getItem(migrateKey) === '1') return
+    const ua = window.navigator.userAgent.toLowerCase()
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false
+    const narrow = window.matchMedia?.('(max-width: 900px)').matches ?? false
+    const isMobileUa =
+      /android|iphone|ipad|ipod|harmonyos|mobile/.test(ua)
+    if (!(isMobileUa || (coarse && narrow))) return
+    setState((prev) => {
+      if (prev.ui.fullScreen && !prev.ui.showDeviceFrame) return prev
+      return {
+        ...prev,
+        ui: {
+          ...prev.ui,
+          fullScreen: true,
+          showDeviceFrame: false,
+        },
+      }
+    })
+    try {
+      window.localStorage.setItem(migrateKey, '1')
+    } catch {
+      // ignore
+    }
+  }, [customizationHydrated])
+
   useEffect(() => {
     document.documentElement.style.setProperty('--phone-bg', state.theme.background)
     document.documentElement.style.setProperty('--phone-font', state.theme.fontFamily)
