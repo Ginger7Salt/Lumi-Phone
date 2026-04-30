@@ -261,7 +261,7 @@ export function CustomizeScreen({ onBack }: Props) {
           open={section === 'theme' && !!wallpaperCropSrc}
           imageSrc={wallpaperCropSrc}
           title="裁剪桌面壁纸"
-          aspect={16 / 9}
+          aspect={9 / 16}
           maxSide={1440}
           objectFit="vertical-cover"
           onCancel={() => {
