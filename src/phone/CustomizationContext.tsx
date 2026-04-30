@@ -154,7 +154,7 @@ function normalizeState(raw: Partial<CustomizationState>): CustomizationState {
           : DEFAULT_CUSTOMIZATION.ui.keyboardDebugSimulateOpen,
       keyboardDebugInsetPx:
         typeof raw.ui?.keyboardDebugInsetPx === 'number' && Number.isFinite(raw.ui.keyboardDebugInsetPx)
-          ? Math.max(0, Math.min(520, Math.round(raw.ui.keyboardDebugInsetPx)))
+          ? Math.max(-220, Math.min(220, Math.round(raw.ui.keyboardDebugInsetPx)))
           : DEFAULT_CUSTOMIZATION.ui.keyboardDebugInsetPx,
     },
     appPageStyles: normalizeAppPageStyles(raw.appPageStyles),

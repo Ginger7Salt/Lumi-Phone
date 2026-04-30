@@ -253,9 +253,9 @@ export type UiPreferences = {
   showDeviceFrame: boolean
   /** 键盘抬升调试面板（桌面与聊天页） */
   keyboardDebugEnabled: boolean
-  /** 聊天页中是否模拟“键盘已弹起” */
+  /** 仅保留兼容字段，不再用于抬升逻辑 */
   keyboardDebugSimulateOpen: boolean
-  /** 聊天页模拟键盘高度（px） */
+  /** 聊天输入栏抬升补偿（px，允许负值微调贴边） */
   keyboardDebugInsetPx: number
 }
 
@@ -427,7 +427,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     showDeviceFrame: true,
     keyboardDebugEnabled: false,
     keyboardDebugSimulateOpen: false,
-    keyboardDebugInsetPx: 260,
+    keyboardDebugInsetPx: 0,
   },
   appPageStyles: {
     wechat: {
