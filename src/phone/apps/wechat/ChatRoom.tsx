@@ -987,7 +987,7 @@ export function ChatRoom({
 
   // `ChatRoom` 顶栏由上层承载，这里仅保留引用以避免未使用告警
   useEffect(() => {}, [_onBack])
-  const { state } = useCustomization()
+  const { state, setUi } = useCustomization()
   const { wechatTheme } = state
   const { chatTheme } = useChatTheme()
   const apiConfig = useCurrentApiConfig('chatCard')
@@ -1648,6 +1648,12 @@ export function ChatRoom({
   const [composerToast, setComposerToast] = useState<string | null>(null)
   const [centerToast, setCenterToast] = useState<string | null>(null)
   const [keyboardInsetPx, setKeyboardInsetPx] = useState(0)
+  const keyboardDebugEnabled = !!state.ui.keyboardDebugEnabled
+  const keyboardDebugInsetPx = Math.max(-220, Math.min(220, Math.round(state.ui.keyboardDebugInsetPx || 0)))
+  const composerInsetPx =
+    keyboardInsetPx > 0
+      ? Math.max(0, keyboardInsetPx + keyboardDebugInsetPx)
+      : 0
   const toastTimerRef = useRef<number | null>(null)
   const centerToastTimerRef = useRef<number | null>(null)
   /** 已读不回 / 忙碌：阻止新的 AI 回复，直至用户发送消息或点「继续回复」 */
@@ -2065,15 +2071,37 @@ export function ChatRoom({
   useEffect(() => {
     const vv = window.visualViewport
     if (!vv) return
+    const nav = navigator as Navigator & {
+      virtualKeyboard?: {
+        boundingRect?: { height?: number }
+        addEventListener?: (type: 'geometrychange', listener: () => void) => void
+        removeEventListener?: (type: 'geometrychange', listener: () => void) => void
+      }
+    }
+    const virtualKeyboard = nav.virtualKeyboard
     // iOS 上地址栏/工具栏会让 innerHeight 与 offsetTop 抖动。
     // 记录“键盘未弹出时”的最大可视高度作为 baseline，再用 baseline - 当前可视高度估算键盘遮挡。
     const baselineRef = { current: 0 }
 
     const update = () => {
       const visible = vv.height + vv.offsetTop
+      const cssVhRaw = window.getComputedStyle(document.documentElement).getPropertyValue('--app-vh')
+      const cssVh = Number.parseFloat(cssVhRaw)
+      const vkInset = Math.max(0, Math.round(virtualKeyboard?.boundingRect?.height ?? 0))
       // baseline 取“见过的最大 visible”，通常是键盘收起时
-      if (visible > baselineRef.current) baselineRef.current = visible
-      let inset = Math.max(0, Math.round(baselineRef.current - visible))
+      const baselineCandidate = Math.max(
+        visible,
+        Math.round(window.innerHeight || 0),
+        Number.isFinite(cssVh) ? Math.round(cssVh) : 0,
+      )
+      if (baselineCandidate > baselineRef.current) baselineRef.current = baselineCandidate
+      let inset = Math.max(
+        0,
+        Math.round(baselineRef.current - visible),
+        Math.round((window.innerHeight || 0) - visible),
+        Number.isFinite(cssVh) ? Math.round(cssVh - visible) : 0,
+        vkInset,
+      )
       // 防止异常值把输入栏顶飞（比如旋转/系统动画瞬间）
       inset = Math.min(inset, Math.round((baselineRef.current * 0.6) || 0))
 
@@ -2087,10 +2115,12 @@ export function ChatRoom({
     update()
     vv.addEventListener('resize', update)
     vv.addEventListener('scroll', update)
+    virtualKeyboard?.addEventListener?.('geometrychange', update)
     window.addEventListener('orientationchange', update)
     return () => {
       vv.removeEventListener('resize', update)
       vv.removeEventListener('scroll', update)
+      virtualKeyboard?.removeEventListener?.('geometrychange', update)
       window.removeEventListener('orientationchange', update)
     }
   }, [])
@@ -4820,7 +4850,7 @@ export function ChatRoom({
         className="relative min-h-0 w-full max-w-full flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain py-4 pl-0 pr-0 [-webkit-overflow-scrolling:touch]"
         style={{
           // 给消息列表留出“键盘上移后的输入栏”空间，避免最后几条被挡住
-          paddingBottom: 12 + (isMultiSelectMode ? 86 : keyboardInsetPx),
+          paddingBottom: 12 + (isMultiSelectMode ? 86 : composerInsetPx),
           scrollBehavior: 'smooth',
           ...(bgUrl
             ? {
@@ -4927,7 +4957,7 @@ export function ChatRoom({
           {pendingNewCount > 0 ? (
             <div
               className="pointer-events-none absolute inset-x-0 z-20 flex justify-center"
-              style={{ bottom: `calc(${70 + keyboardInsetPx}px + env(safe-area-inset-bottom, 0px))` }}
+              style={{ bottom: `calc(${70 + composerInsetPx}px + env(safe-area-inset-bottom, 0px))` }}
             >
               <Pressable
                 type="button"
@@ -4949,9 +4979,9 @@ export function ChatRoom({
               paddingRight: 12,
               paddingTop: 12,
               paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))',
-              transform: keyboardInsetPx > 0 ? `translate3d(0, -${keyboardInsetPx}px, 0)` : undefined,
+              transform: composerInsetPx > 0 ? `translate3d(0, -${composerInsetPx}px, 0)` : undefined,
               transition: 'transform 220ms ease-out',
-              willChange: keyboardInsetPx > 0 ? 'transform' : undefined,
+              willChange: composerInsetPx > 0 ? 'transform' : undefined,
             }}
           >
         {composerToast ? (
@@ -4998,6 +5028,56 @@ export function ChatRoom({
             >
               <X size={16} color="#000000" aria-hidden />
             </Pressable>
+          </div>
+        ) : null}
+        {keyboardDebugEnabled ? (
+          <div className="mb-2 rounded-[10px] border border-[#d9d9d9] bg-[#fafafa] px-2 py-2 text-[12px] text-[#333]">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span>键盘抬升补偿调试</span>
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-[#666]">补偿：{keyboardDebugInsetPx >= 0 ? '+' : ''}{keyboardDebugInsetPx}px</span>
+                <Pressable
+                  type="button"
+                  aria-label="关闭键盘调试盘"
+                  className="flex h-6 w-6 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666] active:bg-[#f3f3f3]"
+                  onClick={() => setUi({ keyboardDebugEnabled: false })}
+                >
+                  <X size={14} aria-hidden />
+                </Pressable>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={-220}
+                max={220}
+                step={1}
+                value={keyboardDebugInsetPx}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  setUi({ keyboardDebugInsetPx: Number.isFinite(n) ? Math.max(-220, Math.min(220, Math.round(n))) : 0 })
+                }}
+                className="h-8 w-24 rounded-[8px] border border-[#ddd] bg-white px-2 text-[12px] outline-none"
+                aria-label="键盘抬升补偿（像素）"
+              />
+              <input
+                type="range"
+                min={-220}
+                max={220}
+                step={1}
+                value={keyboardDebugInsetPx}
+                onChange={(e) => setUi({ keyboardDebugInsetPx: Number(e.target.value) })}
+                className="min-w-0 flex-1"
+                aria-label="键盘抬升补偿滑杆"
+              />
+              <Pressable
+                type="button"
+                onClick={() => setUi({ keyboardDebugInsetPx: 0 })}
+                className="h-8 rounded-[8px] border border-[#ddd] bg-white px-3 text-[12px] text-[#333]"
+              >
+                归零
+              </Pressable>
+            </div>
           </div>
         ) : null}
         <ChatInputBar

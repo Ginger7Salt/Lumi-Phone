@@ -251,6 +251,12 @@ export type UiPreferences = {
   fullScreen: boolean
   /** 显示圆角手机外壳与投影；关闭为无框贴边布局 */
   showDeviceFrame: boolean
+  /** 键盘抬升调试面板（桌面与聊天页） */
+  keyboardDebugEnabled: boolean
+  /** 聊天页中是否模拟“键盘已弹起” */
+  keyboardDebugSimulateOpen: boolean
+  /** 聊天页模拟键盘高度（px） */
+  keyboardDebugInsetPx: number
 }
 
 /** 由「人设生成联系人」写入，展示在微信通讯录（与内置示例联系人合并） */
@@ -419,6 +425,9 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     showStatusBar: true,
     fullScreen: false,
     showDeviceFrame: true,
+    keyboardDebugEnabled: false,
+    keyboardDebugSimulateOpen: false,
+    keyboardDebugInsetPx: 260,
   },
   appPageStyles: {
     wechat: {

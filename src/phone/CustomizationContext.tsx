@@ -141,7 +141,22 @@ function normalizeState(raw: Partial<CustomizationState>): CustomizationState {
     },
     apps,
     desktopLayout: normalizeDesktopLayout(raw.desktopLayout, apps),
-    ui: { ...DEFAULT_CUSTOMIZATION.ui, ...raw.ui },
+    ui: {
+      ...DEFAULT_CUSTOMIZATION.ui,
+      ...raw.ui,
+      keyboardDebugEnabled:
+        typeof raw.ui?.keyboardDebugEnabled === 'boolean'
+          ? raw.ui.keyboardDebugEnabled
+          : DEFAULT_CUSTOMIZATION.ui.keyboardDebugEnabled,
+      keyboardDebugSimulateOpen:
+        typeof raw.ui?.keyboardDebugSimulateOpen === 'boolean'
+          ? raw.ui.keyboardDebugSimulateOpen
+          : DEFAULT_CUSTOMIZATION.ui.keyboardDebugSimulateOpen,
+      keyboardDebugInsetPx:
+        typeof raw.ui?.keyboardDebugInsetPx === 'number' && Number.isFinite(raw.ui.keyboardDebugInsetPx)
+          ? Math.max(0, Math.min(520, Math.round(raw.ui.keyboardDebugInsetPx)))
+          : DEFAULT_CUSTOMIZATION.ui.keyboardDebugInsetPx,
+    },
     appPageStyles: normalizeAppPageStyles(raw.appPageStyles),
     dockStyle: normalizeDockStyle(raw.dockStyle),
     wechatTheme,

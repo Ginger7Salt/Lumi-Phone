@@ -370,6 +370,60 @@ export function CustomizeScreen({ onBack }: Props) {
               checked={ui.showDeviceFrame}
               onChange={(v) => setUi({ showDeviceFrame: v })}
             />
+            <SettingToggle
+              label="启用键盘抬升调试"
+              description="开启后，可在桌面与聊天页手动调试输入栏贴键盘高度"
+              checked={ui.keyboardDebugEnabled}
+              onChange={(v) => setUi({ keyboardDebugEnabled: v })}
+            />
+            {ui.keyboardDebugEnabled ? (
+              <div
+                className="rounded-[14px] border p-3"
+                style={{
+                  borderColor: theme.border,
+                  backgroundColor: appearanceStyle.cardBg || theme.surface,
+                  backgroundImage: appearanceStyle.cardBgImageUrl ? `url(${appearanceStyle.cardBgImageUrl})` : 'none',
+                  backgroundPosition: 'center',
+                  backgroundRepeat: 'no-repeat',
+                  backgroundSize: 'cover',
+                }}
+              >
+                <p className="text-[12px] font-medium" style={{ color: theme.text }}>
+                  键盘抬升补偿（px）
+                </p>
+                <div className="mt-2 flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={-220}
+                    max={220}
+                    step={1}
+                    value={ui.keyboardDebugInsetPx}
+                    onChange={(e) => setUi({ keyboardDebugInsetPx: Number(e.target.value) })}
+                    className="w-full"
+                  />
+                  <input
+                    type="number"
+                    min={-220}
+                    max={220}
+                    step={1}
+                    className="w-20 rounded-[12px] border px-3 py-2 text-base outline-none"
+                    style={{
+                      borderColor: theme.border,
+                      background: theme.surfaceMuted,
+                      color: theme.text,
+                    }}
+                    value={ui.keyboardDebugInsetPx}
+                    onChange={(e) => setUi({ keyboardDebugInsetPx: Number(e.target.value) })}
+                  />
+                </div>
+                <p className="mt-2 text-[11px] text-[#666]">
+                  只在真实键盘弹出时生效；键盘收起时输入栏始终在默认底部位置。
+                </p>
+                <p className="mt-2 text-[11px] text-[#666]">
+                  聊天室同款输入框已移到页面底部固定区域，便于对齐真实键盘位置调试。
+                </p>
+              </div>
+            ) : null}
           </div>
         ) : section === 'theme' ? (
           <div className="space-y-4">
