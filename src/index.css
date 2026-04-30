@@ -60,6 +60,11 @@ select {
   min-height: 100dvh;
   min-width: 0;
   flex-direction: column;
+  /* iOS Safari：切换页面时减少整页重建合成层导致的闪屏 */
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 
 /**
