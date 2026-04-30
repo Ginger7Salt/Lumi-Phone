@@ -1,8 +1,7 @@
 /**
  * 微信风格聊天加号扩展菜单：2 页 × 8 格（2 行 4 列），横向滑动分页 + 指示器。
  */
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { animate, motion, useMotionValue } from 'framer-motion'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
   Camera,
@@ -67,8 +66,6 @@ const PAGE2: { id: WeChatPlusActionId; label: string; Icon: LucideIcon }[] = [
   { id: 'console_logs', label: '控制台', Icon: Terminal },
   { id: 'check_phone', label: '查手机', Icon: Smartphone },
 ]
-
-const SPRING = { type: 'spring' as const, stiffness: 420, damping: 34, mass: 0.85 }
 
 function RedPacketIcon({ size = 24 }: { size?: number }) {
   // 极简红包：矩形 + 上半部分 V 字（你指定的样式）
@@ -153,16 +150,11 @@ function PlusMenuGridCell({
 
 function PlusMenuPage({
   children,
-  widthPx,
 }: {
   children: ReactNode
-  widthPx: number
 }) {
   return (
-    <div
-      className="grid shrink-0 grid-cols-4 gap-x-4 gap-y-3 px-6 pt-4"
-      style={{ width: widthPx || '100%' }}
-    >
+    <div className="grid basis-full shrink-0 snap-start grid-cols-4 gap-x-4 gap-y-3 px-6 pt-4">
       {children}
     </div>
   )
@@ -195,181 +187,95 @@ function PageDots({
 }
 
 export function WeChatChatPlusMenuPanel({ onAction }: { onAction: (id: WeChatPlusActionId) => void }) {
-  const viewportRef = useRef<HTMLDivElement>(null)
-  const [vw, setVw] = useState(0)
+  const scrollerRef = useRef<HTMLDivElement>(null)
   const [page, setPage] = useState(0)
-  const pageRef = useRef(0)
-  pageRef.current = page
-  const x = useMotionValue(0)
-  const draggingRef = useRef(false)
-  const startClientXRef = useRef(0)
-  const startXRef = useRef(0)
-  const pointerIdRef = useRef<number | null>(null)
   const suppressClickRef = useRef(false)
-  const movedRef = useRef(false)
+  const startClientXRef = useRef(0)
+  const draggingRef = useRef(false)
   const DRAG_THRESHOLD_PX = 7
-  /** 松手时以该页为起点做翻页判定（避免仅用 x 中点误判） */
-  const dragStartPageRef = useRef(0)
-  /** 最近几次指针采样，用于快速轻扫（fling）翻页 */
-  const pointerSamplesRef = useRef<Array<{ t: number; clientX: number }>>([])
-
-  useLayoutEffect(() => {
-    const el = viewportRef.current
-    if (!el) return
-    const apply = () => {
-      const w = el.offsetWidth
-      setVw(w)
-      if (w) x.set(-pageRef.current * w)
-    }
-    apply()
-    const ro = new ResizeObserver(apply)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [x])
 
   const snapTo = useCallback(
     (p: number) => {
-      const w = vw
-      if (!w) return
       const clamped = Math.max(0, Math.min(1, p))
       setPage(clamped)
-      void animate(x, -clamped * w, SPRING)
+      const el = scrollerRef.current
+      if (!el) return
+      const w = el.clientWidth
+      el.scrollTo({ left: clamped * w, behavior: 'smooth' })
     },
-    [vw, x],
+    [],
   )
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (!vw) return
-    pointerIdRef.current = e.pointerId
-    draggingRef.current = false
-    movedRef.current = false
+    draggingRef.current = true
     suppressClickRef.current = false
     startClientXRef.current = e.clientX
-    startXRef.current = x.get()
-    dragStartPageRef.current = pageRef.current
-    pointerSamplesRef.current = [{ t: performance.now(), clientX: e.clientX }]
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
+    if (!draggingRef.current) return
     const dx = e.clientX - startClientXRef.current
-    if (!vw) return
-    if (!draggingRef.current) {
-      if (Math.abs(dx) < DRAG_THRESHOLD_PX) return
-      draggingRef.current = true
-      movedRef.current = true
-      suppressClickRef.current = true
-      try {
-        ;(viewportRef.current as HTMLElement | null)?.setPointerCapture(e.pointerId)
-      } catch {
-        /* ignore */
-      }
-    }
-    const now = performance.now()
-    const samples = pointerSamplesRef.current
-    samples.push({ t: now, clientX: e.clientX })
-    if (samples.length > 6) samples.splice(0, samples.length - 6)
-
-    let next = startXRef.current + dx
-    const min = -vw
-    const max = 0
-    const rubber = 0.22
-    if (next > max) next = max + (next - max) * rubber
-    else if (next < min) next = min + (next - min) * rubber
-    x.set(next)
+    if (Math.abs(dx) >= DRAG_THRESHOLD_PX) suppressClickRef.current = true
   }
 
-  const endDrag = () => {
-    if (!vw) return
+  const onPointerUp = () => {
     draggingRef.current = false
-    const cur = x.get()
-    const w = vw
-    // 旧逻辑用 -w/2 作为分界，必须拖过约 50% 才翻页，手感很硬；改为「位移比例 + 快速轻扫速度」双通道。
-    const COMMIT_RATIO = 0.22
-    const FLING_PX_PER_SEC = 520
-    const samples = pointerSamplesRef.current
-    let vx = 0
-    // 用最后一段位移算速度，避免整段慢拖把平均速度拉没
-    if (samples.length >= 2) {
-      const a = samples[samples.length - 2]!
-      const b = samples[samples.length - 1]!
-      const dt = Math.max(1, b.t - a.t)
-      vx = ((b.clientX - a.clientX) / dt) * 1000
-    }
-    const startPage = dragStartPageRef.current
-    let nextPage = startPage
-    if (startPage === 0) {
-      if (cur <= -COMMIT_RATIO * w || vx < -FLING_PX_PER_SEC) nextPage = 1
-    } else {
-      if (cur >= -(1 - COMMIT_RATIO) * w || vx > FLING_PX_PER_SEC) nextPage = 0
-    }
-    snapTo(nextPage)
-    pointerSamplesRef.current = []
+    requestAnimationFrame(() => {
+      suppressClickRef.current = false
+    })
   }
 
-  const onPointerUp = (e: React.PointerEvent) => {
-    if (pointerIdRef.current == null || pointerIdRef.current !== e.pointerId) return
-    pointerIdRef.current = null
-    if (draggingRef.current) {
-      try {
-        ;(viewportRef.current as HTMLElement | null)?.releasePointerCapture(e.pointerId)
-      } catch {
-        /* ignore */
-      }
-      endDrag()
-      // 防止拖动结束后的 click 触发：保留一帧再放开
-      requestAnimationFrame(() => {
-        suppressClickRef.current = false
-        movedRef.current = false
-      })
-      return
-    }
-    // 纯点击：允许按钮正常触发
+  const onScroll = () => {
+    const el = scrollerRef.current
+    if (!el) return
+    const w = el.clientWidth || 1
+    const p = Math.round(el.scrollLeft / w)
+    const clamped = Math.max(0, Math.min(1, p))
+    setPage(clamped)
   }
 
   return (
     <div
-      ref={viewportRef}
       className="w-full max-w-full min-w-0 select-none overflow-hidden bg-white"
       style={{ height: PLUS_MENU_HEIGHT_PX }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
     >
-      <div className="h-[calc(100%-24px)] w-full max-w-full cursor-grab touch-pan-x active:cursor-grabbing" role="presentation">
-        <motion.div
-          className="flex h-full min-w-0"
-          style={{ x, width: vw > 0 ? vw * 2 : undefined }}
-        >
-          {vw > 0 ? (
-            <>
-              <PlusMenuPage widthPx={vw}>
-                {PAGE1.map((it) => (
-                  <PlusMenuGridCell
-                    key={it.id}
-                    label={it.label}
-                    Icon={it.Icon}
-                    onPress={() => onAction(it.id)}
-                    suppressClickRef={suppressClickRef}
-                    actionId={it.id}
-                  />
-                ))}
-              </PlusMenuPage>
-              <PlusMenuPage widthPx={vw}>
-                {PAGE2.map((it) => (
-                  <PlusMenuGridCell
-                    key={it.id}
-                    label={it.label}
-                    Icon={it.Icon}
-                    onPress={() => onAction(it.id)}
-                    suppressClickRef={suppressClickRef}
-                    actionId={it.id}
-                  />
-                ))}
-              </PlusMenuPage>
-            </>
-          ) : null}
-        </motion.div>
+      <div
+        ref={scrollerRef}
+        className="h-[calc(100%-24px)] w-full max-w-full cursor-grab touch-pan-x overflow-x-auto overflow-y-hidden overscroll-x-contain overscroll-y-none snap-x snap-mandatory active:cursor-grabbing [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        style={{ touchAction: 'pan-x' }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onScroll={onScroll}
+        role="presentation"
+      >
+        <div className="flex h-full min-w-0 w-full">
+          <PlusMenuPage>
+            {PAGE1.map((it) => (
+              <PlusMenuGridCell
+                key={it.id}
+                label={it.label}
+                Icon={it.Icon}
+                onPress={() => onAction(it.id)}
+                suppressClickRef={suppressClickRef}
+                actionId={it.id}
+              />
+            ))}
+          </PlusMenuPage>
+          <PlusMenuPage>
+            {PAGE2.map((it) => (
+              <PlusMenuGridCell
+                key={it.id}
+                label={it.label}
+                Icon={it.Icon}
+                onPress={() => onAction(it.id)}
+                suppressClickRef={suppressClickRef}
+                actionId={it.id}
+              />
+            ))}
+          </PlusMenuPage>
+        </div>
       </div>
       <PageDots total={2} active={page} onPick={(i) => snapTo(i)} />
     </div>

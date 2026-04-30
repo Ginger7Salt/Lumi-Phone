@@ -775,9 +775,16 @@ function messageBlockSpacing(items: ChatItem[], index: number): string {
 function consecutiveSameSpeaker(items: ChatItem[], index: number): boolean {
   if (index <= 0) return false
   const cur = items[index]
-  const prev = items[index - 1]
-  if (cur.kind !== 'msg' || prev.kind !== 'msg') return false
-  return cur.from === prev.from
+  if (cur.kind !== 'msg' || cur.isRecalled) return false
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const prev = items[i]
+    if (prev.kind === 'time') return false
+    if (prev.kind !== 'msg') continue
+    // 已撤回消息只显示撤回提示，不应参与头像“连续同侧”合并判断。
+    if (prev.isRecalled) continue
+    return cur.from === prev.from
+  }
+  return false
 }
 
 /** 极简入场：轻微上移 + 微缩放 + 渐显，避免弹跳感。 */
