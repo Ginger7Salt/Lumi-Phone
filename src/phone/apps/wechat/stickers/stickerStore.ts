@@ -171,7 +171,6 @@ function allStickerGroups(): StickerGroup[] {
 export function getStickerCatalogEntries(): StickerCatalogEntry[] {
   const rows: Array<{ g: StickerGroup; it: StickerItem; desc: string }> = []
   for (const g of allStickerGroups()) {
-    const tag = g.readonly ? `${g.name}·默认` : g.name
     for (const it of g.items) {
       const desc = (it.description || '未命名').replace(/\s+/g, ' ').trim().slice(0, 40) || '未命名'
       rows.push({ g, it, desc })
