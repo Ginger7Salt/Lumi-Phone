@@ -563,6 +563,7 @@ function wechatThemeToStyle(theme: WeChatTheme, globalFontFamily: string): React
 export function CustomizationProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<CustomizationState>(DEFAULT_CUSTOMIZATION)
   const [customizationHydrated, setCustomizationHydrated] = useState(false)
+  const [isStandaloneRuntime, setIsStandaloneRuntime] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -677,8 +678,15 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const root = document.documentElement
     root.setAttribute('data-phone-layout', state.ui.fullScreen ? 'fullscreen' : 'locked')
+    const isStandalone =
+      window.matchMedia?.('(display-mode: standalone)').matches ||
+      window.matchMedia?.('(display-mode: fullscreen)').matches ||
+      !!((navigator as Navigator & { standalone?: boolean }).standalone)
+    setIsStandaloneRuntime(isStandalone)
+    root.setAttribute('data-phone-runtime', isStandalone ? 'pwa' : 'browser')
     return () => {
       root.removeAttribute('data-phone-layout')
+      root.removeAttribute('data-phone-runtime')
     }
   }, [state.ui.fullScreen])
 
@@ -992,8 +1000,18 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
           ...themeStyle,
           fontFamily: 'var(--phone-font)',
           backgroundColor: 'var(--phone-bg)',
-          minHeight: 'var(--app-vh, 100dvh)',
-          height: 'var(--app-vh, 100dvh)',
+          minHeight:
+            state.ui.fullScreen && isStandaloneRuntime
+              ? '100vh'
+              : state.ui.fullScreen
+                ? 'var(--app-vh, 100dvh)'
+                : 'var(--app-vh, 100dvh)',
+          height:
+            state.ui.fullScreen && isStandaloneRuntime
+              ? '100vh'
+              : state.ui.fullScreen
+                ? 'var(--app-vh, 100dvh)'
+                : 'var(--app-vh, 100dvh)',
         }}
       >
         {children}

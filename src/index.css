@@ -68,9 +68,9 @@ select {
  */
 html[data-phone-layout='fullscreen'] {
   width: 100vw;
-  height: var(--app-vh, 100dvh);
-  min-height: var(--app-vh, 100dvh);
-  max-height: var(--app-vh, 100dvh);
+  height: 100vh;
+  min-height: 100vh;
+  max-height: 100vh;
   margin: 0;
   padding: 0;
   overflow: hidden;
@@ -79,9 +79,9 @@ html[data-phone-layout='fullscreen'] {
 
 html[data-phone-layout='fullscreen'] body {
   width: 100vw;
-  height: var(--app-vh, 100dvh);
-  min-height: var(--app-vh, 100dvh);
-  max-height: var(--app-vh, 100dvh);
+  height: 100vh;
+  min-height: 100vh;
+  max-height: 100vh;
   margin: 0;
   padding: 0;
   position: fixed;
@@ -92,12 +92,31 @@ html[data-phone-layout='fullscreen'] body {
 
 html[data-phone-layout='fullscreen'] #root {
   width: 100vw;
-  height: var(--app-vh, 100dvh);
-  min-height: var(--app-vh, 100dvh);
-  max-height: var(--app-vh, 100dvh);
+  height: 100vh;
+  min-height: 100vh;
+  max-height: 100vh;
   position: fixed;
   inset: 0;
   overflow: hidden;
+}
+
+/* 普通浏览器全屏（有地址栏）才用 visualViewport 高度，给底栏让位 */
+html[data-phone-layout='fullscreen'][data-phone-runtime='browser'] {
+  height: var(--app-vh, 100dvh);
+  min-height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
+}
+
+html[data-phone-layout='fullscreen'][data-phone-runtime='browser'] body {
+  height: var(--app-vh, 100dvh);
+  min-height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
+}
+
+html[data-phone-layout='fullscreen'][data-phone-runtime='browser'] #root {
+  height: var(--app-vh, 100dvh);
+  min-height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
 }
 
 /**
