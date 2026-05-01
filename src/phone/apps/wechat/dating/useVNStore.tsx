@@ -37,7 +37,7 @@ function normalizeLoadedSpriteConfigs(raw: unknown): Record<string, SpriteConfig
   const out: Record<string, SpriteConfig> = {}
   for (const [id, value] of Object.entries(input)) {
     if (!value || typeof value !== 'object') continue
-    const row = value as Partial<SpriteConfig> & { chromaKey?: Partial<ChromaKeyConfig> }
+    const row = value as Omit<Partial<SpriteConfig>, 'chromaKey'> & { chromaKey?: Partial<ChromaKeyConfig> }
     const charId = String(row.charId || id || '').trim()
     if (!charId) continue
     const imageUrl = typeof row.imageUrl === 'string' ? row.imageUrl : ''
@@ -75,7 +75,7 @@ type VnStore = {
   toggleInnerVoiceMode: () => void
   openLog: () => void
   closeLog: () => void
-  setSpriteConfig: (charId: string, patch: Partial<Omit<SpriteConfig, 'charId'>> & { chromaKey?: Partial<ChromaKeyConfig> }) => void
+  setSpriteConfig: (charId: string, patch: Partial<Omit<SpriteConfig, 'charId' | 'chromaKey'>> & { chromaKey?: Partial<ChromaKeyConfig> }) => void
   clearSpriteConfig: (charId: string) => void
 }
 

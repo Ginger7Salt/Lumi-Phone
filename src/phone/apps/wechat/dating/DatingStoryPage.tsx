@@ -825,7 +825,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           isUser: (() => {
             const n = String(b.speaker || '').replace(/\s+/g, '')
             const userNorm = String(vnUserDisplayName || '').replace(/\s+/g, '')
-            return /^(我|你|用户|自己)$/u.test(n) || /（你）$|\(你\)$/u.test(n) || (userNorm && n === userNorm)
+            return /^(我|你|用户|自己)$/u.test(n) || /（你）$|\(你\)$/u.test(n) || (!!userNorm && n === userNorm)
           })(),
         })
       }
