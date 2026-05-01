@@ -223,6 +223,9 @@ function sanitizeVoiceControlForTextBubble(input: string): string {
     .replace(/<#\s*[\d.]+\s*#>/g, ' ')
     .replace(/\(([a-zA-Z][a-zA-Z\- ]{0,24})\)/g, ' ')
     .replace(/\{\/?(happy|sad|angry|fearful|disgusted|surprised|neutral|fluent)\}/gi, ' ')
+    // 去掉模型偶发泄露的“语音来源标签”，避免在普通文本气泡里显示“（对方语音）”
+    .replace(/（(?:对方|用户)?语音(?:[，,:：][^）]{1,16})?）/g, ' ')
+    .replace(/\((?:对方|用户)?语音(?:[，,:：][^)]{1,16})?\)/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -388,6 +391,22 @@ function parseReplyMarker(raw: string): { replyMessageId?: string; text: string 
   }
   const pure = line.match(/^\[引用[:：]([^\]]+)\]$/)
   if (pure) return { replyMessageId: pure[1]?.trim() || undefined, text: '' }
+  // 兼容旧格式：
+  // [引用回复] 本条正在回复：消息ID=xxx; 发送者=xxx; 原文=xxx; <正文>
+  // 以及仅有头部、正文另起一行/下一条的场景
+  const legacyHeader = line.match(
+    /^\[引用回复\]\s*本条正在回复[:：]\s*消息ID\s*[=：:]\s*([^;；\s]+)\s*[;；]?\s*([\s\S]*)$/,
+  )
+  if (legacyHeader) {
+    const replyMessageId = legacyHeader[1]?.trim() || undefined
+    const tail = (legacyHeader[2] ?? '').trim()
+    // 尽量剥离 "发送者=...; 原文=...;" 的元信息，保留真正正文
+    const text = tail
+      .replace(/^(?:发送者\s*[=：:]\s*[^;；\n]+[;；]?\s*)+/u, '')
+      .replace(/^(?:原文\s*[=：:]\s*[^;；\n]+[;；]?\s*)+/u, '')
+      .trim()
+    return { replyMessageId, text }
+  }
   return { text: line }
 }
 

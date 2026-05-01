@@ -369,7 +369,7 @@ function IdentityPickModal({
 }: {
   open: boolean
   loading: boolean
-  identities: Character[]
+  identities: PlayerIdentity[]
   onClose: () => void
   onPick: (identityId: string) => void
   onCreateNew: () => void
@@ -600,7 +600,8 @@ export function NewFriendsPersonaApp({
   const [loading, setLoading] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [identityPickOpen, setIdentityPickOpen] = useState(false)
-  const [identityList, setIdentityList] = useState<Character[]>([])
+  const [identityList, setIdentityList] = useState<PlayerIdentity[]>([])
+  const [identityNameById, setIdentityNameById] = useState<Record<string, string>>({})
   const [identityLoading, setIdentityLoading] = useState(false)
   const [pendingNewDraft, setPendingNewDraft] = useState<Character | null>(null)
   const [bindingsOpen, setBindingsOpen] = useState(false)
@@ -616,8 +617,13 @@ export function NewFriendsPersonaApp({
 
   const refresh = async () => {
     setLoading(true)
-    const res = await personaDb.listRootCharacters()
+    const [res, ids] = await Promise.all([personaDb.listRootCharacters(), personaDb.listPlayerIdentities()])
     setList(res)
+    setIdentityNameById(
+      Object.fromEntries(
+        ids.map((it) => [it.id, (it.name || '').trim() || '未命名身份']),
+      ),
+    )
     setLoading(false)
   }
 
@@ -786,6 +792,14 @@ export function NewFriendsPersonaApp({
                         </p>
                         <p className="mt-1 truncate text-[12px]" style={{ color: sub, fontWeight: 300 }}>
                           {c.identity} · {pickGenderLabel(c.gender)} · {c.zodiac || '未设置生日'}
+                        </p>
+                        <p className="mt-1 truncate text-[12px]" style={{ color: sub, fontWeight: 300 }}>
+                          绑定身份：
+                          {(() => {
+                            const bindId = c.playerIdentityId?.trim()
+                            if (!bindId) return '未绑定'
+                            return identityNameById[bindId] || '未命名身份'
+                          })()}
                         </p>
                       </div>
                     </button>
@@ -1257,7 +1271,8 @@ function PersonaEditPage({
     if (!data) return
     if (!data.name.trim()) return
     setSaving(true)
-    const identityId = data.playerIdentityId?.trim() || (await personaDb.getCurrentIdentityId())
+    // 仅新建角色时才使用“当前身份”兜底，避免编辑既有角色时被全局身份误覆盖。
+    const identityId = data.playerIdentityId?.trim() || (isNew ? await personaDb.getCurrentIdentityId() : '')
     const next = { ...data, playerIdentityId: identityId || undefined, updatedAt: Date.now() }
     await personaDb.upsertCharacter(next)
     if (isNew && next.generatedForCharacterId) {

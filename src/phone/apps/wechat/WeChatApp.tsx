@@ -3365,25 +3365,40 @@ function WeChatAppInner({ onBack }: Props) {
 
   const { isConversationMuted } = useMuteStatus(playerIdentityId)
 
+  /**
+   * 聊天页实际使用的身份：
+   * - 角色私聊：优先角色绑定的 playerIdentityId；
+   * - Lumi/未绑定：回退当前全局身份。
+   */
+  const [chatRouteIdentityId, setChatRouteIdentityId] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      if (route.name !== 'chat') {
+        if (!cancelled) setChatRouteIdentityId(null)
+        return
+      }
+      if (playerIdentityId === null) {
+        if (!cancelled) setChatRouteIdentityId(null)
+        return
+      }
+      if (route.chat.kind !== 'persona') {
+        if (!cancelled) setChatRouteIdentityId(playerIdentityId)
+        return
+      }
+      const ch = await personaDb.getCharacter(route.chat.characterId)
+      const bound = ch?.playerIdentityId?.trim()
+      if (!cancelled) setChatRouteIdentityId(bound || playerIdentityId)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [route, playerIdentityId])
+
   const refreshPendingNewFriendRequests = useCallback(async () => {
     if (playerIdentityId === null) return
     const pid = playerIdentityId.trim()
     if (!pid) return
-
-    // 清理旧版本遗留的演示 mock 数据（曾自动注入到 IndexedDB）
-    const existing = await personaDb.listFriendRequests({ playerIdentityId: pid, pendingOnly: false })
-    for (const row of existing) {
-      const convKey = wechatConversationKey(row.characterId, pid)
-      const msgs = await personaDb.listWeChatChatMessagesRecent({ conversationKey: convKey, limit: 8 })
-      const isLegacyMock =
-        msgs.length >= 3 &&
-        msgs[0]?.content === '你怎么把我删了啊？' &&
-        msgs[1]?.content === '不想留着过年。' &&
-        msgs[2]?.content === '开门，我在你家楼下。'
-      if (!isLegacyMock) continue
-      await personaDb.deleteFriendRequestById(row.id)
-      await personaDb.deleteAllWeChatMessagesForConversation(convKey)
-    }
 
     const rows = await personaDb.listFriendRequests({ playerIdentityId: pid, pendingOnly: true })
     const ui = await Promise.all(
@@ -3539,9 +3554,9 @@ function WeChatAppInner({ onBack }: Props) {
   }, [refreshMessageThreadsMeta])
 
   const activeConversationKey = useMemo(() => {
-    if (route.name !== 'chat' || playerIdentityId === null || !activeConversationCharacterId) return null
-    return wechatConversationKey(activeConversationCharacterId, playerIdentityId)
-  }, [route.name, playerIdentityId, activeConversationCharacterId])
+    if (route.name !== 'chat' || !chatRouteIdentityId || !activeConversationCharacterId) return null
+    return wechatConversationKey(activeConversationCharacterId, chatRouteIdentityId)
+  }, [route.name, chatRouteIdentityId, activeConversationCharacterId])
 
   // 转发：选择聊天页当前待转发消息（单条/多条）
   const [forwardPendingMessages, setForwardPendingMessages] = useState<WeChatChatMessage[] | null>(null)
@@ -4376,7 +4391,7 @@ function WeChatAppInner({ onBack }: Props) {
             </motion.div>
           ) : route.name === 'chat' ? (
             <motion.div key="chat" className="flex min-h-0 flex-1 flex-col" {...pageProps}>
-              {playerIdentityId === null ? (
+              {chatRouteIdentityId === null ? (
                 <div
                   className="flex flex-1 items-center justify-center px-4 text-[14px]"
                   style={{ color: 'var(--wx-text-muted)' }}
@@ -4399,7 +4414,7 @@ function WeChatAppInner({ onBack }: Props) {
                     route.name === 'chat' && route.chat.kind === 'lumi'
                   }
                   conversationCharacterId={activeConversationCharacterId ?? ''}
-                  playerIdentityId={playerIdentityId}
+                  playerIdentityId={chatRouteIdentityId}
                   scrollToMessageId={pendingScrollToMessageId}
                   onScrollToMessageConsumed={clearPendingScrollToMessage}
                   onRequestForwardMessage={(msg) => {

@@ -52,12 +52,16 @@ export function ImageCropperModal({
 
   return (
     <div
-      className="absolute inset-0 z-[260] flex flex-col"
-      style={{ background: 'rgba(0,0,0,0.55)' }}
+      className="absolute inset-0 z-[520] flex flex-col"
+      style={{
+        background: 'rgba(0,0,0,0.55)',
+        paddingTop: 'max(10px, env(safe-area-inset-top, 0px))',
+        paddingBottom: 'max(10px, env(safe-area-inset-bottom, 0px))',
+      }}
       role="dialog"
       aria-modal="true"
     >
-      <div className="px-4 pt-4">
+      <div className="px-4 pt-2">
         <div
           className="flex items-center justify-between rounded-[18px] border px-3 py-2"
           style={{ background: 'var(--phone-surface)', borderColor: 'var(--phone-border)' }}
@@ -91,7 +95,7 @@ export function ImageCropperModal({
       </div>
 
       <div
-        className="mx-4 my-4 rounded-[18px] border px-4 py-3"
+        className="mx-4 mb-2 mt-3 rounded-[18px] border px-4 py-3"
         style={{ background: 'var(--phone-surface)', borderColor: 'var(--phone-border)' }}
       >
         <label className="block text-[10px] font-medium uppercase tracking-[0.18em] opacity-70">
