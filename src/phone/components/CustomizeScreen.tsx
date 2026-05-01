@@ -749,6 +749,19 @@ export function CustomizeScreen({ onBack }: Props) {
               checked={ui.forceStaticCompass}
               onChange={(v) => setUi({ forceStaticCompass: v })}
             />
+            <Pressable
+              onClick={() => {
+                window.dispatchEvent(new Event('lumi-reset-home-widget-layout'))
+              }}
+              className="w-full rounded-[14px] border py-2.5 text-center text-[12px] font-medium"
+              style={{
+                borderColor: theme.border,
+                background: theme.surface,
+                color: theme.text,
+              }}
+            >
+              重置桌面组件布局
+            </Pressable>
             <div>
               <FieldLabel>曲名</FieldLabel>
               <input

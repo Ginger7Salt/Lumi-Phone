@@ -51,6 +51,7 @@ function useWeChatHomeUnreadBadge(): number {
 }
 
 const HOME_WIDGET_LAYOUT_STORAGE_KEY = 'lumi-home-widget-layout-v1'
+const RESET_HOME_WIDGET_LAYOUT_EVENT = 'lumi-reset-home-widget-layout'
 type ProfileAnchor = 'top' | 'bottom'
 type MusicSide = 'left' | 'right'
 
@@ -452,6 +453,20 @@ export function HomeScreen({ onOpenApp }: Props) {
     }, 280)
   }, [])
 
+  const resetWidgetLayout = useCallback(() => {
+    setProfileAnchorState('top')
+    setMusicSideState('left')
+    setActiveWidgetDrag(null)
+    setHoverProfileAnchor(null)
+    setHoverMusicSide(null)
+    setPrimedStaticWidget(null)
+    try {
+      window.localStorage.removeItem(HOME_WIDGET_LAYOUT_STORAGE_KEY)
+    } catch {
+      // ignore storage failures
+    }
+  }, [])
+
   const handleAppOpen = useCallback((id: AppSlot['id']) => {
     if (isEditMode) return
     onOpenApp(id)
@@ -725,6 +740,12 @@ export function HomeScreen({ onOpenApp }: Props) {
     }
   }, [activeWidgetDrag, musicSideState, persistWidgetLayout, profileAnchorState, resolveNearestMusicSide, resolveNearestProfileAnchor])
 
+  useEffect(() => {
+    const onReset = () => resetWidgetLayout()
+    window.addEventListener(RESET_HOME_WIDGET_LAYOUT_EVENT, onReset)
+    return () => window.removeEventListener(RESET_HOME_WIDGET_LAYOUT_EVENT, onReset)
+  }, [resetWidgetLayout])
+
   return (
     <div
       className="relative flex h-full min-h-0 flex-col overflow-hidden"
@@ -983,25 +1004,23 @@ export function HomeScreen({ onOpenApp }: Props) {
         </AnimatePresence>
       </div>
 
-      {!isWheelModalOpen ? (
-        <Dock
-          apps={dockIdsState.map((id) => appMap.get(id) ?? null)}
-          onOpen={handleAppOpen}
-          compact={compactDesktop}
-          wechatBadgeCount={wechatUnread}
-          isEditMode={isEditMode}
-          onRequestEditMode={handleEnterEditMode}
-          activeDragId={activeDrag?.id ?? null}
-          hoverIndex={hoverDockIndex}
-          registerNode={registerTileNode}
-          dockNavRef={dockNavRef}
-          onPointerDragStart={(id, event) => {
-            const dockIndex = dockIdsRef.current.findIndex((dockId) => dockId === id)
-            if (dockIndex < 0) return
-            handlePointerDragStart(id, { zone: 'dock', index: dockIndex }, event)
-          }}
-        />
-      ) : null}
+      <Dock
+        apps={dockIdsState.map((id) => appMap.get(id) ?? null)}
+        onOpen={handleAppOpen}
+        compact={compactDesktop}
+        wechatBadgeCount={wechatUnread}
+        isEditMode={isEditMode}
+        onRequestEditMode={handleEnterEditMode}
+        activeDragId={activeDrag?.id ?? null}
+        hoverIndex={hoverDockIndex}
+        registerNode={registerTileNode}
+        dockNavRef={dockNavRef}
+        onPointerDragStart={(id, event) => {
+          const dockIndex = dockIdsRef.current.findIndex((dockId) => dockId === id)
+          if (dockIndex < 0) return
+          handlePointerDragStart(id, { zone: 'dock', index: dockIndex }, event)
+        }}
+      />
     </div>
   )
 }

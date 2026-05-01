@@ -209,6 +209,7 @@ export function WheelModal({ open, options, theme, onClose, onChangeOptions }: P
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
           onClick={onClose}
           style={{
             background: 'rgba(245,246,248,0.4)',
@@ -216,11 +217,19 @@ export function WheelModal({ open, options, theme, onClose, onChangeOptions }: P
           }}
         >
           <motion.div
+            className="pointer-events-none absolute inset-0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0, 0.2, 0] }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.28, ease: 'easeOut' }}
+            style={{ background: '#ffffff' }}
+          />
+          <motion.div
             className="relative w-full max-w-[380px] overflow-hidden rounded-[34px] border px-5 pb-5 pt-6 shadow-[0_26px_60px_rgba(15,23,42,0.16)]"
-            initial={{ y: 18, scale: 0.98 }}
-            animate={{ y: 0, scale: 1 }}
-            exit={{ y: 18, scale: 0.98 }}
-            transition={{ type: 'spring', stiffness: 280, damping: 28 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
             onClick={(event) => event.stopPropagation()}
             style={{
               background: 'linear-gradient(180deg, rgba(255,255,255,0.88), rgba(250,250,252,0.8))',
