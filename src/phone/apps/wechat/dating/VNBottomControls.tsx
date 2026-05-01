@@ -29,12 +29,23 @@ function CtrlBtn({
       onClick={onClick}
       className="flex flex-col items-center gap-0.5 text-[10px] transition-all duration-200"
       style={{
-        opacity: active ? 0.95 : 0.55,
+        opacity: active ? 0.98 : 0.72,
         color: '#FFFFFF',
         textShadow: '0 1px 10px rgba(0,0,0,0.55)',
       }}
     >
-      {children}
+      <span
+        className="inline-flex items-center justify-center rounded-full px-1.5 py-1 transition-all duration-200"
+        style={{
+          background: active ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.08)',
+          boxShadow: active
+            ? '0 0 0 1px rgba(255,255,255,0.30), 0 0 16px rgba(255,255,255,0.42), 0 0 24px rgba(212,175,55,0.38)'
+            : '0 0 0 1px rgba(255,255,255,0.18), 0 0 10px rgba(255,255,255,0.22)',
+          filter: active ? 'drop-shadow(0 0 8px rgba(255,255,255,0.55))' : 'drop-shadow(0 0 4px rgba(255,255,255,0.25))',
+        }}
+      >
+        {children}
+      </span>
       <span>{label}</span>
     </button>
   )

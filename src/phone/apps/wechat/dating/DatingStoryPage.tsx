@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronDown, FilePenLine, Heart, Layers, MoreHorizontal } from 'lucide-react'
+import { ArrowLeft, ChevronDown, FilePenLine, Heart, Layers, Loader2, MoreHorizontal, Pause, Play } from 'lucide-react'
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
@@ -22,15 +22,80 @@ import { VNStoreProvider, useActiveSprite, useVNStore } from './useVNStore'
 import { SpriteEditorPage } from './SpriteEditorPage'
 import { ChromaKeyRenderer } from './ChromaKeyRenderer'
 import { extractVnBackgroundCue, resolveVnBackgroundByName, VN_BACKGROUND_ASSETS } from './vnBackgroundCatalog'
+import { extractVnBgmCueName, resolveVnBgmByName } from './vnBgmCatalog'
+import { createMiniMaxT2ASyncAudioBlob } from '../../voiceprint/services/minimaxApi'
 
 type Props = {
   onBackToSelect: () => void
 }
 
 const DATING_HEART_WHISPER_KV_PREFIX = 'wechat-dating-heart-whisper-v1:'
+const VN_LINE_VOICE_CACHE_KV_PREFIX = 'wechat-dating-vn-line-voice-cache-v1:'
+const VN_LINE_TTS_REQ_KV_PREFIX = 'wechat-dating-vn-line-tts-req-v1:'
 
 function datingHeartWhisperKvKey(characterId: string) {
   return `${DATING_HEART_WHISPER_KV_PREFIX}${String(characterId || '').trim()}`
+}
+
+function vnLineVoiceCacheKvKey(characterId: string) {
+  return `${VN_LINE_VOICE_CACHE_KV_PREFIX}${String(characterId || '').trim()}`
+}
+
+function vnLineTtsReqKvKey(characterId: string) {
+  return `${VN_LINE_TTS_REQ_KV_PREFIX}${String(characterId || '').trim()}`
+}
+
+function isLikelyVnVoiceParamsArtifactLine(rawLine: string): boolean {
+  const line = String(rawLine || '').trim()
+  if (!line) return false
+  if (/【\s*VN语音参数(?:结束)?\s*】/u.test(line)) return true
+  if (/(?:^|[{"\s,])idx(?:\s*["'}\],]|:)|emotion\s*:|tone\s*:/i.test(line)) {
+    // 仅当行整体看起来像 JSON/参数碎片时才剔除，避免误伤正常剧情。
+    const reduced = line.replace(/[\u4e00-\u9fa5]/g, '').trim()
+    if (/^[\[\]\{\}",:a-z0-9_\-\s.]+$/i.test(reduced)) return true
+  }
+  return false
+}
+
+function extractVnVoiceParamsBlock(raw: string): { cleanedText: string; items: Array<{ idx: number; emotion: string; tone: string }> } {
+  const source = String(raw || '')
+  const startMatch = /【\s*VN语音参数\s*】/u.exec(source)
+  if (!startMatch || startMatch.index < 0) {
+    const cleanedText = source
+      .split(/\r?\n/)
+      .map((x) => x.trim())
+      .filter((x) => x && !isLikelyVnVoiceParamsArtifactLine(x))
+      .join('\n')
+      .trim()
+    return { cleanedText, items: [] }
+  }
+  const start = startMatch.index
+  const endRegex = /【\s*VN语音参数结束\s*】/gu
+  endRegex.lastIndex = start + startMatch[0].length
+  const endMatch = endRegex.exec(source)
+  const end = endMatch ? endMatch.index : -1
+  const block = end >= 0 ? source.slice(start, end + endMatch![0].length) : source.slice(start)
+  const cleanedTextRaw = source.slice(0, start) + (end >= 0 ? source.slice(end + endMatch![0].length) : '')
+  const cleanedText = cleanedTextRaw
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter((x) => x && !isLikelyVnVoiceParamsArtifactLine(x))
+    .join('\n')
+    .trim()
+  const jsonText = block.match(/\[[\s\S]*?\]/)?.[0] || '[]'
+  try {
+    const arr = JSON.parse(jsonText) as Array<{ idx?: unknown; emotion?: unknown; tone?: unknown }>
+    const items = (Array.isArray(arr) ? arr : [])
+      .map((x) => ({
+        idx: Number((x as any)?.idx),
+        emotion: String((x as any)?.emotion ?? '').trim(),
+        tone: String((x as any)?.tone ?? '').trim(),
+      }))
+      .filter((x) => Number.isFinite(x.idx) && x.idx >= 0 && !!x.emotion && !!x.tone)
+    return { cleanedText, items }
+  } catch {
+    return { cleanedText, items: [] }
+  }
 }
 
 function parseIdentityTag(tag: string): { text: string; isPainPoint: boolean } {
@@ -108,6 +173,32 @@ function sanitizeDanglingThoughtMarker(text: string): string {
   return t
 }
 
+function extractVnFlashbackCue(rawLine: string): { kind: 'start' | 'end' | null; rest: string } {
+  const t = String(rawLine || '').trim()
+  if (!t) return { kind: null, rest: '' }
+  const startMatch = t.match(/^【\s*(?:插叙|闪回|回忆|插叙闪回)(?:\s*开始)?\s*】\s*(.*)$/u)
+  if (startMatch) return { kind: 'start', rest: String(startMatch[1] || '').trim() }
+  const endMatch = t.match(/^【\s*(?:插叙|闪回|回忆|插叙闪回)\s*结束\s*】\s*(.*)$/u)
+  if (endMatch) return { kind: 'end', rest: String(endMatch[1] || '').trim() }
+  const normalMatch = t.match(/^【\s*(?:正常剧情|主线剧情|现实线)\s*】\s*(.*)$/u)
+  if (normalMatch) return { kind: 'end', rest: String(normalMatch[1] || '').trim() }
+  return { kind: null, rest: t }
+}
+
+function extractVnBackgroundCueName(rawLine: string): { backgroundName: string | null; rest: string } {
+  const t = String(rawLine || '').trim()
+  if (!t) return { backgroundName: null, rest: '' }
+  const m1 = t.match(/^【\s*背景\s*】\s*(.+)$/u)
+  if (m1?.[1]) return { backgroundName: String(m1[1] || '').trim(), rest: '' }
+  const m2 = t.match(/^背景[：:]\s*(.+)$/u)
+  if (m2?.[1]) return { backgroundName: String(m2[1] || '').trim(), rest: '' }
+  const viaParser = extractVnBackgroundCue(t)
+  if (viaParser.backgroundName) {
+    return { backgroundName: viaParser.backgroundName, rest: String(viaParser.cleanedText || '').trim() }
+  }
+  return { backgroundName: null, rest: t }
+}
+
 function isInnerThoughtText(rawText: string, speaker: string | null): boolean {
   const t = String(rawText || '').trim()
   if (!t) return false
@@ -133,7 +224,14 @@ function splitVnContentToBubbles(
   raw: string,
   defaultSpeaker: string,
   maxChars = 25,
-): Array<{ text: string; speaker: string | null; isInnerThought: boolean }> {
+): Array<{
+  text: string
+  speaker: string | null
+  isInnerThought: boolean
+  bgmCueName: string | null
+  backgroundCueName: string | null
+  isFlashback: boolean
+}> {
   const source = String(raw || '').trim()
   if (!source) return []
   const lines = source
@@ -141,17 +239,57 @@ function splitVnContentToBubbles(
     .map((x) => x.trim())
     .filter(Boolean)
   const blocks = lines.length ? lines : [source]
-  const out: Array<{ text: string; speaker: string | null; isInnerThought: boolean }> = []
+  const out: Array<{
+    text: string
+    speaker: string | null
+    isInnerThought: boolean
+    bgmCueName: string | null
+    backgroundCueName: string | null
+    isFlashback: boolean
+  }> = []
+  let pendingBgmCue: string | null = null
+  let pendingBgCue: string | null = null
+  let flashbackMode = false
   for (const block of blocks) {
-    const parsed = parseVnBubble(block, defaultSpeaker)
+    const flashbackCue = extractVnFlashbackCue(block)
+    if (flashbackCue.kind === 'start') {
+      flashbackMode = true
+    }
+    if (flashbackCue.kind === 'end') {
+      flashbackMode = false
+    }
+    const coreLine = flashbackCue.rest
+    if (!coreLine) continue
+    const bgmCueName = extractVnBgmCueName(coreLine)
+    if (bgmCueName) {
+      pendingBgmCue = bgmCueName
+      continue
+    }
+    const bgCue = extractVnBackgroundCueName(coreLine)
+    if (bgCue.backgroundName) pendingBgCue = bgCue.backgroundName
+    const lineForBubble = String(bgCue.rest || '').trim()
+    if (!lineForBubble) continue
+    const parsed = parseVnBubble(lineForBubble, defaultSpeaker)
     if (!parsed.text) continue
-    const isInnerThoughtLine = isInnerThoughtText(parsed.text, parsed.speaker)
+    const rawSpeaker = String(parsed.speaker || '').trim()
+    const speakerIsInnerMarker = /^(?:\[|【|\(|（)?\s*(?:内心|心声|OS|os)\s*(?:\]|】|\)|）)?$/u.test(rawSpeaker)
+    const normalizedSpeaker = speakerIsInnerMarker ? null : parsed.speaker
+    const isInnerThoughtLine = isInnerThoughtText(parsed.text, normalizedSpeaker)
     const normalizedText = isInnerThoughtLine ? stripInnerThoughtDecorators(parsed.text) : parsed.text
     const chunks = splitPlainVnText(normalizedText, maxChars)
     for (const chunk of chunks) {
       const clean = sanitizeDanglingThoughtMarker(chunk.replace(/\*\*/g, ''))
       if (!clean) continue
-      out.push({ text: clean, speaker: parsed.speaker, isInnerThought: isInnerThoughtLine })
+      out.push({
+        text: clean,
+        speaker: normalizedSpeaker,
+        isInnerThought: isInnerThoughtLine,
+        bgmCueName: pendingBgmCue,
+        backgroundCueName: pendingBgCue,
+        isFlashback: flashbackMode,
+      })
+      pendingBgmCue = null
+      pendingBgCue = null
     }
   }
   return out
@@ -173,9 +311,24 @@ type VnLogEntry = {
   name: string | null
   text: string
   isUser?: boolean
+  speakerId?: string | null
+  voiceCacheKey?: string
+  order?: number
 }
 
-function VnLogItemRenderer({ item }: { item: VnLogEntry }) {
+function VnLogItemRenderer({
+  item,
+  canPlayVoice = false,
+  playing = false,
+  generating = false,
+  onPlayVoice,
+}: {
+  item: VnLogEntry
+  canPlayVoice?: boolean
+  playing?: boolean
+  generating?: boolean
+  onPlayVoice?: () => void
+}) {
   if (item.kind === 'narration') {
     return (
       <div className="px-8 py-1.5 text-center text-[13px] font-light leading-relaxed text-gray-500">
@@ -208,12 +361,31 @@ function VnLogItemRenderer({ item }: { item: VnLogEntry }) {
             }
       }
     >
-      <p
-        className="mb-1 text-xs font-semibold tracking-[0.04em]"
-        style={{ color: item.isUser ? '#2F5F9A' : '#1C1C1E' }}
-      >
-        {item.name || '未署名'}
-      </p>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p
+          className="text-xs font-semibold tracking-[0.04em]"
+          style={{ color: item.isUser ? '#2F5F9A' : '#1C1C1E' }}
+        >
+          {item.name || '未署名'}
+        </p>
+        {canPlayVoice ? (
+          <button
+            type="button"
+            onClick={onPlayVoice}
+            className="inline-flex items-center justify-center rounded-full border border-[#E2E8F0] bg-white p-1 text-[#4B5563] transition hover:bg-[#F8FAFC]"
+            title="播放对白语音"
+            aria-label="播放对白语音"
+          >
+            {generating ? (
+              <Loader2 className="size-3.5 animate-spin" strokeWidth={1.8} />
+            ) : playing ? (
+              <Pause className="size-3.5" strokeWidth={1.8} />
+            ) : (
+              <Play className="size-3.5" strokeWidth={1.8} />
+            )}
+          </button>
+        ) : null}
+      </div>
       <p className="text-[15px] leading-relaxed text-[#2B313B]">{item.text}</p>
     </div>
   )
@@ -242,6 +414,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     setMode,
     setBranchEnabled,
     setGodPerspective,
+    setVnVoiceDisabled,
     sendPlayerInput,
     stageBranchChoice,
     branchesLoading,
@@ -284,6 +457,24 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [vnCustomInputModalOpen, setVnCustomInputModalOpen] = useState(false)
   const [vnUserDisplayName, setVnUserDisplayName] = useState('用户')
   const [vnDanmakuModelOn, setVnDanmakuModelOn] = useState(false)
+  const VN_BGM_BASE_VOLUME = 0.45
+  const VN_BGM_VOLUME_SCALE_LS_KEY = 'wechat-dating-vn-bgm-volume-scale'
+  const VN_BGM_BALANCE_MIN = -100
+  const VN_BGM_BALANCE_MAX = 100
+  const toVnBgmVolumeScale = (balance: number) => 1 + balance / 100
+  const toVnBgmBalance = (scale: number) => (scale - 1) * 100
+  const clampVnBgmBalance = (balance: number) => Math.max(VN_BGM_BALANCE_MIN, Math.min(VN_BGM_BALANCE_MAX, balance))
+  const [vnBgmVolumeScale, setVnBgmVolumeScale] = useState<number>(() => {
+    try {
+      const raw = Number(localStorage.getItem(VN_BGM_VOLUME_SCALE_LS_KEY) ?? '')
+      if (!Number.isFinite(raw)) return 1
+      return Math.max(0, Math.min(2, raw))
+    } catch {
+      return 1
+    }
+  })
+  const vnBgmVolumeBalance = clampVnBgmBalance(toVnBgmBalance(vnBgmVolumeScale))
+  const vnBgmVolume = Math.max(0, Math.min(1, VN_BGM_BASE_VOLUME * vnBgmVolumeScale))
 
   const PLOT_TAIL_LS = (id: string) => `wechat-dating-plot-tail:${id.trim()}`
   const PLOT_TAIL_DEFAULT = 24
@@ -428,6 +619,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   }, [currentCharacter.id])
   useEffect(() => {
     let cancelled = false
+    vnVoiceStyleCacheRef.current.clear()
     void (async () => {
       const cid = String(currentCharacter.id || '').trim()
       if (!cid) {
@@ -447,6 +639,42 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         }
       } catch {
         if (!cancelled) setVnUserDisplayName('用户')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [currentCharacter.id])
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const raw = await personaDb.getPhoneKv(vnLineTtsReqKvKey(currentCharacter.id))
+        if (cancelled) return
+        if (!raw || typeof raw !== 'object') {
+          vnLineTtsReqCacheRef.current = new Map()
+          return
+        }
+        const entries = Object.entries(raw as Record<string, unknown>)
+          .map(([k, v]) => [String(k || ''), v] as const)
+          .filter(([k, v]) => !!k && !!v && typeof v === 'object')
+          .map(([k, v]) => {
+            const rec = v as Record<string, unknown>
+            return [
+              k,
+              {
+                voiceId: String(rec.voiceId || '').trim(),
+                model: String(rec.model || '').trim(),
+                emotion: normalizeVnEmotion(String(rec.emotion || 'calm')),
+                tone: normalizeVnToneToken(String(rec.tone || 'breath')),
+                ttsText: String(rec.ttsText || '').trim(),
+              },
+            ] as const
+          })
+          .filter(([, v]) => !!v.voiceId && !!v.ttsText)
+        vnLineTtsReqCacheRef.current = new Map(entries)
+      } catch {
+        if (!cancelled) vnLineTtsReqCacheRef.current = new Map()
       }
     })()
     return () => {
@@ -669,16 +897,52 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   }, [currentCharacter.avatarUrl, currentCharacter.id, currentCharacter.realName])
   const VN_FAB_SIZE = 44
   const VN_EDGE = 8
-  const VN_MENU_W = 176
-  const VN_MENU_H = 176
+  const VN_MENU_W = 220
+  const VN_MENU_H = 320
 
   const isVn = currentArchive.modePreference === 'vn'
   const [vnBgCurrentUrl, setVnBgCurrentUrl] = useState<string>(VN_BACKGROUND_ASSETS[0]?.url || VN_BG_FALLBACK)
   const [vnBgPrevUrl, setVnBgPrevUrl] = useState<string | null>(null)
   const [vnBgFlashOn, setVnBgFlashOn] = useState(false)
+  const [vnBgmCurrentName, setVnBgmCurrentName] = useState('')
+  const [vnBgmAwaitingGesture, setVnBgmAwaitingGesture] = useState(false)
+  const [vnLineVoicePlaying, setVnLineVoicePlaying] = useState(false)
+  const [vnLineVoiceGenerating, setVnLineVoiceGenerating] = useState(false)
+  const [vnAutoVoicePlay, setVnAutoVoicePlay] = useState(false)
+  const [vnToast, setVnToast] = useState<string | null>(null)
+  const vnToastTimerRef = useRef<number | null>(null)
+  const [vnLogPlayingId, setVnLogPlayingId] = useState<string | null>(null)
+  const [vnLogGeneratingId, setVnLogGeneratingId] = useState<string | null>(null)
   const vnBgFadeTimerRef = useRef<number | null>(null)
   const vnBgFlashTimerRef = useRef<number | null>(null)
+  const vnBgmAudioRef = useRef<HTMLAudioElement | null>(null)
+  const vnBgmCurrentUrlRef = useRef('')
+  const vnBgmPendingUrlRef = useRef('')
+  const vnBgmPendingNameRef = useRef('')
+  const vnBgmRequestedUrlRef = useRef('')
+  const vnBgmRequestTokenRef = useRef(0)
   const didAutoScrollBottomRef = useRef<string>('')
+  const vnLineAudioRef = useRef<HTMLAudioElement | null>(null)
+  const vnLineSpeechRef = useRef<SpeechSynthesisUtterance | null>(null)
+  const vnLineVoiceCacheRef = useRef(new Map<string, string>())
+  const vnLastAutoVoiceKeyRef = useRef('')
+  const vnVoicePlayTokenRef = useRef(0)
+  const vnCurrentVoiceKeyRef = useRef('')
+  const vnVoiceDoneKeyRef = useRef('')
+  const vnVoiceDoneAtRef = useRef(0)
+  const vnVoiceStyleCacheRef = useRef(new Map<string, { emotion: 'happy' | 'sad' | 'angry' | 'fearful' | 'disgusted' | 'surprised' | 'calm' | 'fluent' | 'whisper'; tone: string }>())
+  const vnLineTtsReqCacheRef = useRef(
+    new Map<
+      string,
+      {
+        voiceId: string
+        model: string
+        emotion: 'happy' | 'sad' | 'angry' | 'fearful' | 'disgusted' | 'surprised' | 'calm' | 'fluent' | 'whisper'
+        tone: string
+        ttsText: string
+      }
+    >(),
+  )
 
   const lengthLabel = `${lengthTargetChars || '500'}字`
   const godLocksNoInterrupt = currentArchive.godPerspective
@@ -743,6 +1007,238 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     }, 280)
   }, [])
 
+  const stopVnLineVoice = useCallback((opts?: { invalidatePending?: boolean }) => {
+    const invalidatePending = opts?.invalidatePending !== false
+    const audio = vnLineAudioRef.current
+    if (audio) {
+      audio.pause()
+      audio.onended = null
+      audio.onerror = null
+    }
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel()
+      vnLineSpeechRef.current = null
+    }
+    // 默认使历史异步合成请求失效；但同一次播放链路内部切换音频时可选择不失效。
+    if (invalidatePending) vnVoicePlayTokenRef.current += 1
+    setVnLineVoicePlaying(false)
+    setVnLogPlayingId(null)
+  }, [])
+  useEffect(() => {
+    let cancelled = false
+    vnVoiceStyleCacheRef.current.clear()
+    void (async () => {
+      try {
+        const raw = await personaDb.getPhoneKv(vnLineVoiceCacheKvKey(currentCharacter.id))
+        if (cancelled) return
+        if (!raw || typeof raw !== 'object') {
+          vnLineVoiceCacheRef.current = new Map()
+          return
+        }
+        const entries = Object.entries(raw as Record<string, unknown>)
+          .map(([k, v]) => [String(k || ''), String(v || '').trim()] as const)
+          .filter(([k, v]) => !!k && !!v)
+        vnLineVoiceCacheRef.current = new Map(entries)
+      } catch {
+        if (!cancelled) vnLineVoiceCacheRef.current = new Map()
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [currentCharacter.id])
+
+  const decorateVnTtsText = useCallback((text: string, tone: string) => {
+    const base = String(text || '').trim().replace(/\s+/g, ' ')
+    if (!base) return ''
+    return `(${tone}) ${base}`
+      .replace(/(\.\.\.|…+)/g, `<#0.45#>$1<#0.45#>`)
+      .replace(/([，,])/g, `$1<#0.28#>`)
+      .replace(/([。；;])/g, `$1<#0.42#>`)
+      .replace(/([！？!?])/g, `$1<#0.52#>`)
+      .replace(/\s+/g, ' ')
+      .trim()
+  }, [])
+  const normalizeVnToneToken = useCallback((raw: string) => {
+    const t = String(raw || '').trim().toLowerCase()
+    const allow = new Set([
+      'clear-throat', 'laughs', 'chuckle', 'coughs', 'groans', 'breath', 'pant', 'inhale', 'exhale', 'gasps',
+      'sniffs', 'sighs', 'snorts', 'burps', 'lip-smacking', 'humming', 'hissing', 'emm', 'sneezes',
+    ])
+    return allow.has(t) ? t : 'breath'
+  }, [])
+  const normalizeVnEmotion = useCallback((raw: string) => {
+    const t = String(raw || '').trim().toLowerCase()
+    const allow = new Set(['happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'calm', 'fluent', 'whisper'])
+    return (allow.has(t) ? t : 'calm') as 'happy' | 'sad' | 'angry' | 'fearful' | 'disgusted' | 'surprised' | 'calm' | 'fluent' | 'whisper'
+  }, [])
+  const blobToDataUrl = useCallback((blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader()
+      r.onload = () => resolve(typeof r.result === 'string' ? r.result : '')
+      r.onerror = () => reject(r.error)
+      r.readAsDataURL(blob)
+    })
+  }, [])
+  const persistVnVoiceCache = useCallback(
+    async (key: string, value: string) => {
+      const map = vnLineVoiceCacheRef.current
+      map.set(key, value)
+      // 控制缓存体量，避免 kv 无限增长
+      const entries = Array.from(map.entries())
+      const sliced = entries.slice(Math.max(0, entries.length - 220))
+      vnLineVoiceCacheRef.current = new Map(sliced)
+      try {
+        await personaDb.setPhoneKv(vnLineVoiceCacheKvKey(currentCharacter.id), Object.fromEntries(sliced))
+      } catch {
+        // ignore cache persistence failure
+      }
+    },
+    [currentCharacter.id],
+  )
+  const persistVnLineTtsReq = useCallback(
+    async (
+      key: string,
+      value: {
+        voiceId: string
+        model: string
+        emotion: 'happy' | 'sad' | 'angry' | 'fearful' | 'disgusted' | 'surprised' | 'calm' | 'fluent' | 'whisper'
+        tone: string
+        ttsText: string
+      },
+    ) => {
+      const map = vnLineTtsReqCacheRef.current
+      map.set(key, value)
+      const entries = Array.from(map.entries())
+      const sliced = entries.slice(Math.max(0, entries.length - 260))
+      vnLineTtsReqCacheRef.current = new Map(sliced)
+      try {
+        await personaDb.setPhoneKv(vnLineTtsReqKvKey(currentCharacter.id), Object.fromEntries(sliced))
+      } catch {
+        // ignore cache persistence failure
+      }
+    },
+    [currentCharacter.id],
+  )
+  const stopVnBgm = useCallback(() => {
+    const current = vnBgmAudioRef.current
+    if (current) {
+      current.pause()
+      current.src = ''
+      vnBgmAudioRef.current = null
+    }
+    vnBgmCurrentUrlRef.current = ''
+    vnBgmPendingUrlRef.current = ''
+    vnBgmPendingNameRef.current = ''
+    vnBgmRequestedUrlRef.current = ''
+    vnBgmRequestTokenRef.current += 1
+    setVnBgmCurrentName('')
+    setVnBgmAwaitingGesture(false)
+  }, [])
+  const updateVnBgmVolumeScale = useCallback((nextRaw: number) => {
+    const next = Math.max(0, Math.min(2, nextRaw))
+    setVnBgmVolumeScale(next)
+    const current = vnBgmAudioRef.current
+    if (current) current.volume = Math.max(0, Math.min(1, VN_BGM_BASE_VOLUME * next))
+    try {
+      localStorage.setItem(VN_BGM_VOLUME_SCALE_LS_KEY, String(next))
+    } catch {
+      // ignore persistence failure
+    }
+  }, [])
+
+  const switchVnBgmByName = useCallback(
+    (rawName: string | null | undefined) => {
+      const name = String(rawName || '').trim()
+      if (!name) return
+      const hit = resolveVnBgmByName(name)
+      if (!hit?.url) return
+      if (vnBgmCurrentUrlRef.current === hit.url) return
+      if (vnBgmRequestedUrlRef.current === hit.url) return
+      vnBgmRequestedUrlRef.current = hit.url
+      const token = ++vnBgmRequestTokenRef.current
+
+      const prev = vnBgmAudioRef.current
+      if (prev) {
+        prev.pause()
+        prev.src = ''
+      }
+      const next = new Audio(hit.url)
+      next.preload = 'auto'
+      next.loop = true
+      next.volume = vnBgmVolume
+      const applyStart = () => {
+        if (vnBgmRequestTokenRef.current !== token) {
+          next.pause()
+          next.src = ''
+          return
+        }
+        vnBgmAudioRef.current = next
+        vnBgmCurrentUrlRef.current = hit.url
+        vnBgmPendingUrlRef.current = ''
+        vnBgmPendingNameRef.current = ''
+        vnBgmRequestedUrlRef.current = ''
+        setVnBgmCurrentName(hit.name)
+        setVnBgmAwaitingGesture(false)
+      }
+
+      void next
+        .play()
+        .then(() => {
+          applyStart()
+        })
+        .catch(() => {
+          if (vnBgmRequestTokenRef.current !== token) {
+            next.pause()
+            next.src = ''
+            return
+          }
+          // 移动端常见：未发生用户手势时被自动播放策略拦截，等待下一次点击重试。
+          vnBgmPendingUrlRef.current = hit.url
+          vnBgmPendingNameRef.current = hit.name
+          setVnBgmAwaitingGesture(true)
+        })
+    },
+    [vnBgmVolume],
+  )
+
+  useEffect(() => {
+    if (!isVn || !vnBgmAwaitingGesture) return
+    const onFirstGesture = () => {
+      const url = vnBgmPendingUrlRef.current
+      const name = vnBgmPendingNameRef.current
+      if (!url || !name) return
+      const next = new Audio(url)
+      next.preload = 'auto'
+      next.loop = true
+      next.volume = vnBgmVolume
+      void next
+        .play()
+        .then(() => {
+          if (vnBgmRequestTokenRef.current === 0) return
+          const prev = vnBgmAudioRef.current
+          if (prev && prev !== next) {
+            prev.pause()
+            prev.src = ''
+          }
+          vnBgmAudioRef.current = next
+          vnBgmCurrentUrlRef.current = url
+          vnBgmPendingUrlRef.current = ''
+          vnBgmPendingNameRef.current = ''
+          vnBgmRequestedUrlRef.current = ''
+          setVnBgmCurrentName(name)
+          setVnBgmAwaitingGesture(false)
+        })
+        .catch(() => {})
+    }
+    window.addEventListener('pointerdown', onFirstGesture, { passive: true })
+    window.addEventListener('keydown', onFirstGesture)
+    return () => {
+      window.removeEventListener('pointerdown', onFirstGesture)
+      window.removeEventListener('keydown', onFirstGesture)
+    }
+  }, [isVn, vnBgmAwaitingGesture, vnBgmVolume])
+
   const latestAi = useMemo(() => {
     return [...currentArchive.plots].reverse().find((x) => x.type === 'ai') ?? null
   }, [currentArchive.plots])
@@ -751,7 +1247,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   }, [currentArchive.plots])
 
   const vnRawContent = useMemo(() => splitDatingAssistantOutput(latestAi?.content || '').content.trim(), [latestAi?.content])
-  const vnBgCue = useMemo(() => extractVnBackgroundCue(vnRawContent), [vnRawContent])
+  const vnVoiceParamsCue = useMemo(() => {
+    if (currentArchive.vnVoiceDisabled) return { cleanedText: vnRawContent, items: [] as Array<{ idx: number; emotion: string; tone: string }> }
+    return extractVnVoiceParamsBlock(vnRawContent)
+  }, [currentArchive.vnVoiceDisabled, vnRawContent])
+  const vnBgCue = useMemo(() => extractVnBackgroundCue(vnVoiceParamsCue.cleanedText), [vnVoiceParamsCue.cleanedText])
   const vnBubbles = useMemo(() => {
     return splitVnContentToBubbles(vnBgCue.cleanedText, currentCharacter.realName, 25)
   }, [currentCharacter.realName, vnBgCue.cleanedText])
@@ -767,16 +1267,145 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     return vnCurrentBubble?.speaker ?? null
   }, [vnCurrentBubble])
   const vnBubbleIsInnerThought = useMemo(() => !!vnCurrentBubble?.isInnerThought, [vnCurrentBubble])
+  const vnFlashbackOn = useMemo(() => !!vnCurrentBubble?.isFlashback, [vnCurrentBubble])
+  const vnEffectiveBackgroundCueName = useMemo(() => {
+    // 背景指令应“持续生效”直到下一条背景指令出现，避免闪回中途回弹到旧背景。
+    const base = String(vnBgCue.backgroundName || '').trim()
+    if (!vnBubbles.length) return base
+    const cap = Math.max(0, Math.min(vnBubbles.length - 1, vnBubbleIndex))
+    let active = base
+    for (let i = 0; i <= cap; i += 1) {
+      const cue = String(vnBubbles[i]?.backgroundCueName || '').trim()
+      if (cue) active = cue
+    }
+    return active
+  }, [vnBgCue.backgroundName, vnBubbles, vnBubbleIndex])
   const vnBubbleText = useMemo(() => (vnShownText || vnTargetText).trim(), [vnShownText, vnTargetText])
+  const showVnToast = useCallback((msg: string) => {
+    setVnToast(msg)
+    if (vnToastTimerRef.current != null) window.clearTimeout(vnToastTimerRef.current)
+    vnToastTimerRef.current = window.setTimeout(() => setVnToast(null), 1400)
+  }, [])
   const vnBubble = useMemo(
     () => ({ text: vnBubbleText, speaker: vnBubbleSpeaker }),
     [vnBubbleSpeaker, vnBubbleText],
   )
+  const getCharacterVoiceMap = useCallback((): Record<string, unknown> => {
+    try {
+      const raw = localStorage.getItem('minimax:characterVoiceMap') || '{}'
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
+    } catch {
+      return {}
+    }
+  }, [])
+  const hasBoundVoiceForSpeaker = useCallback(
+    (speakerIdRaw: string | null | undefined): boolean => {
+      const speakerId = String(speakerIdRaw || '').trim()
+      if (!speakerId || speakerId === '__user__') return false
+      const map = getCharacterVoiceMap()
+      return !!String(map?.[speakerId] ?? '').trim()
+    },
+    [getCharacterVoiceMap],
+  )
+  const normalizeVnSpeaker = useCallback((v: string) => {
+    return String(v || '')
+      .replace(/[“”"「」『』]/g, '')
+      .replace(/[（]/g, '(')
+      .replace(/[）]/g, ')')
+      .replace(/\s+/g, '')
+      .trim()
+  }, [])
+  const resolveVnSpeakerId = useCallback(
+    (speakerRaw: string | null | undefined) => {
+      const speaker = String(speakerRaw || '').replace(/[“”"「」『』]/g, '').trim()
+      if (!speaker) return null
+      const normalized = normalizeVnSpeaker(speaker)
+      if (/^(旁白|叙述|系统|narrator)$/i.test(normalized)) return null
+      const userNameNorm = String(vnUserDisplayName || '').trim().replace(/\s+/g, '')
+      const normalizedCompact = normalized
+        .replace(/[（]/g, '(')
+        .replace(/[）]/g, ')')
+        .replace(/\s+/g, '')
+      if (/^(我|你|用户|玩家|自己)$/.test(normalizedCompact)) return '__user__'
+      if (/\(\s*你\s*\)$/.test(normalizedCompact)) return '__user__'
+      if (/(^|\W)(玩家|用户)($|\W)/.test(normalizedCompact)) return '__user__'
+      if (
+        userNameNorm &&
+        (normalizedCompact === userNameNorm ||
+          normalizedCompact === `${userNameNorm}(你)` ||
+          normalizedCompact === `${userNameNorm}（你）`)
+      ) {
+        return '__user__'
+      }
+      const byActor = spriteActors.find((x) => normalizeVnSpeaker(x.name) === normalized)
+      if (byActor) return byActor.id
+      if (speaker === currentCharacter.realName) return currentCharacter.id
+      // 未知说话人不回落到主角色，避免旁白/脏文本误触发语音合成。
+      return null
+    },
+    [currentCharacter.id, currentCharacter.realName, normalizeVnSpeaker, spriteActors, vnUserDisplayName],
+  )
+
+  useEffect(() => {
+    if (!isVn) return
+    if (!vnBubbles.length) return
+    const current = vnBubbles[Math.max(0, Math.min(vnBubbles.length - 1, vnBubbleIndex))]
+    const cueName = String(current?.bgmCueName || '').trim()
+    if (cueName) switchVnBgmByName(cueName)
+  }, [isVn, switchVnBgmByName, vnBubbleIndex, vnBubbles])
   useEffect(() => {
     vnLatestAiIdRef.current = String(latestAi?.id || '').trim()
     vnLatestAiSigRef.current = buildVnAiProgressSignature(String(latestAi?.content || ''))
     vnCurrentCharIdRef.current = String(currentCharacter.id || '').trim()
   }, [latestAi?.content, latestAi?.id, currentCharacter.id])
+  useEffect(() => {
+    if (!isVn) return
+    const aiId = String(latestAi?.id || '').trim()
+    if (!aiId) return
+    const items = vnVoiceParamsCue.items
+    if (!items.length) return
+
+    const speechModel = String(localStorage.getItem('minimax:speechModel') || 'speech-2.8-hd').trim() || 'speech-2.8-hd'
+    const rawMap = localStorage.getItem('minimax:characterVoiceMap') || '{}'
+    const voiceMap = JSON.parse(rawMap) as Record<string, unknown>
+
+    let cancelled = false
+    void (async () => {
+      // 将模型同一次输出的隐藏参数块写入缓存（不展示在 UI）
+      const styleByIdx = new Map<number, { emotion: ReturnType<typeof normalizeVnEmotion>; tone: string }>()
+      for (const r of items) {
+        styleByIdx.set(Number(r.idx), { emotion: normalizeVnEmotion(r.emotion), tone: normalizeVnToneToken(r.tone) })
+      }
+      for (const [idx, b] of vnBubbles.entries()) {
+        if (cancelled) return
+        const speaker = String(b.speaker || '').trim()
+        const text = String(b.text || '').trim()
+        if (!speaker || !text) continue
+        if (b.isInnerThought) continue
+        const sid = String(resolveVnSpeakerId(speaker) || '').trim()
+        if (!sid || sid === '__user__') continue
+        const voiceId = String(voiceMap?.[sid] ?? '').trim()
+        if (!voiceId) continue
+        const style = styleByIdx.get(idx)
+        if (!style) continue
+        const ttsText = decorateVnTtsText(text, style.tone)
+        if (!ttsText) continue
+        const cacheKey = `${sid}::${aiId}::${idx}::${text}`
+        if (vnLineTtsReqCacheRef.current.has(cacheKey)) continue
+        await persistVnLineTtsReq(cacheKey, {
+          voiceId,
+          model: speechModel,
+          emotion: style.emotion,
+          tone: style.tone,
+          ttsText,
+        })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [decorateVnTtsText, isVn, latestAi?.id, normalizeVnEmotion, normalizeVnToneToken, persistVnLineTtsReq, resolveVnSpeakerId, vnBubbles, vnVoiceParamsCue.items])
   const vnLogEntries = useMemo(() => {
     const out: VnLogEntry[] = []
     for (const p of currentArchive.plots) {
@@ -789,11 +1418,14 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           name: `${vnUserDisplayName}（你）`,
           text: msg,
           isUser: true,
+          speakerId: '__user__',
+          order: out.length,
         })
         continue
       }
       const aiRaw = splitDatingAssistantOutput(p.content).content.trim()
-      const cleaned = extractVnBackgroundCue(aiRaw).cleanedText
+      const voiceStripped = extractVnVoiceParamsBlock(aiRaw).cleanedText
+      const cleaned = extractVnBackgroundCue(voiceStripped).cleanedText
       if (!cleaned) continue
       const bubbles = splitVnContentToBubbles(cleaned, currentCharacter.realName, 25)
       if (!bubbles.length) continue
@@ -827,35 +1459,17 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
             const userNorm = String(vnUserDisplayName || '').replace(/\s+/g, '')
             return /^(我|你|用户|自己)$/u.test(n) || /（你）$|\(你\)$/u.test(n) || (!!userNorm && n === userNorm)
           })(),
+          speakerId: resolveVnSpeakerId(b.speaker),
+          voiceCacheKey: `${String(resolveVnSpeakerId(b.speaker) || '')}::${String(p.id || '')}::${i}::${text}`,
+          order: out.length,
         })
       }
     }
     return out
-  }, [currentArchive.plots, currentCharacter.realName, latestAi?.id, vnBubbleIndex, vnShownText, vnTyping, vnUserDisplayName])
+  }, [currentArchive.plots, currentCharacter.realName, latestAi?.id, resolveVnSpeakerId, vnBubbleIndex, vnShownText, vnTyping, vnUserDisplayName])
   const activeSpeakerId = useMemo(() => {
-    const speaker = String(vnBubble.speaker || '')
-      .replace(/[“”"「」『』]/g, '')
-      .trim()
-    if (!speaker) return null
-    const normalizeSpeaker = (v: string) =>
-      String(v || '')
-        .replace(/[“”"「」『』]/g, '')
-        .replace(/[（]/g, '(')
-        .replace(/[）]/g, ')')
-        .replace(/\s+/g, '')
-        .trim()
-    const normalized = normalizeSpeaker(speaker)
-    const userNameNorm = String(vnUserDisplayName || '').trim().replace(/\s+/g, '')
-    if (/^(我|你|用户|自己)$/.test(normalized)) return '__user__'
-    if (/（你）$|\(你\)$/.test(normalized)) return '__user__'
-    if (userNameNorm && (normalized === userNameNorm || normalized === `${userNameNorm}（你）` || normalized === `${userNameNorm}(你)`)) {
-      return '__user__'
-    }
-    const byActor = spriteActors.find((x) => normalizeSpeaker(x.name) === normalized)
-    if (byActor) return byActor.id
-    if (speaker === currentCharacter.realName) return currentCharacter.id
-    return currentCharacter.id
-  }, [currentCharacter.id, currentCharacter.realName, spriteActors, vnBubbleSpeaker, vnUserDisplayName])
+    return resolveVnSpeakerId(vnBubble.speaker)
+  }, [resolveVnSpeakerId, vnBubble.speaker])
   const vnDialogName = useMemo(() => {
     const speaker = String(vnBubbleSpeaker || '').trim()
     if (!speaker) {
@@ -872,10 +1486,268 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     }
     return vnBubbleIsInnerThought ? `${speaker}·内心` : speaker
   }, [currentCharacter.realName, vnBubbleIsInnerThought, vnBubbleSpeaker, vnUserDisplayName])
+  const vnCanPlayBubbleVoice = useMemo(() => {
+    if (!isVn) return false
+    if (!vnBubbleSpeaker) return false
+    if (vnBubbleIsInnerThought) return false
+    const sid = String(activeSpeakerId || '').trim()
+    if (!sid || sid === '__user__') return false
+    // 允许「主角色 + NPC」对白语音；玩家/旁白/未知 speaker 一律禁播。
+    if (!hasBoundVoiceForSpeaker(sid)) return false
+    return !!String(vnBubbleText || '').trim()
+  }, [activeSpeakerId, hasBoundVoiceForSpeaker, isVn, vnBubbleIsInnerThought, vnBubbleSpeaker, vnBubbleText])
+  const vnVoiceCacheKey = useMemo(() => {
+    const sid = String(activeSpeakerId || '').trim()
+    const aiId = String(latestAi?.id || '')
+    const text = String(vnBubbleText || '').trim()
+    return `${sid}::${aiId}::${vnBubbleIndex}::${text}`
+  }, [activeSpeakerId, latestAi?.id, vnBubbleIndex, vnBubbleText])
+  useEffect(() => {
+    vnCurrentVoiceKeyRef.current = String(vnVoiceCacheKey || '').trim()
+    // 切到新气泡后清空“已完成语音”标记，等待本句语音完成再允许自动推进。
+    vnVoiceDoneKeyRef.current = ''
+    vnVoiceDoneAtRef.current = 0
+  }, [vnVoiceCacheKey])
+  const vnAutoPlayOnceKey = useMemo(() => {
+    // 自动播放只跟“第几个气泡”有关，不能把文本拼进 key（逐字更新会导致循环触发）。
+    const sid = String(activeSpeakerId || '').trim()
+    const aiId = String(latestAi?.id || '')
+    return `${sid}::${aiId}::${vnBubbleIndex}`
+  }, [activeSpeakerId, latestAi?.id, vnBubbleIndex])
+  const VnCapsuleSwitch = useCallback(
+    ({ checked, onToggle, disabled = false }: { checked: boolean; onToggle: () => void; disabled?: boolean }) => (
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={onToggle}
+        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+          checked ? 'bg-emerald-500' : 'bg-stone-300'
+        } ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
+      >
+        <span
+          className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+            checked ? 'translate-x-5' : 'translate-x-0.5'
+          }`}
+        />
+      </button>
+    ),
+    [],
+  )
+  const synthVnVoiceForLine = useCallback(
+    async (params: { speakerId: string; text: string; cacheKey: string; contextTexts: string[] }) => {
+      const cacheKey = String(params.cacheKey || '').trim()
+      if (!cacheKey) return ''
+      const cached = String(vnLineVoiceCacheRef.current.get(cacheKey) || '').trim()
+      if (cached) return cached
+
+      const text = String(params.text || '').trim()
+      if (!text) return ''
+      const speakerId = String(params.speakerId || '').trim()
+      if (!speakerId || speakerId === '__user__') return ''
+
+      const apiKey = String(localStorage.getItem('minimax:apiKey') || '').trim()
+      const groupId = String(localStorage.getItem('minimax:groupId') || '').trim()
+      const speechModel = String(localStorage.getItem('minimax:speechModel') || 'speech-2.8-hd').trim() || 'speech-2.8-hd'
+      const map = getCharacterVoiceMap()
+      const voiceId = String(map?.[speakerId] ?? '').trim()
+      if (!apiKey || !voiceId) return ''
+
+      const cachedReq = vnLineTtsReqCacheRef.current.get(cacheKey)
+      const req =
+        cachedReq && cachedReq.voiceId === voiceId && cachedReq.ttsText
+          ? cachedReq
+          : (() => {
+              return null
+            })()
+      let emotion: 'happy' | 'sad' | 'angry' | 'fearful' | 'disgusted' | 'surprised' | 'calm' | 'fluent' | 'whisper'
+      let tone: string
+      let ttsText: string
+      if (req) {
+        emotion = req.emotion
+        tone = req.tone
+        ttsText = req.ttsText
+      } else {
+        // 没有同段隐藏参数块缓存时，降级为默认风格（避免额外再调用模型，确保“VN只调用一次模型生成内容”）
+        emotion = 'calm'
+        tone = 'breath'
+        ttsText = decorateVnTtsText(text, tone)
+        if (ttsText) await persistVnLineTtsReq(cacheKey, { voiceId, model: speechModel, emotion, tone, ttsText })
+      }
+      if (!ttsText) return ''
+
+      const blob = await createMiniMaxT2ASyncAudioBlob(
+        { apiKey, groupId },
+        { voice_id: voiceId, text: ttsText, model: speechModel, emotion },
+      )
+      const src = await blobToDataUrl(blob)
+      if (!src) return ''
+      await persistVnVoiceCache(cacheKey, src)
+      return src
+    },
+    [blobToDataUrl, decorateVnTtsText, getCharacterVoiceMap, persistVnLineTtsReq, persistVnVoiceCache],
+  )
+  const playVnBubbleVoice = useCallback(async (): Promise<boolean> => {
+    if (currentArchive.vnVoiceDisabled) {
+      showVnToast('已禁用语音合成，可在 VN 菜单关闭后恢复')
+      return false
+    }
+    if (!vnCanPlayBubbleVoice || vnLineVoiceGenerating) return false
+    if (vnLineVoicePlaying) {
+      stopVnLineVoice()
+      return false
+    }
+    const text = String(vnBubbleText || '').trim()
+    if (!text) return false
+    const sid = String(activeSpeakerId || '').trim()
+    if (!sid || sid === '__user__') return false
+    if (!hasBoundVoiceForSpeaker(sid)) {
+      showVnToast('该角色未绑定音色，无法播放语音')
+      return false
+    }
+    const playToken = ++vnVoicePlayTokenRef.current
+    const expectedKey = String(vnVoiceCacheKey || '').trim()
+    vnVoiceDoneKeyRef.current = ''
+    vnVoiceDoneAtRef.current = 0
+
+    try {
+      setVnLineVoiceGenerating(true)
+      const currentIdx = vnLogEntries.findIndex((x) => String(x.voiceCacheKey || '') === vnVoiceCacheKey)
+      const contextTexts = (currentIdx >= 0
+        ? vnLogEntries.slice(Math.max(0, currentIdx - 5), currentIdx)
+        : vnLogEntries.slice(-5)
+      )
+        .map((x) => String(x.text || '').trim())
+        .filter(Boolean)
+      let src = await synthVnVoiceForLine({ speakerId: sid, text, cacheKey: vnVoiceCacheKey, contextTexts })
+      if (playToken !== vnVoicePlayTokenRef.current) return false
+      if (expectedKey && expectedKey !== vnCurrentVoiceKeyRef.current) return false
+      if (src) {
+        stopVnLineVoice({ invalidatePending: false })
+        if (playToken !== vnVoicePlayTokenRef.current) return false
+        if (expectedKey && expectedKey !== vnCurrentVoiceKeyRef.current) return false
+        const a = vnLineAudioRef.current ?? new Audio()
+        a.preload = 'auto'
+        a.src = src
+        a.onended = () => {
+          if (playToken !== vnVoicePlayTokenRef.current) return
+          setVnLineVoicePlaying(false)
+          vnVoiceDoneKeyRef.current = expectedKey
+          vnVoiceDoneAtRef.current = Date.now()
+        }
+        a.onerror = () => {
+          if (playToken !== vnVoicePlayTokenRef.current) return
+          setVnLineVoicePlaying(false)
+          vnVoiceDoneKeyRef.current = expectedKey
+          vnVoiceDoneAtRef.current = Date.now()
+        }
+        vnLineAudioRef.current = a
+        a.currentTime = 0
+        await a.play()
+        if (playToken !== vnVoicePlayTokenRef.current) {
+          a.pause()
+          return false
+        }
+        setVnLineVoicePlaying(true)
+        return true
+      }
+      // 没有可播音频时也视作“本句语音流程结束”，避免自动播放卡死。
+      vnVoiceDoneKeyRef.current = expectedKey
+      vnVoiceDoneAtRef.current = Date.now()
+      showVnToast('该角色未绑定音色或合成失败，请检查音色绑定')
+      return false
+    } catch {
+      setVnLineVoicePlaying(false)
+      vnVoiceDoneKeyRef.current = expectedKey
+      vnVoiceDoneAtRef.current = Date.now()
+      showVnToast('语音已生成但浏览器拦截了自动播放，请点一下播放键继续')
+      return false
+    } finally {
+      setVnLineVoiceGenerating(false)
+    }
+  }, [
+    activeSpeakerId,
+    synthVnVoiceForLine,
+    stopVnLineVoice,
+    currentArchive.vnVoiceDisabled,
+    showVnToast,
+    hasBoundVoiceForSpeaker,
+    vnCanPlayBubbleVoice,
+    vnLineVoiceGenerating,
+    vnLineVoicePlaying,
+    vnBubbleText,
+    vnLogEntries,
+    vnVoiceCacheKey,
+  ])
+  const playCachedLogVoice = useCallback(
+    async (entry: VnLogEntry) => {
+      if (currentArchive.vnVoiceDisabled) {
+        showVnToast('已禁用语音合成，可在 VN 菜单关闭后恢复')
+        return
+      }
+      const speakerId = String(entry.speakerId || '').trim()
+      const key = String(entry.voiceCacheKey || '').trim()
+      if (!key || !speakerId || speakerId === '__user__') return
+      if (!hasBoundVoiceForSpeaker(speakerId)) {
+        showVnToast('该角色未绑定音色，无法播放语音')
+        return
+      }
+      if (vnLogPlayingId === entry.id && vnLineVoicePlaying) {
+        stopVnLineVoice()
+        setVnLogPlayingId(null)
+        return
+      }
+      try {
+        setVnLogGeneratingId(entry.id)
+        let src = String(vnLineVoiceCacheRef.current.get(key) || '').trim()
+        if (!src) {
+          const idx = Math.max(0, Number(entry.order || 0))
+          const contextTexts = vnLogEntries
+            .slice(Math.max(0, idx - 5), idx)
+            .map((x) => String(x.text || '').trim())
+            .filter(Boolean)
+          src = await synthVnVoiceForLine({
+            speakerId,
+            text: String(entry.text || '').trim(),
+            cacheKey: key,
+            contextTexts,
+          })
+        }
+        if (!src) {
+          showVnToast('该角色未绑定音色或合成失败，请检查音色绑定')
+          return
+        }
+        stopVnLineVoice({ invalidatePending: false })
+        const a = vnLineAudioRef.current ?? new Audio()
+        a.preload = 'auto'
+        a.src = src
+        a.onended = () => {
+          setVnLineVoicePlaying(false)
+          setVnLogPlayingId(null)
+        }
+        a.onerror = () => {
+          setVnLineVoicePlaying(false)
+          setVnLogPlayingId(null)
+        }
+        vnLineAudioRef.current = a
+        a.currentTime = 0
+        await a.play()
+        setVnLineVoicePlaying(true)
+        setVnLogPlayingId(entry.id)
+      } catch {
+        setVnLineVoicePlaying(false)
+        setVnLogPlayingId(null)
+      } finally {
+        setVnLogGeneratingId(null)
+      }
+    },
+    [currentArchive.vnVoiceDisabled, hasBoundVoiceForSpeaker, showVnToast, stopVnLineVoice, synthVnVoiceForLine, vnLineVoicePlaying, vnLogEntries, vnLogPlayingId],
+  )
 
   useEffect(() => {
     if (!isVn) return
-    const cueName = String(vnBgCue.backgroundName || '').trim()
+    const cueName = vnEffectiveBackgroundCueName
     if (!cueName) return
     const hit = resolveVnBackgroundByName(cueName)
     if (!hit?.url || hit.url === vnBgCurrentUrl) return
@@ -898,7 +1770,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       setVnBgPrevUrl(null)
       vnBgFadeTimerRef.current = null
     }, 420)
-  }, [isVn, vnBgCue.backgroundName, vnBgCurrentUrl])
+  }, [isVn, vnBgCurrentUrl, vnEffectiveBackgroundCueName])
 
   useEffect(() => {
     return () => {
@@ -906,6 +1778,24 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       if (vnBgFlashTimerRef.current != null) window.clearTimeout(vnBgFlashTimerRef.current)
     }
   }, [])
+  useEffect(() => {
+    if (isVn) return
+    stopVnBgm()
+  }, [isVn, stopVnBgm])
+  useEffect(() => stopVnBgm, [stopVnBgm])
+  useEffect(() => {
+    stopVnLineVoice()
+  }, [vnBubbleIndex, latestAi?.id, stopVnLineVoice])
+  useEffect(
+    () => () => {
+      stopVnLineVoice()
+      for (const u of vnLineVoiceCacheRef.current.values()) {
+        if (u.startsWith('blob:')) URL.revokeObjectURL(u)
+      }
+      vnLineVoiceCacheRef.current.clear()
+    },
+    [stopVnLineVoice],
+  )
   const activeSprite = useActiveSprite(activeSpeakerId)
   const hasNextVnBubble = vnBubbleIndex < vnBubbles.length - 1
   const vnUiLoading = loading || vnSubmitting
@@ -914,6 +1804,40 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     !!latestPlayer &&
     (!latestAi || Number(latestAi.timestamp || 0) < Number(latestPlayer.timestamp || 0))
   const vnBoxLoading = vnUiLoading && !vnTargetText.trim()
+  useEffect(() => {
+    if (!isVn || !vnAutoVoicePlay) return
+    if (currentArchive.vnVoiceDisabled) return
+    if (!vnCanPlayBubbleVoice) return
+    if (vnTyping || vnBoxLoading) return
+    if (vnLineVoicePlaying || vnLineVoiceGenerating) return
+    if (vnLastAutoVoiceKeyRef.current === vnAutoPlayOnceKey) return
+    const key = vnAutoPlayOnceKey
+    vnLastAutoVoiceKeyRef.current = key
+    void (async () => {
+      const ok = await playVnBubbleVoice()
+      // 只有真正开始播放才消费本句 key；失败则允许后续自动重试。
+      if (!ok && vnLastAutoVoiceKeyRef.current === key) vnLastAutoVoiceKeyRef.current = ''
+    })()
+  }, [
+    isVn,
+    playVnBubbleVoice,
+    vnAutoVoicePlay,
+    vnBoxLoading,
+    vnCanPlayBubbleVoice,
+    vnLineVoiceGenerating,
+    vnLineVoicePlaying,
+    vnTyping,
+    vnAutoPlayOnceKey,
+  ])
+  useEffect(() => {
+    if (!currentArchive.vnVoiceDisabled) return
+    // 一键禁用后立刻停播 + 关闭自动播，避免继续占用资源
+    stopVnLineVoice()
+    if (vnAutoVoicePlay) setVnAutoVoicePlay(false)
+  }, [currentArchive.vnVoiceDisabled, stopVnLineVoice, vnAutoVoicePlay])
+  useEffect(() => {
+    if (vnAutoVoicePlay) vnLastAutoVoiceKeyRef.current = ''
+  }, [vnAutoVoicePlay])
 
   useEffect(() => {
     if (!isVn) return
@@ -1265,12 +2189,17 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   useEffect(() => {
     if (currentArchive.plots.length > 0) {
       if (initialBiasDismissedFor) setInitialBiasDismissedFor(null)
+      if (initialBiasOpen) setInitialBiasOpen(false)
+      return
+    }
+    if (isVn) {
+      if (initialBiasOpen) setInitialBiasOpen(false)
       return
     }
     if (loading) return
     if (initialBiasDismissedFor === currentCharacter.id) return
     if (currentArchive.plots.length === 0) setInitialBiasOpen(true)
-  }, [currentArchive.plots.length, loading, initialBiasDismissedFor, currentCharacter.id])
+  }, [currentArchive.plots.length, loading, initialBiasDismissedFor, currentCharacter.id, isVn, initialBiasOpen])
 
   useEffect(() => {
     if (vnAutoTimerRef.current) {
@@ -1279,7 +2208,20 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     }
     if (!isVn || !isAutoPlay || loading || vnTyping) return
     if (!vnTargetText.trim()) return
-    const delayMs = 1500
+    const voiceSyncEnabled = vnAutoVoicePlay && !currentArchive.vnVoiceDisabled
+    const audio = vnLineAudioRef.current
+    const audioBusy = !!audio && !audio.paused && !audio.ended
+    // 关键：只要开了自动语音，就必须等当前语音彻底结束，避免“语音还在播就切下一句”造成误判成旁白在念。
+    if (voiceSyncEnabled && (vnLineVoiceGenerating || vnLineVoicePlaying || audioBusy)) return
+    let delayMs = 1500
+    if (voiceSyncEnabled && vnCanPlayBubbleVoice) {
+      const currentKey = String(vnCurrentVoiceKeyRef.current || '').trim()
+      if (!currentKey) return
+      // 严格串行：必须是“当前句语音已完成”才允许进入 1s 缓冲后切下一句。
+      if (vnVoiceDoneKeyRef.current !== currentKey) return
+      const elapsed = Date.now() - Number(vnVoiceDoneAtRef.current || 0)
+      delayMs = Math.max(0, 1000 - elapsed)
+    }
     vnAutoTimerRef.current = window.setTimeout(() => {
       vnAutoAdvanceRef.current()
     }, delayMs)
@@ -1289,7 +2231,18 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         vnAutoTimerRef.current = null
       }
     }
-  }, [isAutoPlay, isVn, loading, vnTargetText, vnTyping])
+  }, [
+    currentArchive.vnVoiceDisabled,
+    isAutoPlay,
+    isVn,
+    loading,
+    vnAutoVoicePlay,
+    vnCanPlayBubbleVoice,
+    vnLineVoiceGenerating,
+    vnLineVoicePlaying,
+    vnTargetText,
+    vnTyping,
+  ])
 
   useEffect(() => {
     if (!isVn || !logOpen) return
@@ -1732,6 +2685,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         </div>
       ) : (
         <div ref={vnRootRef} className="relative h-full">
+          {vnToast ? (
+            <div className="pointer-events-none absolute left-1/2 top-16 z-[80] -translate-x-1/2 rounded-xl bg-white/90 px-4 py-2 text-[13px] text-[#1f2937] shadow-[0_10px_22px_rgba(0,0,0,0.12)] backdrop-blur">
+              {vnToast}
+            </div>
+          ) : null}
           <div
             className="absolute inset-0 bg-cover bg-center transition-opacity duration-[420ms] ease-out"
             style={{
@@ -1751,6 +2709,16 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
             className="pointer-events-none absolute inset-0 z-[8] bg-white transition-opacity duration-150"
             style={{ opacity: vnBgFlashOn ? 0.72 : 0 }}
           />
+          <motion.div
+            className="pointer-events-none absolute inset-0 z-[9]"
+            animate={{ opacity: vnFlashbackOn ? 1 : 0 }}
+            transition={{ duration: 0.28, ease: 'easeOut' }}
+            style={{
+              boxShadow: 'inset 0 0 120px rgba(255,255,255,0.48), inset 0 0 40px rgba(255,255,255,0.42)',
+              background:
+                'radial-gradient(ellipse at center, rgba(255,255,255,0.02) 32%, rgba(255,255,255,0.24) 78%, rgba(255,255,255,0.42) 100%)',
+            }}
+          />
           <div
             className="absolute z-30"
             style={{ left: vnFabPos.x, top: vnFabPos.y }}
@@ -1768,7 +2736,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           </div>
           {menuOpen ? (
             <div
-              className="absolute z-30 w-44 rounded-xl border border-stone-200 bg-white/92 p-1 shadow-[0_10px_28px_rgba(0,0,0,0.1)] backdrop-blur-xl"
+              className="absolute z-30 w-56 rounded-xl border border-stone-200 bg-white/92 p-1 shadow-[0_10px_28px_rgba(0,0,0,0.1)] backdrop-blur-xl"
               style={{ left: vnMenuPos.left, top: vnMenuPos.top }}
             >
               <button
@@ -1785,22 +2753,22 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 type="button"
                 className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50"
                 onClick={() => {
+                  stopVnBgm()
                   setMode('normal')
                   setMenuOpen(false)
                 }}
               >
                 切回普通模式
               </button>
-              <button
-                type="button"
-                className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50"
-                onClick={() => {
-                  void toggleVnDanmakuModel()
-                  setMenuOpen(false)
-                }}
-              >
-                弹幕模型开关：{vnDanmakuModelOn ? '已开启' : '已关闭'}
-              </button>
+              <div className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50">
+                <span>弹幕模型</span>
+                <VnCapsuleSwitch
+                  checked={vnDanmakuModelOn}
+                  onToggle={() => {
+                    void toggleVnDanmakuModel()
+                  }}
+                />
+              </div>
               <button
                 type="button"
                 className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50"
@@ -1821,16 +2789,41 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               >
                 BGM配置
               </button>
-              <button
-                type="button"
-                className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50"
-                onClick={() => {
-                  setBranchEnabled(!currentArchive.branchEnabled)
-                  setMenuOpen(false)
-                }}
+              <div className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50">
+                <span>自动语音播放</span>
+                <VnCapsuleSwitch
+                  checked={vnAutoVoicePlay}
+                  onToggle={() => {
+                    setVnAutoVoicePlay((v) => !v)
+                  }}
+                />
+              </div>
+              <div
+                className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50"
+                title="开启后将禁用 VN 语音合成/播放，并要求模型不输出隐藏语音参数块，以节省 token"
               >
-                剧情分支开关：{currentArchive.branchEnabled ? '已开启' : '已关闭'}
-              </button>
+                <span>禁用语音合成</span>
+                <VnCapsuleSwitch
+                  checked={!!currentArchive.vnVoiceDisabled}
+                  onToggle={() => {
+                    const next = !currentArchive.vnVoiceDisabled
+                    setVnVoiceDisabled(next)
+                    if (next) {
+                      stopVnLineVoice()
+                      setVnAutoVoicePlay(false)
+                    }
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50">
+                <span>剧情分支</span>
+                <VnCapsuleSwitch
+                  checked={currentArchive.branchEnabled}
+                  onToggle={() => {
+                    setBranchEnabled(!currentArchive.branchEnabled)
+                  }}
+                />
+              </div>
             </div>
           ) : null}
 
@@ -1915,6 +2908,14 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 loading={vnBoxLoading}
                 innerVoice={vnBubbleIsInnerThought}
                 showNameTag={!!vnBubble.speaker || vnBubbleIsInnerThought}
+                canPlayVoice={vnCanPlayBubbleVoice}
+                voiceDisabled={!!currentArchive.vnVoiceDisabled}
+                voiceGenerating={vnLineVoiceGenerating}
+                voicePlaying={vnLineVoicePlaying}
+                onToggleVoice={() => {
+                  void playVnBubbleVoice()
+                }}
+                onDisabledVoiceClick={() => showVnToast('已禁用语音合成，可在 VN 菜单关闭后恢复')}
                 onContinue={handleVnContinue}
                 showContinueHint={!vnBoxLoading}
               >
@@ -1927,7 +2928,10 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
             <VNBottomControls
               isAutoPlay={isAutoPlay}
               playSpeed={playSpeed}
-              onExit={() => setMode('normal')}
+              onExit={() => {
+                stopVnBgm()
+                setMode('normal')
+              }}
               onLog={openLog}
               onHeartWhisper={() => setHeartWhisperOpen(true)}
               onToggleAuto={toggleAutoPlay}
@@ -1973,7 +2977,25 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 className="min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-4 [scrollbar-color:rgba(120,130,145,0.35)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#9CA3AF]/40 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-1.5"
               >
                 {vnLogEntries.length ? (
-                  vnLogEntries.map((entry) => <VnLogItemRenderer key={entry.id} item={entry} />)
+                  vnLogEntries.map((entry) => {
+                    const canPlayVoice =
+                      entry.kind === 'dialogue' &&
+                      entry.isUser !== true &&
+                      !!entry.speakerId &&
+                      entry.speakerId !== '__user__'
+                    return (
+                      <VnLogItemRenderer
+                        key={entry.id}
+                        item={entry}
+                        canPlayVoice={canPlayVoice}
+                        playing={vnLogPlayingId === entry.id && vnLineVoicePlaying}
+                        generating={vnLogGeneratingId === entry.id}
+                        onPlayVoice={() => {
+                          void playCachedLogVoice(entry)
+                        }}
+                      />
+                    )
+                  })
                 ) : (
                   <p className="py-8 text-center text-[13px] font-light text-[#9CA3AF]">当前还没有可回顾的台词</p>
                 )}
@@ -2591,8 +3613,38 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           <div className="w-full max-w-[420px] rounded-2xl border border-stone-200 bg-white p-4 shadow-lg">
             <p className="text-[15px] font-semibold text-stone-900">BGM配置</p>
             <p className="mt-2 text-[13px] leading-relaxed text-stone-600">
-              已预留 BGM 配置入口。下一步可在这里接入曲目选择、音量与自动切歌规则。
+              当前已接入 VN 自动切歌。
+              {vnBgmCurrentName ? `正在播放：${vnBgmCurrentName}。` : vnBgmAwaitingGesture ? '等待你的首次点击后播放 BGM。' : '当前暂无播放。'}
+              你可以继续往 BGM 文件夹放歌，系统会自动纳入候选并在剧情节点前切换。
             </p>
+            <div className="mt-3 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2.5">
+              <div className="flex items-center justify-between text-[12px] text-stone-700">
+                <span>BGM音量</span>
+                <span>
+                  {Math.round(vnBgmVolumeBalance) === 0
+                    ? '持平'
+                    : `${Math.round(vnBgmVolumeBalance) > 0 ? '+' : ''}${Math.round(vnBgmVolumeBalance)}%`}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={VN_BGM_BALANCE_MIN}
+                max={VN_BGM_BALANCE_MAX}
+                step={1}
+                value={Math.round(vnBgmVolumeBalance)}
+                onChange={(e) => {
+                  const balance = clampVnBgmBalance(Number(e.target.value))
+                  updateVnBgmVolumeScale(toVnBgmVolumeScale(balance))
+                }}
+                className="mt-2 w-full accent-neutral-900"
+              />
+              <div className="mt-1 flex items-center justify-between text-[11px] text-stone-500">
+                <span>更小</span>
+                <span>居中=持平</span>
+                <span>更大</span>
+              </div>
+              <p className="mt-1 text-[11px] text-stone-500">仅影响 VN 背景音乐，不影响对白语音音量。</p>
+            </div>
             <div className="mt-3 flex justify-end">
               <button
                 type="button"

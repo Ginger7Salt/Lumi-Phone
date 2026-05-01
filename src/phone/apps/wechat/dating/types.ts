@@ -110,6 +110,8 @@ export type CharacterArchive = {
   /** 上帝视角：旁白推进，不直接对「你」说话、不与玩家互动 */
   godPerspective: boolean
   branchEnabled: boolean
+  /** VN 模式：禁用语音合成/播放（省 token + 省请求） */
+  vnVoiceDisabled?: boolean
   lastDateAt: number | null
   pendingBranches: BranchOption[]
   branchNodeHistory: number[]

@@ -1,9 +1,12 @@
+import type { ReactNode } from 'react'
+
 type Props = {
   name: string
   innerVoice?: boolean
+  rightNode?: ReactNode
 }
 
-export function VNNameTag({ name, innerVoice = false }: Props) {
+export function VNNameTag({ name, innerVoice = false, rightNode = null }: Props) {
   return (
     <div
       className="absolute left-[5%] top-0 z-20 -translate-y-1/2 rounded-md px-3 py-1.5 shadow-[0_8px_20px_rgba(0,0,0,0.2)]"
@@ -22,6 +25,7 @@ export function VNNameTag({ name, innerVoice = false }: Props) {
         >
           {name || '未命名'}
         </span>
+        {rightNode}
       </div>
     </div>
   )
