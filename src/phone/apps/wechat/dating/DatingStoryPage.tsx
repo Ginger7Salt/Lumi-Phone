@@ -1523,11 +1523,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         disabled={disabled}
         onClick={onToggle}
         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-          checked ? 'bg-emerald-500' : 'bg-stone-300'
+          checked ? 'bg-black' : 'bg-stone-200'
         } ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
       >
         <span
-          className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+          className={`inline-block h-5 w-5 rounded-full border border-stone-300 bg-white shadow transition-transform ${
             checked ? 'translate-x-5' : 'translate-x-0.5'
           }`}
         />
