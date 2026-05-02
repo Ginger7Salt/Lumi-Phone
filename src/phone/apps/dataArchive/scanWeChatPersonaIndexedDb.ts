@@ -11,7 +11,7 @@ function estimateRecordBytes(value: unknown, depth = 0, seen = new WeakSet<objec
   if (t === 'boolean') return 4
   if (t === 'number') return 8
   if (t === 'bigint') return 16
-  if (typeof value === 'string') {
+  if (t === 'string') {
     try {
       return te.encode(value).length
     } catch {

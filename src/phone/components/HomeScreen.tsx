@@ -1021,7 +1021,6 @@ export function HomeScreen({ onOpenApp }: Props) {
           handlePointerDragStart(id, { zone: 'dock', index: dockIndex }, event)
         }}
       />
-
     </div>
   )
 }
