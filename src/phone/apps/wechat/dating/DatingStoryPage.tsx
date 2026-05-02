@@ -3151,11 +3151,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   <p className="text-[13px] font-medium text-[#262626]">转述</p>
                   <p className="mt-0.5 text-[11px] leading-snug text-stone-500">
                     开：输入仅指导方向，正文须<strong>当场演出过程</strong>（尚未默认已发生）。关：输入视为<strong>已经发生</strong>，正文直接写他人反应。
-                    {currentArchive.vnCustomInputParaphrase && !godLocksNoInterrupt && !autoUserReaction ? (
-                      <span className="mt-1 block text-[10.5px] leading-snug text-amber-900/85">
-                        与「不抢话」同时生效：只会用镜头和对方反应逼近你的意图，不会在「{vnUserDisplayName}（你）」里替你写长篇台词；要亲口说的字请下一条自己输入。需要模型代写你开口时请打开「抢话」。
-                      </span>
-                    ) : null}
                   </p>
                 </div>
                 <button
