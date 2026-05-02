@@ -1,5 +1,6 @@
 import type { Character, PlayerIdentity, WorldBook, WorldBookItem } from './types'
 import type { ApiConfig } from '../../api/types'
+import { LUMI_SYS_TOKENS_TOTAL_KEY } from '../../dataArchive/constants'
 import { clampWbItemGenTargetChars } from './worldBookItemGenConstants'
 
 const WB_ITEM_PROMPT_CONTENT_CAP = 520
@@ -85,6 +86,58 @@ export function formatLinkedNpcsForWorldBookPrompt(npcs: Character[]): string {
 export type OpenAiCompatibleMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
 type ChatMessage = OpenAiCompatibleMessage
+
+/** 从 OpenAI 兼容体 / Gemini generateContent 响应中取出「输出侧」可计费 token 数（优先 completion，其次 Gemini candidates） */
+function extractBillableCompletionTokens(data: unknown): number {
+  const root = data && typeof data === 'object' ? (data as Record<string, unknown>) : null
+  if (!root) return 0
+  const usage = root.usage && typeof root.usage === 'object' ? (root.usage as Record<string, unknown>) : null
+  if (usage) {
+    const ct = Number(usage.completion_tokens)
+    if (Number.isFinite(ct) && ct > 0) return Math.min(Math.floor(ct), 2_000_000)
+    const ctCamel = Number(usage.completionTokens)
+    if (Number.isFinite(ctCamel) && ctCamel > 0) return Math.min(Math.floor(ctCamel), 2_000_000)
+    const tt = Number(usage.total_tokens)
+    if (Number.isFinite(tt) && tt > 0) return Math.min(Math.floor(tt), 2_000_000)
+    const ttCamel = Number(usage.totalTokens)
+    if (Number.isFinite(ttCamel) && ttCamel > 0) return Math.min(Math.floor(ttCamel), 2_000_000)
+  }
+  const um =
+    root.usageMetadata && typeof root.usageMetadata === 'object'
+      ? (root.usageMetadata as Record<string, unknown>)
+      : root.usage_metadata && typeof root.usage_metadata === 'object'
+        ? (root.usage_metadata as Record<string, unknown>)
+        : null
+  if (um) {
+    const cand = Number(um.candidatesTokenCount)
+    if (Number.isFinite(cand) && cand > 0) return Math.min(Math.floor(cand), 2_000_000)
+    const candSnake = Number(um.candidates_token_count)
+    if (Number.isFinite(candSnake) && candSnake > 0) return Math.min(Math.floor(candSnake), 2_000_000)
+    const tot = Number(um.totalTokenCount)
+    if (Number.isFinite(tot) && tot > 0) return Math.min(Math.floor(tot), 2_000_000)
+  }
+  return 0
+}
+
+/** chat/completions 成功后累加输出 token 到数据中心「灵感消耗」；同页触发刷新事件 */
+export function bumpLumiSysTokensFromChatResponse(data: unknown): void {
+  if (typeof localStorage === 'undefined') return
+  const add = extractBillableCompletionTokens(data)
+  if (!add) return
+  try {
+    const raw = localStorage.getItem(LUMI_SYS_TOKENS_TOTAL_KEY)
+    const prev = raw ? Number(raw) : 0
+    const base = Number.isFinite(prev) && prev >= 0 ? Math.floor(prev) : 0
+    localStorage.setItem(LUMI_SYS_TOKENS_TOTAL_KEY, String(Math.min(base + add, Number.MAX_SAFE_INTEGER)))
+  } catch {
+    /* ignore */
+  }
+  try {
+    window.dispatchEvent(new CustomEvent('lumi-sys-metrics-changed'))
+  } catch {
+    /* ignore */
+  }
+}
 
 function isGeminiGenerateContentUrl(url: string): boolean {
   const u = url.trim()
@@ -597,6 +650,7 @@ export async function openAiCompatibleChatAny(
       const msg = (typeof errObj?.message === 'string' ? errObj.message : '') || (typeof rec?.message === 'string' ? rec.message : '') || `请求失败（HTTP ${resp.status}）`
       throw new Error(typeof msg === 'string' ? msg : '请求失败')
     }
+    bumpLumiSysTokensFromChatResponse(data)
     return parseGeminiText(data)
   }
 
@@ -627,6 +681,7 @@ export async function openAiCompatibleChatAny(
     const msg = (typeof errObj?.message === 'string' ? errObj.message : '') || (typeof rec?.message === 'string' ? rec.message : '') || `请求失败（HTTP ${resp.status}）`
     throw new Error(typeof msg === 'string' ? msg : '请求失败')
   }
+  bumpLumiSysTokensFromChatResponse(data)
   return parseOpenAiChoiceMessage(data)
 }
 
@@ -664,6 +719,7 @@ export async function openAiCompatibleChat(
         `请求失败（HTTP ${resp.status}）`
       throw new Error(typeof msg === 'string' ? msg : '请求失败')
     }
+    bumpLumiSysTokensFromChatResponse(data)
     return parseGeminiText(data)
   }
 
@@ -690,6 +746,7 @@ export async function openAiCompatibleChat(
     const msg = (typeof errObj?.message === 'string' ? errObj.message : '') || (typeof rec?.message === 'string' ? rec.message : '') || `请求失败（HTTP ${resp.status}）`
     throw new Error(typeof msg === 'string' ? msg : '请求失败')
   }
+  bumpLumiSysTokensFromChatResponse(data)
   return parseOpenAiChoiceMessage(data)
 }
 

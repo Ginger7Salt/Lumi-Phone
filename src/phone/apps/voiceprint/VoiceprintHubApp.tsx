@@ -12,6 +12,8 @@ import {
   createMiniMaxT2ASyncAudioBlob,
   createMiniMaxT2AAsyncTask,
   fetchMiniMaxVoices,
+  mergePinnedMiniMaxVoicesIntoList,
+  pinMiniMaxVoiceIdForLocalList,
   queryMiniMaxT2AAsyncTask,
   retrieveMiniMaxAudioFileUrl,
   type MiniMaxApiRegion,
@@ -161,8 +163,20 @@ function InvitationCard() {
   )
 }
 
+const DEFAULT_ACTIVATE_TTS_TEXT = '你好。'
+
 function SettingsTab() {
-  const { apiKey, groupId, speechModel, apiRegion, setApiKey, setGroupId, setSpeechModel, setApiRegion } = useVoiceStore()
+  const {
+    apiKey,
+    groupId,
+    speechModel,
+    apiRegion,
+    setApiKey,
+    setGroupId,
+    setSpeechModel,
+    setApiRegion,
+    setVoices,
+  } = useVoiceStore()
   const [apiKeyDraft, setApiKeyDraft] = useState(apiKey)
   const [groupIdDraft, setGroupIdDraft] = useState(groupId)
   const [speechModelDraft, setSpeechModelDraft] = useState(speechModel)
@@ -171,6 +185,11 @@ function SettingsTab() {
   const [toast, setToast] = useState<string | null>(null)
   const [tone, setTone] = useState<'error' | 'info'>('info')
   const [testing, setTesting] = useState(false)
+  const [activateVoiceIdDraft, setActivateVoiceIdDraft] = useState('')
+  const [activateTextDraft, setActivateTextDraft] = useState(DEFAULT_ACTIVATE_TTS_TEXT)
+  const [activatingVoice, setActivatingVoice] = useState(false)
+  const [activateConfirmOpen, setActivateConfirmOpen] = useState(false)
+  const [activateRemarkDraft, setActivateRemarkDraft] = useState('')
   const currentModelMeta = useMemo(
     () => SPEECH_MODEL_OPTIONS.find((m) => m.id === speechModelDraft) ?? SPEECH_MODEL_OPTIONS[0],
     [speechModelDraft],
@@ -214,6 +233,84 @@ function SettingsTab() {
       setToast(msg)
     } finally {
       setTesting(false)
+    }
+  }
+
+  const openActivateRemarkSheet = () => {
+    const vid = activateVoiceIdDraft.trim()
+    if (!vid) {
+      setTone('error')
+      setToast('请先把编号粘贴到输入框里')
+      return
+    }
+    const key = apiKeyDraft.trim()
+    if (!key) {
+      setTone('error')
+      setToast('请先填写上面的 API Key')
+      return
+    }
+    setActivateRemarkDraft('')
+    setActivateConfirmOpen(true)
+  }
+
+  const activateVoiceForApiListing = async (remarkForList: string) => {
+    const vid = activateVoiceIdDraft.trim()
+    if (!vid) {
+      setTone('error')
+      setToast('请先把编号粘贴到输入框里')
+      return
+    }
+    const key = apiKeyDraft.trim()
+    if (!key) {
+      setTone('error')
+      setToast('请先填写上面的 API Key')
+      return
+    }
+    const label = String(remarkForList || '').trim().slice(0, 40)
+    if (!label) {
+      setTone('error')
+      setToast('请填写备注')
+      return
+    }
+    const txt = (activateTextDraft.trim() || DEFAULT_ACTIVATE_TTS_TEXT).slice(0, 500)
+    setActivatingVoice(true)
+    try {
+      await createMiniMaxT2ASyncAudioBlob(
+        { apiKey: key, groupId: groupIdDraft.trim(), apiRegion: apiRegionDraft },
+        {
+          voice_id: vid,
+          text: txt,
+          model: speechModelDraft.trim() || 'speech-2.8-hd',
+        },
+      )
+      pinMiniMaxVoiceIdForLocalList(vid, label)
+      const creds = {
+        apiKey: key,
+        groupId: groupIdDraft.trim(),
+        apiRegion: apiRegionDraft,
+      }
+      /** 与激活使用同一套凭据写入 store，避免切到「Voice Archive」时挂载即用旧 Key 把列表刷掉 */
+      setApiKey(key)
+      setGroupId(groupIdDraft.trim())
+      setSpeechModel(speechModelDraft.trim() || 'speech-2.8-hd')
+      setApiRegion(apiRegionDraft)
+      try {
+        const list = await fetchMiniMaxVoices(creds)
+        setVoices(list)
+        setTone('info')
+        setToast('已激活，列表已更新')
+      } catch (refreshErr) {
+        setVoices(mergePinnedMiniMaxVoicesIntoList([]))
+        setTone('info')
+        setToast(
+          `已激活；更新列表时出错：${refreshErr instanceof Error ? refreshErr.message : '请稍后再试'}`,
+        )
+      }
+    } catch (e) {
+      setTone('error')
+      setToast(e instanceof Error ? e.message : '激活失败')
+    } finally {
+      setActivatingVoice(false)
     }
   }
 
@@ -365,6 +462,84 @@ function SettingsTab() {
           </div>
         </div>
       </div>
+
+      <div className="rounded-[18px] border border-black/8 bg-white px-4 py-4 shadow-[0_10px_30px_rgba(0,0,0,0.04)]">
+        <div className="text-[13px] font-semibold text-[#111]">激活音色</div>
+        <p className="mt-2 text-[11px] leading-relaxed text-[#6b7280]">
+          列表里若一直找不到某个音色，请把从网页里复制下来的<strong>整段编号</strong>粘贴到下面，再点激活。会先让你填一句<strong>备注</strong>，方便以后在列表里分辨是谁的声音。
+        </p>
+        <div className="mt-3 space-y-3">
+          <UnderlineInput
+            label="音色编号"
+            value={activateVoiceIdDraft}
+            placeholder="从网页复制整段编号粘贴到这里"
+            onChange={setActivateVoiceIdDraft}
+          />
+          <UnderlineInput
+            label="试听用的一句话（很短即可）"
+            value={activateTextDraft}
+            placeholder={DEFAULT_ACTIVATE_TTS_TEXT}
+            onChange={setActivateTextDraft}
+          />
+          <Pressable
+            className="w-full rounded-full bg-[#111] py-2.5 text-center text-[12px] font-medium text-white active:opacity-90 disabled:opacity-50"
+            onClick={openActivateRemarkSheet}
+            disabled={activatingVoice}
+          >
+            激活
+          </Pressable>
+        </div>
+      </div>
+
+      <BottomSheet
+        open={activateConfirmOpen}
+        title="填写备注"
+        onClose={() => !activatingVoice && setActivateConfirmOpen(false)}
+      >
+        <p className="text-[12px] leading-relaxed text-[#6b7280]">
+          给这个音色起个好认的名字（最多 40 个字），会显示在音色列表里。
+        </p>
+        <p className="mt-2 truncate rounded-lg bg-black/[0.04] px-2 py-1.5 text-[11px] text-[#374151]">
+          编号：{activateVoiceIdDraft.trim() || '（未填写）'}
+        </p>
+        <label className="mt-3 block">
+          <div className="mb-1 text-[12px] font-medium text-[#4b5563]">备注</div>
+          <input
+            value={activateRemarkDraft}
+            onChange={(e) => setActivateRemarkDraft(e.target.value.slice(0, 40))}
+            placeholder="例如：男主旁白、客服女声"
+            className="w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 text-[14px] text-[#111] outline-none placeholder:text-[#9ca3af]"
+          />
+        </label>
+        <div className="mt-4 flex gap-2">
+          <Pressable
+            type="button"
+            className="flex-1 rounded-full border border-black/10 py-2.5 text-[13px] font-medium text-[#374151] active:bg-black/5"
+            onClick={() => setActivateConfirmOpen(false)}
+            disabled={activatingVoice}
+          >
+            取消
+          </Pressable>
+          <Pressable
+            type="button"
+            className="flex-1 rounded-full bg-[#111] py-2.5 text-[13px] font-medium text-white active:opacity-90 disabled:opacity-50"
+            onClick={() => {
+              const r = activateRemarkDraft.trim()
+              if (!r) {
+                setTone('error')
+                setToast('请填写备注')
+                return
+              }
+              setActivateConfirmOpen(false)
+              void activateVoiceForApiListing(r)
+            }}
+            disabled={activatingVoice}
+          >
+            {activatingVoice ? '处理中…' : '确认激活'}
+          </Pressable>
+        </div>
+      </BottomSheet>
+
       <InvitationCard />
       <PlatinumToast open={!!toast} message={toast || ''} tone={tone} onClose={() => setToast(null)} />
     </div>

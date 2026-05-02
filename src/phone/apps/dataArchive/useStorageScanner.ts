@@ -14,12 +14,6 @@ function readTokensTotal(): number {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0
 }
 
-export type StorageEstimate = {
-  /** 浏览器报告的源站已用（含 IndexedDB 等） */
-  usageBytes: number | null
-  quotaBytes: number | null
-}
-
 export function useStorageScanner(pollMs = 8000) {
   const [segmentsIndexedDb, setSegmentsIndexedDb] = useState<StorageSegment[]>([])
   const [segmentsLocalStorage, setSegmentsLocalStorage] = useState<StorageSegment[]>([])
@@ -27,7 +21,6 @@ export function useStorageScanner(pollMs = 8000) {
   const [indexedDbTotalBytes, setIndexedDbTotalBytes] = useState(0)
   const [localStorageTotalBytes, setLocalStorageTotalBytes] = useState(0)
   const [tokensTotal, setTokensTotal] = useState(0)
-  const [estimate, setEstimate] = useState<StorageEstimate>({ usageBytes: null, quotaBytes: null })
   const refreshGen = useRef(0)
 
   const refresh = useCallback(async () => {
@@ -47,16 +40,6 @@ export function useStorageScanner(pollMs = 8000) {
     setIndexedDbTotalBytes(idb.totalBytes)
     setLocalStorageTotalBytes(ls.totalBytes)
     setTokensTotal(readTokensTotal())
-
-    if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
-      void navigator.storage.estimate().then((e) => {
-        if (id !== refreshGen.current) return
-        setEstimate({
-          usageBytes: typeof e.usage === 'number' ? e.usage : null,
-          quotaBytes: typeof e.quota === 'number' ? e.quota : null,
-        })
-      })
-    }
   }, [])
 
   useEffect(() => {
@@ -65,12 +48,15 @@ export function useStorageScanner(pollMs = 8000) {
       if (e.storageArea === localStorage) void refresh()
     }
     const onWeChatIdb = () => void refresh()
+    const onSysMetrics = () => void refresh()
     window.addEventListener('storage', onStorage)
     window.addEventListener('wechat-storage-changed', onWeChatIdb)
+    window.addEventListener('lumi-sys-metrics-changed', onSysMetrics)
     const id = window.setInterval(() => void refresh(), pollMs)
     return () => {
       window.removeEventListener('storage', onStorage)
       window.removeEventListener('wechat-storage-changed', onWeChatIdb)
+      window.removeEventListener('lumi-sys-metrics-changed', onSysMetrics)
       window.clearInterval(id)
     }
   }, [pollMs, refresh])
@@ -82,7 +68,6 @@ export function useStorageScanner(pollMs = 8000) {
     indexedDbTotalBytes,
     localStorageTotalBytes,
     tokensTotal,
-    estimate,
     refresh,
   }
 }

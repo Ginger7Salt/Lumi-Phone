@@ -1,4 +1,16 @@
-import { ArrowLeft, ChevronDown, FilePenLine, Heart, Layers, Loader2, MoreHorizontal, Pause, Play, Undo2 } from 'lucide-react'
+import {
+  ArrowLeft,
+  ChevronDown,
+  FilePenLine,
+  Heart,
+  Layers,
+  Loader2,
+  MoreHorizontal,
+  Pause,
+  Play,
+  RefreshCw,
+  Undo2,
+} from 'lucide-react'
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
@@ -484,6 +496,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [retryBiasOpen, setRetryBiasOpen] = useState(false)
   const [retryBiasText, setRetryBiasText] = useState('')
   const [retryTargetPlotId, setRetryTargetPlotId] = useState<string | null>(null)
+  const [vnRollbackConfirmOpen, setVnRollbackConfirmOpen] = useState(false)
+  const [vnRegenerateConfirmOpen, setVnRegenerateConfirmOpen] = useState(false)
   const [styleDrawerOpen, setStyleDrawerOpen] = useState(false)
   const [styleTuning, setStyleTuning] = useState<DatingStyleTuning>(() => ({ stylePrompt: '', referenceSnippet: '' }))
 
@@ -1850,6 +1864,15 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     const nextLen = prev?.type === 'player' ? plots.length - 2 : plots.length - 1
     return nextLen >= 1
   }, [currentArchive.plots, isVn, vnUiLoading])
+  /** 最后一条为已完成的 AI 回复时可重生本轮（不删用户输入，仅替换该条 AI 展示稿） */
+  const canVnRegenerateRound = useMemo(() => {
+    if (!isVn || vnUiLoading) return false
+    const plots = currentArchive.plots
+    const last = plots[plots.length - 1]
+    if (last?.type !== 'ai') return false
+    if (regeneratingPlotId) return false
+    return true
+  }, [currentArchive.plots, isVn, regeneratingPlotId, vnUiLoading])
   const isAwaitingVnAiReply =
     loading &&
     !!latestPlayer &&
@@ -2283,6 +2306,20 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     setRetryTargetPlotId(null)
     void regenerateAiPlot(plotId, perspective, narrativeGenOptions, bias)
   }, [narrativeGenOptions, perspective, regenerateAiPlot, retryBiasText, retryTargetPlotId])
+
+  const confirmVnRollback = useCallback(() => {
+    setVnRollbackConfirmOpen(false)
+    const ok = vnRollbackLastRound()
+    if (!ok) showVnToast('暂无上一轮可撤回')
+  }, [showVnToast, vnRollbackLastRound])
+
+  const confirmVnRegenerateRound = useCallback(() => {
+    setVnRegenerateConfirmOpen(false)
+    const plots = currentArchive.plots
+    const last = plots[plots.length - 1]
+    if (last?.type !== 'ai') return
+    void regenerateAiPlot(last.id, perspective, narrativeGenOptions)
+  }, [currentArchive.plots, narrativeGenOptions, perspective, regenerateAiPlot])
 
   useEffect(() => {
     if (!currentArchive.godPerspective) return
@@ -2856,12 +2893,32 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 }`}
                 onClick={() => {
                   setMenuOpen(false)
-                  const ok = vnRollbackLastRound()
-                  if (!ok) showVnToast('暂无上一轮可撤回')
+                  if (canVnRollback) setVnRollbackConfirmOpen(true)
                 }}
               >
                 <Undo2 className="size-3.5 shrink-0 opacity-80" strokeWidth={1.75} />
                 撤回上一轮
+              </button>
+              <button
+                type="button"
+                disabled={!canVnRegenerateRound}
+                title={
+                  canVnRegenerateRound
+                    ? '基于当前设定重新请求 AI，替换本轮最后一条回复'
+                    : regeneratingPlotId
+                      ? '正在重新生成中'
+                      : '需先完成一轮 AI 回复（最后一条为对方发言）'
+                }
+                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] ${
+                  canVnRegenerateRound ? 'text-[#262626] hover:bg-stone-50' : 'cursor-not-allowed text-[#a3a3a3]'
+                }`}
+                onClick={() => {
+                  setMenuOpen(false)
+                  if (canVnRegenerateRound) setVnRegenerateConfirmOpen(true)
+                }}
+              >
+                <RefreshCw className="size-3.5 shrink-0 opacity-80" strokeWidth={1.75} />
+                重新生成此轮
               </button>
               <button
                 type="button"
@@ -3849,6 +3906,83 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 }}
               >
                 生成首段剧情
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {vnRollbackConfirmOpen ? (
+        <div
+          className="absolute inset-0 z-[52] flex items-center justify-center bg-black/35 px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="vn-rollback-confirm-title"
+          onClick={() => setVnRollbackConfirmOpen(false)}
+        >
+          <div
+            className="w-full max-w-[400px] rounded-2xl border border-stone-200 bg-white p-4 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p id="vn-rollback-confirm-title" className="text-center text-[16px] font-semibold text-[#262626]">
+              确认撤回上一轮？
+            </p>
+            <p className="mt-2 text-center text-[12px] leading-relaxed text-[#737373]">
+              将删除你的最后一条输入与本轮 AI 回复，对话气泡回到上一轮末尾。此操作不可撤销。
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-[13px] text-[#262626] hover:bg-stone-50"
+                onClick={() => setVnRollbackConfirmOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="rounded-xl bg-neutral-900 px-4 py-2 text-[13px] font-medium text-white hover:bg-neutral-800"
+                onClick={confirmVnRollback}
+              >
+                确认撤回
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {vnRegenerateConfirmOpen ? (
+        <div
+          className="absolute inset-0 z-[52] flex items-center justify-center bg-black/35 px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="vn-regen-confirm-title"
+          onClick={() => setVnRegenerateConfirmOpen(false)}
+        >
+          <div
+            className="w-full max-w-[400px] rounded-2xl border border-stone-200 bg-white p-4 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p id="vn-regen-confirm-title" className="text-center text-[16px] font-semibold text-[#262626]">
+              重新生成此轮内容？
+            </p>
+            <p className="mt-2 text-center text-[12px] leading-relaxed text-[#737373]">
+              将按当前视角与长度等设定重新请求 AI，<span className="font-medium text-[#404040]">新生成结果会直接覆盖</span>
+              当前可见的本轮对方回复；你的输入不会删除。若介意当前稿，请先自行复制备份。
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-[13px] text-[#262626] hover:bg-stone-50"
+                onClick={() => setVnRegenerateConfirmOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="rounded-xl bg-neutral-900 px-4 py-2 text-[13px] font-medium text-white hover:bg-neutral-800"
+                onClick={confirmVnRegenerateRound}
+              >
+                确认重新生成
               </button>
             </div>
           </div>

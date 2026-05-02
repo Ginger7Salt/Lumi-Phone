@@ -1,4 +1,5 @@
 import type { ApiConfig } from '../../api/types'
+import { bumpLumiSysTokensFromChatResponse } from './ai'
 import type { Character, Gender, PlayerIdentity, PlayerNetworkLink, Relationship, WorldBook, WorldBookItem } from './types'
 import { daysInMonth, formatMD, uid, zodiacFromMD } from './utils'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
@@ -25,6 +26,7 @@ async function openAiCompatibleChat(cfg: ApiConfig, messages: ChatMessage[]): Pr
     const msg = data?.error?.message ?? data?.message ?? `请求失败（HTTP ${resp.status}）`
     throw new Error(typeof msg === 'string' ? msg : '请求失败')
   }
+  bumpLumiSysTokensFromChatResponse(data)
   const text = data?.choices?.[0]?.message?.content
   if (typeof text !== 'string') throw new Error('返回格式不符合预期')
   return text.trim()

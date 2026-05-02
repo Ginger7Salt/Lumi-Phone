@@ -13,6 +13,86 @@ export type MiniMaxCredentials = {
 export const MINIMAX_API_ORIGIN_DOMESTIC = 'https://api.minimaxi.com'
 export const MINIMAX_API_ORIGIN_INTERNATIONAL = 'https://api.minimax.io'
 
+/** 本机「手动激活」的音色：与在线拉取的列表合并，备注用于列表展示 */
+const MINIMAX_PINNED_VOICE_IDS_LS = 'minimax:pinnedVoiceIds'
+const PINNED_VOICE_IDS_MAX = 24
+
+export type MiniMaxPinnedVoiceEntry = { id: string; remark: string }
+
+function readPinnedVoiceEntries(): MiniMaxPinnedVoiceEntry[] {
+  if (typeof localStorage === 'undefined') return []
+  try {
+    const raw = localStorage.getItem(MINIMAX_PINNED_VOICE_IDS_LS)
+    const a = raw ? (JSON.parse(raw) as unknown) : []
+    if (!Array.isArray(a)) return []
+    const out: MiniMaxPinnedVoiceEntry[] = []
+    for (const item of a) {
+      if (typeof item === 'string') {
+        const id = item.trim()
+        if (id) out.push({ id, remark: '自建音色' })
+      } else if (item && typeof item === 'object') {
+        const o = item as Record<string, unknown>
+        const id = String(o.id ?? o.voice_id ?? '').trim()
+        const remark = String(o.remark ?? o.label ?? '').trim().slice(0, 40) || '自建音色'
+        if (id) out.push({ id, remark })
+      }
+    }
+    const seen = new Set<string>()
+    const dedup: MiniMaxPinnedVoiceEntry[] = []
+    for (const e of out) {
+      if (seen.has(e.id)) continue
+      seen.add(e.id)
+      dedup.push(e)
+      if (dedup.length >= PINNED_VOICE_IDS_MAX) break
+    }
+    return dedup
+  } catch {
+    return []
+  }
+}
+
+/** 激活成功后写入本机；`remark` 会显示在音色列表里，便于辨认 */
+export function pinMiniMaxVoiceIdForLocalList(voiceId: string, remark: string): void {
+  const id = String(voiceId || '').trim()
+  const r = String(remark || '').trim().slice(0, 40) || '自建音色'
+  if (!id || typeof localStorage === 'undefined') return
+  const cur = readPinnedVoiceEntries().filter((e) => e.id !== id)
+  const next: MiniMaxPinnedVoiceEntry[] = [{ id, remark: r }, ...cur].slice(0, PINNED_VOICE_IDS_MAX)
+  try {
+    localStorage.setItem(MINIMAX_PINNED_VOICE_IDS_LS, JSON.stringify(next))
+  } catch {
+    /* ignore quota */
+  }
+}
+
+/** 从本机固定列表移除 */
+export function unpinMiniMaxVoiceIdForLocalList(voiceId: string): void {
+  const id = String(voiceId || '').trim()
+  if (!id || typeof localStorage === 'undefined') return
+  const next = readPinnedVoiceEntries().filter((e) => e.id !== id)
+  try {
+    localStorage.setItem(MINIMAX_PINNED_VOICE_IDS_LS, JSON.stringify(next))
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 将本机已 pin 的条目插到列表前（与 `fetchMiniMaxVoices` 末尾逻辑一致） */
+export function mergePinnedMiniMaxVoicesIntoList(list: MiniMaxVoiceInfo[]): MiniMaxVoiceInfo[] {
+  const apiIds = new Set(list.map((v) => v.voice_id))
+  const head: MiniMaxVoiceInfo[] = []
+  for (const e of readPinnedVoiceEntries()) {
+    if (!apiIds.has(e.id)) {
+      head.push({
+        voice_id: e.id,
+        voice_name: e.remark,
+        voice_type: inferVoiceGenerationFromVoiceId(e.id) ? 'voice_generation' : 'voice_cloning',
+      })
+    }
+  }
+  return [...head, ...list]
+}
+
 export function readMiniMaxApiRegionFromLocalStorage(): MiniMaxApiRegion {
   if (typeof localStorage === 'undefined') return 'domestic'
   return localStorage.getItem('minimax:apiRegion') === 'international' ? 'international' : 'domestic'
@@ -147,15 +227,23 @@ async function minimaxFetch(path: string, creds: MiniMaxCredentials, init: Reque
   return json
 }
 
-/** 拉取音色列表（官方 get_voice 接口）。 */
-export async function fetchMiniMaxVoices(creds: MiniMaxCredentials): Promise<MiniMaxVoiceInfo[]> {
-  const json = await minimaxFetch('/v1/get_voice', creds, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ voice_type: 'all' }),
-  })
+/** 文生音色（T2V）常见 ID 形态；若接口未标 type，据此归入「我的音色」而非系统。 */
+function inferVoiceGenerationFromVoiceId(voiceId: string): boolean {
+  const id = String(voiceId || '').trim().toLowerCase()
+  return id.startsWith('ttv-') || id.startsWith('ttv_') || id.includes('ttv-voice')
+}
 
-  const payload = (json?.data && typeof json.data === 'object' ? json.data : json) as any
+function voiceTypeRank(t: MiniMaxVoiceInfo['voice_type'] | undefined): number {
+  if (t === 'voice_generation') return 3
+  if (t === 'voice_cloning') return 2
+  if (t === 'system') return 1
+  return 0
+}
+
+/** 解析单次 get_voice 的 JSON（根或 data 包裹）。 */
+function parseMiniMaxGetVoiceResponseJson(json: unknown): MiniMaxVoiceInfo[] {
+  const root = json as Record<string, unknown> | null
+  const payload = (root?.data && typeof root.data === 'object' ? root.data : root) as any
   const readArray = (...candidates: any[]) => {
     for (const c of candidates) {
       if (Array.isArray(c)) return c
@@ -163,10 +251,16 @@ export async function fetchMiniMaxVoices(creds: MiniMaxCredentials): Promise<Min
     return [] as any[]
   }
 
-  const sys = readArray(payload?.system_voice, payload?.system_voices)
-  const cloning = readArray(payload?.voice_cloning, payload?.voice_clonings)
-  const gen = readArray(payload?.voice_generation, payload?.voice_generations)
-  const flat = readArray(payload?.voices, payload?.voice_list)
+  const sys = readArray(payload?.system_voice, payload?.system_voices, payload?.systemVoice)
+  const cloning = readArray(payload?.voice_cloning, payload?.voice_clonings, payload?.voiceCloning)
+  const gen = readArray(
+    payload?.voice_generation,
+    payload?.voice_generations,
+    payload?.voiceGeneration,
+    payload?.generated_voice,
+    payload?.generated_voices,
+  )
+  const flat = readArray(payload?.voices, payload?.voice_list, payload?.voiceList)
 
   const mapBlock = (arr: any[], type: MiniMaxVoiceInfo['voice_type']) =>
     arr
@@ -190,12 +284,16 @@ export async function fetchMiniMaxVoices(creds: MiniMaxCredentials): Promise<Min
       .filter((v) => !!v.voice_id)
 
   const inferredFromFlat = flat.map((v) => {
+    const rawId = String(v?.voice_id ?? v?.voiceId ?? v?.id ?? '').trim()
     const t = String(v?.voice_type ?? v?.type ?? '').toLowerCase()
-    const voice_type: MiniMaxVoiceInfo['voice_type'] = t.includes('clone')
+    let voice_type: MiniMaxVoiceInfo['voice_type'] = t.includes('clone')
       ? 'voice_cloning'
-      : t.includes('generation') || t.includes('gen')
+      : t.includes('generation') || t.includes('gen') || t.includes('t2v') || t.includes('text_to_voice')
         ? 'voice_generation'
         : 'system'
+    if (voice_type === 'system' && inferVoiceGenerationFromVoiceId(rawId)) {
+      voice_type = 'voice_generation'
+    }
     return {
       voice_id: String(v?.voice_id ?? v?.voiceId ?? v?.id ?? '').trim(),
       voice_name:
@@ -222,12 +320,51 @@ export async function fetchMiniMaxVoices(creds: MiniMaxCredentials): Promise<Min
     ...inferredFromFlat,
   ].filter((v) => !!v.voice_id)
 
-  // 去重：避免同一 voice_id 在多结构返回中重复展示
   const dedup = new Map<string, MiniMaxVoiceInfo>()
   for (const item of merged) {
-    if (!dedup.has(item.voice_id)) dedup.set(item.voice_id, item)
+    const id = item.voice_id
+    const coerced: MiniMaxVoiceInfo = inferVoiceGenerationFromVoiceId(id)
+      ? { ...item, voice_type: 'voice_generation' }
+      : item
+    const prev = dedup.get(id)
+    if (!prev || voiceTypeRank(coerced.voice_type) > voiceTypeRank(prev.voice_type)) {
+      dedup.set(id, coerced)
+    }
   }
-  return Array.from(dedup.values())
+  return Array.from(dedup.values()).map((v) =>
+    inferVoiceGenerationFromVoiceId(v.voice_id) ? { ...v, voice_type: 'voice_generation' as const } : v,
+  )
+}
+
+/**
+ * 拉取音色列表（官方 get_voice）。
+ * 并行 `all` + `voice_generation` + `voice_cloning` 合并：部分环境下仅 `all` 时文生/复刻数组为空。
+ * 再合并本机 `pinMiniMaxVoiceIdForLocalList` 记录的编号与备注（在线列表暂时没有时也能选用）。
+ */
+export async function fetchMiniMaxVoices(creds: MiniMaxCredentials): Promise<MiniMaxVoiceInfo[]> {
+  const voiceTypes = ['all', 'voice_generation', 'voice_cloning'] as const
+  const bodies = await Promise.all(
+    voiceTypes.map((voice_type) =>
+      minimaxFetch('/v1/get_voice', creds, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice_type }),
+      }),
+    ),
+  )
+  const merged = new Map<string, MiniMaxVoiceInfo>()
+  for (const json of bodies) {
+    for (const v of parseMiniMaxGetVoiceResponseJson(json)) {
+      const prev = merged.get(v.voice_id)
+      if (!prev || voiceTypeRank(v.voice_type) > voiceTypeRank(prev.voice_type)) {
+        merged.set(v.voice_id, v)
+      }
+    }
+  }
+  const raw = Array.from(merged.values()).map((v) =>
+    inferVoiceGenerationFromVoiceId(v.voice_id) ? { ...v, voice_type: 'voice_generation' as const } : v,
+  )
+  return mergePinnedMiniMaxVoicesIntoList(raw)
 }
 
 export type MiniMaxT2ACreateResp = {
@@ -251,6 +388,7 @@ const hexToBytes = (hex: string): Uint8Array => {
   return new Uint8Array(pairs.map((h) => Number.parseInt(h, 16)))
 }
 
+/** 同步语音合成，与官方 `POST /v1/t2a_v2`（stream:false）一致，参见 https://platform.minimaxi.com/docs/api-reference/speech-t2a-http */
 export async function createMiniMaxT2ASyncAudioBlob(
   creds: MiniMaxCredentials,
   params: {

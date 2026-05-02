@@ -16,15 +16,20 @@ function readTokensTotal(): number {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0
 }
 
+type OverviewCardsProps = {
+  /** 由 useStorageScanner 提供时，同页 API 累加 token 可立即反映 */
+  tokensTotal?: number
+}
+
 function daysBetween(fromMs: number, toMs: number): number {
   const d = Math.floor((toMs - fromMs) / (24 * 60 * 60 * 1000))
   return Math.max(0, d)
 }
 
-export function OverviewCards() {
+export function OverviewCards({ tokensTotal: tokensProp }: OverviewCardsProps = {}) {
   const firstBoot = readFirstBootMs()
   const days = daysBetween(firstBoot, Date.now())
-  const tokens = readTokensTotal()
+  const tokens = tokensProp !== undefined ? tokensProp : readTokensTotal()
   const countDays = useCountUp(days, 1000)
   const countTokens = useCountUp(tokens, 1400)
   const since = new Date(firstBoot)

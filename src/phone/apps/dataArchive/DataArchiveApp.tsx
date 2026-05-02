@@ -20,7 +20,7 @@ const STORAGE_TABS: { id: StorageTab; label: string; variant: StoragePieVariant 
 ]
 
 export function DataArchiveApp({ onBack }: Props) {
-  const [storageTab, setStorageTab] = useState<StorageTab>('idb')
+  const [storageTab, setStorageTab] = useState<StorageTab>('merged')
   const {
     segmentsIndexedDb,
     segmentsLocalStorage,
@@ -28,9 +28,10 @@ export function DataArchiveApp({ onBack }: Props) {
     indexedDbTotalBytes,
     localStorageTotalBytes,
     tokensTotal,
-    estimate,
     refresh,
   } = useStorageScanner(6000)
+
+  const archiveEstimateBytes = localStorageTotalBytes + indexedDbTotalBytes
 
   const activeTab = STORAGE_TABS.find((t) => t.id === storageTab) ?? STORAGE_TABS[0]
   const segmentForTab =
@@ -80,10 +81,11 @@ export function DataArchiveApp({ onBack }: Props) {
         transition={{ duration: 0.4 }}
       >
         <p className="mb-4 text-center text-[11px] leading-relaxed" style={{ color: PLATINUM.ash }}>
-          圆心「估算已用」为浏览器整站占用（若可用）。存储环图请用下方标签切换来源；灵感消耗为累计 tok 计数，单独展示。
+          圆心「可打包约」为导出 <span className="font-mono">.lumi</span> 时主内容字节估算（localStorage + 微信
+          IndexedDB），不含 Service Worker 离线缓存等浏览器自带占用；灵感消耗为累计 tok，单独展示。
         </p>
 
-        <OverviewCards />
+        <OverviewCards tokensTotal={tokensTotal} />
 
         <div
           className="mt-5 rounded-[22px] border px-4 py-5 shadow-[0_12px_40px_rgba(28,28,30,0.05)]"
@@ -96,7 +98,7 @@ export function DataArchiveApp({ onBack }: Props) {
         >
           <p className="text-center text-[13px] font-semibold">存储构成</p>
           <p className="mx-auto mt-1 max-w-[280px] text-center text-[11px] leading-relaxed" style={{ color: PLATINUM.ash }}>
-            切换标签查看已接入的 IndexedDB、localStorage 或二者合并占比；列表为字节估算，灵感 tok 不参与切片。后续若有更多索引库，可并入本视图。
+            切换标签查看分项占比；圆心在全部分栏下均为「可归档」总字节（与导出范围一致），仅环图随标签切换为库侧或本地侧明细。
           </p>
 
           <div
@@ -131,7 +133,7 @@ export function DataArchiveApp({ onBack }: Props) {
               key={storageTab}
               variant={activeTab.variant}
               segments={segmentForTab}
-              estimateUsageBytes={estimate.usageBytes}
+              archiveEstimateBytes={archiveEstimateBytes}
               localStorageOutsideRingBytes={storageTab === 'idb' ? localStorageTotalBytes : 0}
               indexedDbOutsideRingBytes={storageTab === 'local' ? indexedDbTotalBytes : 0}
               tokenSummary={{ count: tokensTotal }}

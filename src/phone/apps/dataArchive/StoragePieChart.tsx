@@ -40,14 +40,15 @@ type RingSeg = { color: string; len: number; rot: number; key: string }
 export function StoragePieChart({
   variant = 'indexeddb',
   segments,
-  estimateUsageBytes,
+  archiveEstimateBytes,
   localStorageOutsideRingBytes = 0,
   indexedDbOutsideRingBytes = 0,
   tokenSummary,
 }: {
   variant?: StoragePieVariant
   segments: StorageSegment[]
-  estimateUsageBytes: number | null
+  /** 导出 .lumi 主内容：localStorage + 已接入微信库 的扫描字节合计 */
+  archiveEstimateBytes: number
   /** IndexedDB 环图下：未计入环的 localStorage 总字节 */
   localStorageOutsideRingBytes?: number
   /** localStorage 环图下：未计入环的 IndexedDB 总字节 */
@@ -95,15 +96,31 @@ export function StoragePieChart({
 
   const chartTotal = useMemo(() => segments.reduce((a, s) => a + s.size, 0), [segments])
 
-  const centerUsed =
-    estimateUsageBytes != null && estimateUsageBytes > 0 ? estimateUsageBytes : chartTotal
+  const centerUsed = Math.max(0, archiveEstimateBytes)
 
   const centerSubLine = useMemo(() => {
-    const v = formatBytes(chartTotal)
-    if (variant === 'localstorage') return `localStorage 分项合计 ${v}`
-    if (variant === 'merged') return `合并分项合计 ${v}`
-    return `IndexedDB 分项合计 ${v}`
-  }, [chartTotal, variant])
+    const ring = formatBytes(chartTotal)
+    const full = formatBytes(archiveEstimateBytes)
+    if (variant === 'merged') {
+      return chartTotal === archiveEstimateBytes
+        ? `与下方分项合计一致 · ${ring}`
+        : `下方分项 ${ring} · 全量 ${full}`
+    }
+    if (variant === 'localstorage') {
+      return indexedDbOutsideRingBytes > 0
+        ? `环内 ${ring} · 另含微信库 ${formatBytes(indexedDbOutsideRingBytes)}（一并导出）`
+        : `localStorage 分项 ${ring}`
+    }
+    return localStorageOutsideRingBytes > 0
+      ? `环内 ${ring} · 另含 localStorage ${formatBytes(localStorageOutsideRingBytes)}（一并导出）`
+      : `IndexedDB 分项 ${ring}`
+  }, [
+    archiveEstimateBytes,
+    chartTotal,
+    indexedDbOutsideRingBytes,
+    localStorageOutsideRingBytes,
+    variant,
+  ])
 
   return (
     <div className="flex w-full flex-col items-center">
@@ -140,7 +157,7 @@ export function StoragePieChart({
           style={{ paddingTop: 4 }}
         >
           <p className="text-[9px] font-medium tracking-[0.08em]" style={{ color: PLATINUM.ash }}>
-            估算已用
+            可打包约
           </p>
           <p className="text-[15px] font-semibold tabular-nums" style={{ color: PLATINUM.ink }}>
             {formatBytes(centerUsed)}
@@ -217,7 +234,7 @@ export function StoragePieChart({
 
       {variant === 'merged' ? (
         <p className="mt-3 max-w-[320px] px-2 text-center text-[10px] leading-relaxed" style={{ color: PLATINUM.ash }}>
-          本标签为 IndexedDB 与 localStorage 字节估算合并占比。
+          与导出 <span className="font-mono">.lumi</span> 主内容一致（不含浏览器离线缓存等）；环图为二者合并占比。
         </p>
       ) : null}
     </div>
