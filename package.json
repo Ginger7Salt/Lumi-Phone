@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "changelog:sync": "node scripts/sync-changelog-from-git.mjs",
+    "dev": "node scripts/sync-changelog-from-git.mjs && vite",
+    "build": "node scripts/sync-changelog-from-git.mjs && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },

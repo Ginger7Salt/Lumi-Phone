@@ -82,6 +82,17 @@ export function IconVoiceprint(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+/** 更新日志：文档 + 列表线 */
+export function IconReleaseNotes(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M8 5.5h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2z" />
+      <path d="M10.5 9.5h8M10.5 12.5h8M10.5 15.5h5.5" opacity="0.45" />
+      <path d="M10.5 18.5h6" opacity="0.28" />
+    </svg>
+  )
+}
+
 /** 数据中心：双层圆角机架 + 槽位线（存储/节点意象，与全局线宽一致） */
 export function IconDataArchive(props: SVGProps<SVGSVGElement>) {
   return (
@@ -102,6 +113,7 @@ const map = {
   voiceprint: IconVoiceprint,
   dataArchive: IconDataArchive,
   appearance: IconAppearance,
+  releaseNotes: IconReleaseNotes,
 } as const
 
 export function AppLineIcon({

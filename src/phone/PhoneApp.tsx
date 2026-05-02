@@ -6,14 +6,17 @@ import { EntryNoticeModal } from './components/EntryNoticeModal'
 import { HomeScreen } from './components/HomeScreen'
 import { PhoneShell } from './components/PhoneShell'
 import { SplashScreen } from './components/SplashScreen'
+import { WhatsNewModal } from './components/WhatsNewModal'
 import { useCustomization } from './CustomizationContext'
 import { ApiSettingsProvider } from './apps/api/ApiSettingsContext'
 import { ApiSettingsApp } from './apps/api/ApiSettingsApp'
 import { VoiceprintHubApp } from './apps/voiceprint/VoiceprintHubApp'
 import { DataArchiveApp } from './apps/dataArchive/DataArchiveApp'
+import { ReleaseNotesApp } from './apps/releaseNotes/ReleaseNotesApp'
 import { LUMI_SYS_FIRST_BOOT_KEY } from './apps/dataArchive/constants'
 import { WeChatApp } from './apps/wechat/WeChatApp'
 import type { AppSlot } from './types'
+import { WHATS_NEW_STORAGE_KEY, getLatestChangelog } from './releaseNotes/changelog'
 
 type Route =
   | { name: 'home' }
@@ -57,6 +60,7 @@ export function PhoneApp() {
   const [route, setRoute] = useState<Route>({ name: 'home' })
   const [showSplash, setShowSplash] = useState(true)
   const [showEntryNotice, setShowEntryNotice] = useState(false)
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false)
   const [ageConfirmed, setAgeConfirmed] = useState(false)
   const [riskConfirmed, setRiskConfirmed] = useState(false)
 
@@ -86,6 +90,19 @@ export function PhoneApp() {
       // ignore
     }
   }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (showSplash || showEntryNotice) return
+    try {
+      const latest = getLatestChangelog()
+      if (window.localStorage.getItem(WHATS_NEW_STORAGE_KEY) !== latest.version) {
+        setWhatsNewOpen(true)
+      }
+    } catch {
+      setWhatsNewOpen(false)
+    }
+  }, [showSplash, showEntryNotice])
 
   useEffect(() => {
     const onOpen = (e: Event) => {
@@ -147,6 +164,8 @@ export function PhoneApp() {
                   <VoiceprintHubApp onBack={goHome} />
                 ) : route.id === 'dataArchive' ? (
                   <DataArchiveApp onBack={goHome} />
+                ) : route.id === 'releaseNotes' ? (
+                  <ReleaseNotesApp onBack={goHome} />
                 ) : (
                   <AppPlaceholderScreen appId={route.id} onBack={goHome} />
                 )}
@@ -162,6 +181,10 @@ export function PhoneApp() {
           onToggleAge={setAgeConfirmed}
           onToggleRisk={setRiskConfirmed}
           onConfirm={handleNoticeConfirm}
+        />
+        <WhatsNewModal
+          open={!showSplash && !showEntryNotice && whatsNewOpen && route.name === 'home'}
+          onDismiss={() => setWhatsNewOpen(false)}
         />
       </ApiSettingsProvider>
     </div>

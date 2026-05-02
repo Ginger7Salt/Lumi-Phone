@@ -393,6 +393,7 @@ function normalizeAppPageStyles(parsed: unknown): CustomizationState['appPageSty
     voiceprint: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...record.voiceprint }),
     dataArchive: migrateAppPage({ ...def.dataArchive, ...record.dataArchive }),
     appearance: migrateAppPage(appearanceMerged),
+    releaseNotes: migrateAppPage({ ...def.releaseNotes, ...record.releaseNotes }),
   }
 }
 

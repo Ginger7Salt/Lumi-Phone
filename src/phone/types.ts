@@ -98,7 +98,7 @@ export type DockStyle = {
 }
 
 export type AppSlot = {
-  id: 'wechat' | 'takeout' | 'weibo' | 'api' | 'voiceprint' | 'dataArchive' | 'appearance'
+  id: 'wechat' | 'takeout' | 'weibo' | 'api' | 'voiceprint' | 'dataArchive' | 'appearance' | 'releaseNotes'
   label: string
   /** 可选：自定义图标图片 URL（优先于线框 SVG） */
   iconImageUrl: string
@@ -424,8 +424,9 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     { id: 'voiceprint', label: '声纹档案', iconImageUrl: '', iconRadius: 18 },
     { id: 'dataArchive', label: '数据中心', iconImageUrl: '', iconRadius: 18 },
     { id: 'appearance', label: '外观', iconImageUrl: '', iconRadius: 18 },
+    { id: 'releaseNotes', label: '更新日志', iconImageUrl: '', iconRadius: 18 },
   ],
-  desktopLayout: ['voiceprint', 'dataArchive', 'appearance', null, null, null],
+  desktopLayout: ['voiceprint', 'dataArchive', 'appearance', 'releaseNotes', null, null],
   ui: {
     showStatusBar: true,
     fullScreen: false,
@@ -453,6 +454,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
       pageBg: '#F5F6F8',
       pageBgImageUrl: DEFAULT_WECHAT_CHAT_WALLPAPER_URL,
     },
+    releaseNotes: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#1a1a1c' },
   },
   dockStyle: {
     fillMode: 'theme',
