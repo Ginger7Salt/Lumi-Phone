@@ -9,6 +9,7 @@ import { MusicWidget } from './MusicWidget'
 import { PersonalCard } from './PersonalCard'
 import { StatusBar } from './StatusBar'
 import { WheelWidget } from './WheelWidget'
+import { DesktopVersionBadge } from './DesktopVersionBadge'
 import { useCustomization } from '../CustomizationContext'
 import { useLongPress } from '../hooks/useLongPress'
 
@@ -1003,6 +1004,8 @@ export function HomeScreen({ onOpenApp }: Props) {
           ) : null}
         </AnimatePresence>
       </div>
+
+      <DesktopVersionBadge visible={!isEditMode} />
 
       <Dock
         apps={dockIdsState.map((id) => appMap.get(id) ?? null)}
