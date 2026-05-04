@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Pressable } from '../../components/Pressable'
-import type { CharacterPsyche, GroupPsycheArchive } from './newFriendsPersona/types'
+import type { GroupPsycheArchive } from './newFriendsPersona/types'
 
 function ArchiveMetricRow({ en, zh, value }: { en: string; zh: string; value: string }) {
   return (
