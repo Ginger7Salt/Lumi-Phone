@@ -42,7 +42,7 @@ import { ContactProfileCardScreen } from './ContactProfileCardScreen'
 import { ContactProfileSettingsScreen } from './ContactProfileSettingsScreen'
 import { ContactComplaintScreen } from './ContactComplaintScreen'
 import { ChatRoom } from './ChatRoom'
-import { RedPacketPage } from './redPacket/RedPacketPage'
+import { RedPacketPage, type WxChatTarget } from './redPacket/RedPacketPage'
 import { TransferPage } from './transfer/TransferPage'
 import { TransferDetailPage } from './transfer/TransferDetailPage'
 import { upsertLumiTransfer } from './transfer/lumiTransferStorage'
@@ -187,6 +187,21 @@ type WxRoute =
   /** 私聊转账页（Lumi/角色私聊共用） */
   | { name: 'lumi-transfer'; chat: WxActiveChat }
   | { name: 'transfer-detail'; chat: WxActiveChat; transferId: string }
+
+/** 红包/转账等：IndexedDB 会话 peer characterId（含群占位 `wxgrp:`） */
+function wxWalletPeerCharacterId(chat: WxActiveChat): string {
+  if (chat.kind === 'lumi') return WECHAT_LUMI_PEER_CHARACTER_ID
+  if (chat.kind === 'persona') return chat.characterId
+  return wechatGroupPeerCharacterId(chat.groupId)
+}
+
+/** RedPacketPage 仅接受 lumi/persona；群会话映射为占位 persona id */
+function wxChatTargetForRedPacket(chat: WxActiveChat): WxChatTarget {
+  if (chat.kind === 'group') {
+    return { kind: 'persona', characterId: wechatGroupPeerCharacterId(chat.groupId) }
+  }
+  return chat
+}
 
 const transition = { duration: 0.26, ease: [0.22, 1, 0.36, 1] as const }
 
@@ -3449,10 +3464,11 @@ function WeChatAppInner({ onBack }: Props) {
     if (chat.kind === 'lumi') {
       return weChatMergedContacts?.find((c) => c.id === 'wechat-lumi-assistant') ?? WECHAT_LUMI_ASSISTANT_CONTACT
     }
-    const row = state.wechatPersonaContacts.find((c) => c.characterId === chat.characterId)
+    const cid = wxWalletPeerCharacterId(chat)
+    const row = state.wechatPersonaContacts.find((c) => c.characterId === cid)
     if (!row) {
       return {
-        id: `persona-${chat.characterId}`,
+        id: `persona-${cid}`,
         remarkName: '聊天',
         avatarUrl: undefined as string | undefined,
       }
@@ -3467,10 +3483,11 @@ function WeChatAppInner({ onBack }: Props) {
     if (chat.kind === 'lumi') {
       return weChatMergedContacts?.find((c) => c.id === 'wechat-lumi-assistant') ?? WECHAT_LUMI_ASSISTANT_CONTACT
     }
-    const row = state.wechatPersonaContacts.find((c) => c.characterId === chat.characterId)
+    const cid = wxWalletPeerCharacterId(chat)
+    const row = state.wechatPersonaContacts.find((c) => c.characterId === cid)
     if (!row) {
       return {
-        id: `persona-${chat.characterId}`,
+        id: `persona-${cid}`,
         remarkName: '聊天',
         avatarUrl: undefined as string | undefined,
       }
@@ -3810,16 +3827,10 @@ function WeChatAppInner({ onBack }: Props) {
   const [busyDetailOpen, setBusyDetailOpen] = useState(false)
   const [chatSkipBusySignal, setChatSkipBusySignal] = useState(0)
   const routeTimeCharacterId =
-    route.name === 'red-packet-send'
-      ? route.chat.kind === 'persona'
-        ? route.chat.characterId
-        : WECHAT_LUMI_PEER_CHARACTER_ID
-      : route.name === 'lumi-transfer'
-        ? route.chat.kind === 'persona'
-          ? route.chat.characterId
-          : WECHAT_LUMI_PEER_CHARACTER_ID
-        : route.name === 'transfer-detail'
-          ? WECHAT_LUMI_PEER_CHARACTER_ID
+    route.name === 'red-packet-send' || route.name === 'lumi-transfer'
+      ? wxWalletPeerCharacterId(route.chat)
+      : route.name === 'transfer-detail'
+        ? WECHAT_LUMI_PEER_CHARACTER_ID
         : null
   const { getCurrentTimeMs } = useWeChatCurrentTime({
     characterId:
@@ -4146,8 +4157,7 @@ function WeChatAppInner({ onBack }: Props) {
     wxGlobalNav != null ||
     (route.name === 'tabs' && route.tab === 'discover' && discoverMomentsOpen) ||
     (route.name === 'chat' && chatSettingsOpen) ||
-    (route.name === 'tabs' && newGroupFromMessagesOpen) ||
-    (route.name === 'contacts-group-chats' && newGroupFromMessagesOpen)
+    (route.name === 'tabs' && newGroupFromMessagesOpen)
   const activeTabBgFill = useMemo(() => {
     const byTab = wechatTheme.pageBgByTab?.[activeTab as WeChatTabId]
     return byTab ?? wechatTheme.pageBgGlobal
@@ -4778,7 +4788,7 @@ function WeChatAppInner({ onBack }: Props) {
                   peerAvatarUrl={chatPeerContact?.avatarUrl}
                   onBack={() => setRoute({ name: 'chat', chat: route.chat })}
                   onPaid={async ({ amountYuan, giverName, title }) => {
-                    const cid = route.chat.kind === 'lumi' ? WECHAT_LUMI_PEER_CHARACTER_ID : route.chat.characterId
+                    const cid = wxWalletPeerCharacterId(route.chat)
                     const ts = getCurrentTimeMs()
                     const msgId = `wx-aff-${ts}-${Math.random().toString(36).slice(2, 7)}`
                     await personaDb.appendWeChatChatMessage({
@@ -4807,13 +4817,12 @@ function WeChatAppInner({ onBack }: Props) {
                 </div>
               ) : (
                 <RedPacketPage
-                  chat={route.chat}
+                  chat={wxChatTargetForRedPacket(route.chat)}
                   peerRemarkName={redPacketPeer?.remarkName ?? '聊天'}
                   peerAvatarUrl={redPacketPeer?.avatarUrl}
                   onBack={() => setRoute({ name: 'chat', chat: route.chat })}
                   onPaidSend={async (payload) => {
-                    const cid =
-                      route.chat.kind === 'lumi' ? WECHAT_LUMI_PEER_CHARACTER_ID : route.chat.characterId
+                    const cid = wxWalletPeerCharacterId(route.chat)
                     const ts = getCurrentTimeMs()
                     const peerName = redPacketPeer?.remarkName?.trim() || '对方'
                     const remark = payload.remark.trim() || 'Best Wishes'
@@ -4851,12 +4860,12 @@ function WeChatAppInner({ onBack }: Props) {
                 </div>
               ) : (
                 <TransferPage
-                  peerCharacterId={route.chat.kind === 'lumi' ? WECHAT_LUMI_PEER_CHARACTER_ID : route.chat.characterId}
+                  peerCharacterId={wxWalletPeerCharacterId(route.chat)}
                   peerRemarkName={lumiTransferPeer?.remarkName ?? 'Lumi'}
                   peerAvatarUrl={lumiTransferPeer?.avatarUrl}
                   onBack={() => setRoute({ name: 'chat', chat: route.chat })}
                   onPaidTransfer={async (payload) => {
-                    const cid = route.chat.kind === 'lumi' ? WECHAT_LUMI_PEER_CHARACTER_ID : route.chat.characterId
+                    const cid = wxWalletPeerCharacterId(route.chat)
                     const ts = getCurrentTimeMs()
                     const expiresAt = ts + 24 * 60 * 60 * 1000
                     const convKey = wechatConversationKey(cid, playerIdentityId)
