@@ -5,6 +5,9 @@ import type {
   CharacterNotificationSettingsRow,
   CharacterBusySettingsRow,
   CharacterTimeSettingsRow,
+  CharacterPsyche,
+  GroupPsycheArchive,
+  GroupPsycheRow,
   HeartWhisper,
   HeartWhisperRow,
   Favorite,
@@ -33,6 +36,14 @@ import type {
   WeChatMessageSearchIndexRow,
   WorldBackground,
 } from './types'
+import {
+  MEMORY_ALWAYS_INJECT_CAP,
+  isMemoryAlwaysTrigger,
+  memoryHasTriggerDimensions,
+  memoryTriggerMatchesHaystack,
+  normalizeStoredMemoryEmotionNeedList,
+  trimMemoryTriggerText,
+} from '../memory/memoryTriggerUtils'
 import { parseGroupRobotTriggerWordInput } from '../groupChatUtils'
 import { formatWeChatMessageListTimestamp as formatWeChatMessageListTimestampFn } from './chatMessageTimestampFormat'
 import { emptyWorldBackgroundSettings, formatTimelineEventDate } from './types'
@@ -58,7 +69,7 @@ import {
 } from '../chatTheme/types'
 
 const DB_NAME = 'wechat-personas-v1'
-const DB_VERSION = 22
+const DB_VERSION = 23
 
 /** 复合索引：按会话 + 时间戳范围查询（日历、按日跳转） */
 const CHAT_MSG_INDEX_CONV_TS = 'conversationKey_timestamp'
@@ -85,6 +96,7 @@ const CHARACTER_BUSY_STORE = 'characterBusySettings'
 const CHARACTER_TIME_STORE = 'characterTimeSettings'
 const FAVORITES_STORE = 'favorites'
 const HEART_WHISPER_STORE = 'heartWhispers'
+const GROUP_PSYCHE_STORE = 'groupPsyche'
 
 /** 与 DatingContext / loadOfflineDatingPlotsForWechatPrompt 一致（IndexedDB phoneKv） */
 const WECHAT_DATING_ARCHIVES_KV_KEY = 'wechat-dating-archives-v1'
@@ -370,6 +382,40 @@ function normalizeHeartWhisperRow(input: unknown): HeartWhisperRow | null {
   return {
     characterId: r.characterId.trim(),
     data: normalizeHeartWhisper(r.data),
+    updatedAt: typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt) ? r.updatedAt : Date.now(),
+  }
+}
+
+function normalizeCharacterPsyche(input: unknown): CharacterPsyche | null {
+  const r = (input ?? {}) as Partial<CharacterPsyche>
+  if (typeof r.charId !== 'string' || !r.charId.trim()) return null
+  const txt = (v: unknown) => String(v ?? '').trim()
+  return {
+    charId: r.charId.trim(),
+    avatarUrl: typeof r.avatarUrl === 'string' ? r.avatarUrl : '',
+    name: typeof r.name === 'string' ? r.name.trim() : '',
+    location: txt(r.location),
+    clothing: txt(r.clothing),
+    posture: txt(r.posture),
+    monologue: txt(r.monologue),
+    impressionOnUser: txt(r.impressionOnUser),
+  }
+}
+
+function normalizeGroupPsycheArchive(input: unknown): GroupPsycheArchive {
+  const r = (input ?? {}) as Partial<GroupPsycheArchive>
+  const raw = Array.isArray(r.characters) ? r.characters : []
+  const characters = raw.map(normalizeCharacterPsyche).filter((x): x is CharacterPsyche => !!x)
+  const ts = typeof r.timestamp === 'string' ? r.timestamp.trim() : ''
+  return { timestamp: ts, characters }
+}
+
+function normalizeGroupPsycheRow(input: unknown): GroupPsycheRow | null {
+  const r = (input ?? {}) as Partial<GroupPsycheRow> & { archive?: unknown }
+  if (typeof r.conversationId !== 'string' || !r.conversationId.trim()) return null
+  return {
+    conversationId: r.conversationId.trim(),
+    archive: normalizeGroupPsycheArchive(r.archive),
     updatedAt: typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt) ? r.updatedAt : Date.now(),
   }
 }
@@ -1148,6 +1194,34 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
   }
   const groupId =
     typeof m.groupId === 'string' && m.groupId.trim() ? m.groupId.trim().slice(0, 128) : undefined
+  let memoryKeywords: string[] | undefined
+  const kwRaw = (m as { memoryKeywords?: unknown }).memoryKeywords
+  if (Array.isArray(kwRaw)) {
+    memoryKeywords = (kwRaw as unknown[])
+      .map((x) => String(x ?? '').trim())
+      .filter(Boolean)
+    if (!memoryKeywords.length) memoryKeywords = undefined
+  } else if (typeof kwRaw === 'string' && kwRaw.trim()) {
+    memoryKeywords = kwRaw
+      .split(/[,，;；\n\r\t|]+/u)
+      .map((x) => x.trim())
+      .filter(Boolean)
+    if (!memoryKeywords.length) memoryKeywords = undefined
+  }
+  const modeRaw = (m as { memoryTriggerMode?: unknown }).memoryTriggerMode
+  const memoryTriggerMode: CharacterMemory['memoryTriggerMode'] =
+    modeRaw === 'always' || modeRaw === 'keyword' ? modeRaw : undefined
+  const catSan = trimMemoryTriggerText(
+    typeof (m as { memoryTriggerCategory?: unknown }).memoryTriggerCategory === 'string'
+      ? (m as { memoryTriggerCategory: string }).memoryTriggerCategory
+      : '',
+  )
+  const preSan = trimMemoryTriggerText(
+    typeof (m as { memoryTriggerPrecise?: unknown }).memoryTriggerPrecise === 'string'
+      ? (m as { memoryTriggerPrecise: string }).memoryTriggerPrecise
+      : '',
+  )
+  const emoSan = normalizeStoredMemoryEmotionNeedList((m as { memoryTriggerEmotionNeed?: unknown }).memoryTriggerEmotionNeed)
   return {
     id: m.id,
     characterId: m.characterId,
@@ -1158,6 +1232,11 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
     memoryScope,
     groupId,
     involvedCharIds,
+    memoryTriggerMode,
+    memoryTriggerCategory: catSan,
+    memoryTriggerPrecise: preSan,
+    memoryTriggerEmotionNeed: emoSan,
+    memoryKeywords,
   }
 }
 
@@ -1195,10 +1274,14 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
       }
     }
   }
+  const modeRaw = (r as { autoSummaryDefaultMemoryTriggerMode?: unknown }).autoSummaryDefaultMemoryTriggerMode
+  const autoSummaryDefaultMemoryTriggerMode: MemorySettingsRow['autoSummaryDefaultMemoryTriggerMode'] =
+    modeRaw === 'always' || modeRaw === 'keyword' ? modeRaw : undefined
   return {
     id: 'default',
     autoSummaryEnabled,
     autoSummaryInterval: n,
+    autoSummaryDefaultMemoryTriggerMode,
     aiRoundCountByConversation:
       Object.keys(aiRoundCountByConversation).length > 0 ? aiRoundCountByConversation : undefined,
     summaryCursorTimestampByConversation:
@@ -1388,6 +1471,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(HEART_WHISPER_STORE)) {
         db.createObjectStore(HEART_WHISPER_STORE, { keyPath: 'characterId' })
+      }
+      if (!db.objectStoreNames.contains(GROUP_PSYCHE_STORE)) {
+        db.createObjectStore(GROUP_PSYCHE_STORE, { keyPath: 'conversationId' })
       }
     }
     req.onsuccess = () => resolve(req.result)
@@ -3490,6 +3576,101 @@ export class PersonaDb {
     return `${body}\n\n（以上包含该角色与你的私聊记忆，以及你们共同参与的群聊记忆；请根据情境自然地回忆。）`
   }
 
+  private static readonly MEMORY_PROMPT_LEGACY_UNTAGGED_MAX = 8
+
+  /**
+   * 供 AI 注入用：仅纳入「关键词命中」的长期记忆 + 少量无关键词兜底条目，控制 token。
+   * `relevanceText` 建议由最近气泡、用户末条输入、线下摘录尾部等拼接（调用方可用 `buildMemoryRelevanceHaystack`）。
+   */
+  async formatCharacterMemoriesForPromptByRelevance(characterId: string, relevanceText: string): Promise<string> {
+    const cid = characterId.trim()
+    if (!cid) return ''
+    const hay = String(relevanceText || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase()
+
+    const privRaw = await this.listCharacterMemoriesForCharacter(cid)
+    const privateList = privRaw.filter((m) => m.memoryScope !== 'group')
+    const groupList = await this.listGroupMemoriesInvolvingCharacter(cid)
+
+    const alwaysPrivate = privateList
+      .filter((m) => isMemoryAlwaysTrigger(m))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, MEMORY_ALWAYS_INJECT_CAP)
+    const alwaysGroup = groupList
+      .filter((m) => isMemoryAlwaysTrigger(m))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, MEMORY_ALWAYS_INJECT_CAP)
+
+    const pickKeywordHits = (list: CharacterMemory[]) =>
+      hay.length >= 2 ? list.filter((m) => !isMemoryAlwaysTrigger(m) && memoryTriggerMatchesHaystack(m, hay)) : []
+
+    const taggedPrivateHits = pickKeywordHits(privateList)
+    const taggedGroupHits = pickKeywordHits(groupList)
+
+    const legacyPrivate = privateList
+      .filter((m) => !isMemoryAlwaysTrigger(m) && !memoryHasTriggerDimensions(m))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, PersonaDb.MEMORY_PROMPT_LEGACY_UNTAGGED_MAX)
+    const legacyGroup = groupList
+      .filter((m) => !isMemoryAlwaysTrigger(m) && !memoryHasTriggerDimensions(m))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, PersonaDb.MEMORY_PROMPT_LEGACY_UNTAGGED_MAX)
+
+    const privatePick = PersonaDb.mergeMemoriesForPromptPick(
+      [...alwaysPrivate, ...taggedPrivateHits],
+      taggedPrivateHits.length || alwaysPrivate.length ? legacyPrivate.slice(0, 3) : legacyPrivate,
+    )
+    const groupTaggedUnion = new Map<string, CharacterMemory>()
+    for (const m of [...alwaysGroup, ...taggedGroupHits]) groupTaggedUnion.set(m.id, m)
+    const groupPick = PersonaDb.mergeMemoriesForPromptPick(
+      [...groupTaggedUnion.values()],
+      taggedGroupHits.length || alwaysGroup.length ? legacyGroup.slice(0, 3) : legacyGroup,
+    )
+
+    const groupIds = [...new Set(groupPick.map((m) => m.groupId).filter((x): x is string => !!x?.trim()))]
+    const groupNameById = new Map<string, string>()
+    for (const gid of groupIds) {
+      const g = await this.getGroupChat(gid.trim())
+      groupNameById.set(gid.trim(), g?.name?.trim() || '群聊')
+    }
+
+    const chunks: string[] = []
+    if (privatePick.length) {
+      chunks.push(
+        `【与该角色的私聊长期记忆（关键词筛选 + 少量无标签兜底）】\n${privatePick
+          .map((m, i) => `${i + 1}. ${m.content.trim()}`)
+          .join('\n')}`,
+      )
+    }
+    if (groupPick.length) {
+      chunks.push(
+        `【你们共同参与过的群聊中被提炼的长期记忆（关键词筛选 + 少量无标签兜底）】\n${groupPick
+          .map((m, i) => {
+            const gid = m.groupId?.trim()
+            const gn = gid ? groupNameById.get(gid) ?? '群聊' : '群聊'
+            return `${i + 1}. （群：${gn}）${m.content.trim()}`
+          })
+          .join('\n')}`,
+      )
+    }
+    if (!chunks.length) return ''
+    const body = chunks.join('\n\n')
+    return `${body}\n\n（以上含「始终触发」记忆、关键词命中项与少量无触发配置的旧数据兜底。请按情境自然使用，勿机械复读。）`
+  }
+
+  private static mergeMemoriesForPromptPick(matches: CharacterMemory[], legacy: CharacterMemory[]): CharacterMemory[] {
+    const seen = new Set<string>()
+    const out: CharacterMemory[] = []
+    for (const m of [...matches, ...legacy]) {
+      if (seen.has(m.id)) continue
+      seen.add(m.id)
+      out.push(m)
+    }
+    return out.sort((a, b) => a.createdAt - b.createdAt)
+  }
+
   // -------- chat theme (IndexedDB) --------
 
   async getChatTheme(id: string): Promise<ChatTheme | null> {
@@ -4020,6 +4201,46 @@ export class PersonaDb {
     if (!row) return
     const tx = db.transaction(HEART_WHISPER_STORE, 'readwrite')
     tx.objectStore(HEART_WHISPER_STORE).put(row)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+  }
+
+  async getGroupPsyche(conversationId: string): Promise<GroupPsycheRow | null> {
+    const cid = conversationId.trim()
+    if (!cid) return null
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(GROUP_PSYCHE_STORE)) {
+      db.close()
+      return null
+    }
+    const tx = db.transaction(GROUP_PSYCHE_STORE, 'readonly')
+    const req = tx.objectStore(GROUP_PSYCHE_STORE).get(cid)
+    const res = await new Promise<unknown>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error ?? new Error('getGroupPsyche'))
+    })
+    await txDone(tx)
+    db.close()
+    return normalizeGroupPsycheRow(res)
+  }
+
+  async putGroupPsyche(conversationId: string, archive: GroupPsycheArchive): Promise<void> {
+    const cid = conversationId.trim()
+    if (!cid) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(GROUP_PSYCHE_STORE)) {
+      db.close()
+      return
+    }
+    const row = normalizeGroupPsycheRow({
+      conversationId: cid,
+      archive,
+      updatedAt: Date.now(),
+    })
+    if (!row) return
+    const tx = db.transaction(GROUP_PSYCHE_STORE, 'readwrite')
+    tx.objectStore(GROUP_PSYCHE_STORE).put(row)
     await txDone(tx)
     db.close()
     emitWeChatStorageChanged()

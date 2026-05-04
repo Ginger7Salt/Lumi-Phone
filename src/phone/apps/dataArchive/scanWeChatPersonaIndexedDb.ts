@@ -64,6 +64,7 @@ function idbStoreNameToLabel(storeName: string): string {
     groupChats: '微信 · 身份与群聊',
     chatConversationSettings: '微信 · 身份与群聊',
     heartWhispers: '微信 · 心语与收藏',
+    groupPsyche: '微信 · 心语与收藏',
     favorites: '微信 · 心语与收藏',
     chatTheme: '微信 · 主题与世界背景',
     worldBackgrounds: '微信 · 主题与世界背景',

@@ -1,7 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../newFriendsPersona/idb'
 import { wechatConversationKey } from '../wechatConversationKey'
-import { runUnifiedAutoMemorySummaryAfterThreshold, type DatingPlotSnapshotItem } from '../unifiedMemoryAutoSummary'
+import {
+  loadDatingPlotsFromKv,
+  runUnifiedAutoMemorySummaryAfterThreshold,
+  type DatingPlotSnapshotItem,
+} from '../unifiedMemoryAutoSummary'
+import {
+  buildMemoryRelevanceHaystack,
+  buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt,
+  formatUnsummarizedPrivateChatBlock,
+} from '../wechatMemoryPromptBlocks'
 import { openAiCompatibleChat } from '../newFriendsPersona/ai'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import type { ApiConfig } from '../../api/types'
@@ -510,7 +519,14 @@ async function generateDatingAi(
   prompt: string,
   userText: string | undefined,
   opts: { godPerspective: boolean; perspective: NarrativePerspective; isVnMode?: boolean; vnVoiceDisabled?: boolean },
-  onlineCtx?: { recentMessages: string; longTermMemory: string; initialBias?: string },
+  onlineCtx?: {
+    recentMessages: string
+    longTermMemory: string
+    initialBias?: string
+    unsummarizedPrivateBlock?: string
+    unsummarizedGroupBlock?: string
+    unsummarizedOfflineBlock?: string
+  },
   playerIdentity?: PlayerIdentity | null,
   genOptions?: NarrativeGenOptions,
 ): Promise<string> {
@@ -679,8 +695,14 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
   const onlineRecent = onlineCtx?.recentMessages?.trim()
   const longMem = onlineCtx?.longTermMemory?.trim()
   const initialBias = onlineCtx?.initialBias?.trim()
-  const onlineRecentClipped = onlineRecent ? onlineRecent.slice(0, 2800) : ''
+  const unsPrivBlock = onlineCtx?.unsummarizedPrivateBlock?.trim()
+  const unsGrpBlock = onlineCtx?.unsummarizedGroupBlock?.trim()
+  const unsOffBlock = onlineCtx?.unsummarizedOfflineBlock?.trim()
+  const onlineRecentClipped = onlineRecent ? onlineRecent.slice(0, 2200) : ''
   const longMemClipped = longMem ? longMem.slice(0, 2200) : ''
+  const unsPrivClipped = unsPrivBlock ? unsPrivBlock.slice(0, 2600) : ''
+  const unsGrpClipped = unsGrpBlock ? unsGrpBlock.slice(0, 2600) : ''
+  const unsOffClipped = unsOffBlock ? unsOffBlock.slice(0, 2600) : ''
   const sceneHintsClipped = sceneCharacterHints || ''
   const historyClipped = historyBlock || ''
   // 性能保护：约会续写对长上下文非常敏感，限制注入体积可显著降低“卡两分钟”概率。
@@ -792,8 +814,11 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
         `【本轮承接范围】优先承接“玩家输入：...”这一段，同时必须回接最近剧情至少 1 个未收束点，保持连续性。\n` +
         `${userDemand}${branchHintBlock}\n` +
         `【本轮玩家输入原文（锚点优先来源；**正文禁止复读或分条重述本块**）】\n${userText?.trim() || '（本轮无玩家输入）'}\n\n` +
-        `线上近期聊天（最近50条，供线下剧情衔接；**与线下重复者须在正文省略或换角度，禁止当新信息再演**）：\n${onlineRecentClipped || '（暂无）'}\n\n` +
-        `长期记忆（与线上聊天同源）：\n${longMemClipped || '（暂无）'}\n\n` +
+        `线上近期聊天（最近约30条，供口吻衔接；**与下方未总结块或线下重复者须在正文省略或换角度**）：\n${onlineRecentClipped || '（暂无）'}\n\n` +
+        `长期记忆（关键词筛选后注入；与微信自动总结同源）：\n${longMemClipped || '（暂无）'}\n\n` +
+        `尚未总结·私聊（游标后）：\n${unsPrivClipped || '（暂无）'}\n\n` +
+        `尚未总结·群聊（游标后）：\n${unsGrpClipped || '（暂无）'}\n\n` +
+        `尚未总结·线下剧情（约会 plot 游标后）：\n${unsOffClipped || '（暂无）'}\n\n` +
         `场景人物线索（取最近 ${DATING_AI_PLOT_HISTORY_MAX} 条剧情**正文**拼接，尾部优先；用于在场人物与空间关系）：\n${sceneHintsClipped || '（暂无）'}\n\n` +
         `最近剧情（最近 ${DATING_AI_PLOT_HISTORY_MAX} 条，**含本轮玩家输入**；按时间先后排列，**末尾最新**；超长时保留末尾；正文已去思维链）：\n${historyClipped || '（暂无历史）'}\n\n` +
         `请续写下一段剧情。`,
@@ -938,15 +963,88 @@ export function DatingProvider({ children }: { children: ReactNode }) {
     [characters, runGeneratePendingBranches],
   )
 
-  const getOnlineMemoryContext = useCallback(async (characterId: string) => {
-    const recent = await personaDb.listWeChatChatMessagesRecentByCharacter({ characterId, limit: 50 })
-    const recentMessages = recent
-      .map((m) => `${m.type === 'player' ? '我' : 'TA'}：${String(m.content || '').trim()}`)
-      .filter((s) => s.length > 3)
-      .join('\n')
-    const longTermMemory = await personaDb.formatCharacterMemoriesForPrompt(characterId)
-    return { recentMessages, longTermMemory }
-  }, [])
+  const getOnlineMemoryContext = useCallback(
+    async (
+      characterId: string,
+      relevance?: { userText?: string; plotTail?: string },
+    ): Promise<{
+      recentMessages: string
+      longTermMemory: string
+      unsummarizedPrivateBlock: string
+      unsummarizedGroupBlock: string
+      unsummarizedOfflineBlock: string
+    }> => {
+      const cid = characterId.trim()
+      const recent = await personaDb.listWeChatChatMessagesRecentByCharacter({ characterId: cid, limit: 30 })
+      const recentMessages = recent
+        .map((m) => `${m.type === 'player' ? '我' : 'TA'}：${String(m.content || '').trim()}`)
+        .filter((s) => s.length > 3)
+        .join('\n')
+      const chRow = await personaDb.getCharacter(cid).catch(() => null)
+      const pid = chRow?.playerIdentityId?.trim() || '__none__'
+      const hay = buildMemoryRelevanceHaystack([relevance?.userText, relevance?.plotTail, recentMessages])
+      const longTermMemory = await personaDb.formatCharacterMemoriesForPromptByRelevance(cid, hay)
+
+      let unsummarizedPrivateBlock = ''
+      let unsummarizedGroupBlock = ''
+      if (pid && pid !== '__none__') {
+        const convKey = wechatConversationKey(cid, pid)
+        try {
+          unsummarizedPrivateBlock = await formatUnsummarizedPrivateChatBlock({
+            conversationKey: convKey,
+            maxMessages: 100,
+            maxChars: 3200,
+          })
+        } catch {
+          unsummarizedPrivateBlock = ''
+        }
+        try {
+          unsummarizedGroupBlock = await buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt({
+            npcCharacterId: cid,
+            sessionPlayerIdentityId: pid,
+            boundPlayerIdentityId: chRow?.playerIdentityId,
+            maxMessagesPerGroup: 48,
+            charCap: 3800,
+          })
+        } catch {
+          unsummarizedGroupBlock = ''
+        }
+      }
+
+      let unsummarizedOfflineBlock = ''
+      try {
+        const plotCursor = await personaDb.getDatingPlotSummaryCursor(cid)
+        const dMin = plotCursor ?? 0
+        const plots = await loadDatingPlotsFromKv(cid)
+        const tail = plots
+          .filter((p) => {
+            const ts = typeof p.timestamp === 'number' && Number.isFinite(p.timestamp) ? p.timestamp : 1
+            return ts > dMin
+          })
+          .sort((a, b) => (a.timestamp ?? 1) - (b.timestamp ?? 1))
+        const peer = chRow?.name?.trim() || chRow?.wechatNickname?.trim() || '对方'
+        const lines: string[] = []
+        for (const p of tail) {
+          const t = String(p.content || '').trim()
+          if (!t) continue
+          if (p.type === 'player') lines.push(`我：${t}`)
+          else lines.push(`${peer}：${t}`)
+        }
+        unsummarizedOfflineBlock = lines.join('\n')
+      } catch {
+        unsummarizedOfflineBlock = ''
+      }
+
+      return {
+        recentMessages,
+        longTermMemory,
+        unsummarizedPrivateBlock,
+        unsummarizedGroupBlock,
+        unsummarizedOfflineBlock,
+      }
+    },
+    [],
+  )
 
   const setMode = useCallback(
     (mode: DateMode) => {
@@ -1030,7 +1128,8 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           }
         })
         const plotsForModel = [...currentArchive.plots, p1]
-        const onlineCtx = await getOnlineMemoryContext(char.id)
+        const plotTail = formatRecentPlotsForPrompt(plotsForModel, char.realName, 1600)
+        const onlineCtx = await getOnlineMemoryContext(char.id, { userText: msg, plotTail })
         const playerIdentity = await loadPlayerIdentityForDating(char.id)
         const aiTextRaw = await generateDatingAi(
           char,
@@ -1117,7 +1216,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       setLoading(true)
       try {
         const char = currentCharacter
-        const onlineCtx = await getOnlineMemoryContext(char.id)
+        const onlineCtx = await getOnlineMemoryContext(char.id, { userText: String(bias || '').trim() })
         const playerIdentity = await loadPlayerIdentityForDating(char.id)
         const aiTextRaw = await generateDatingAi(
           char,
@@ -1313,7 +1412,8 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         const systemPromptField = userMsg
           ? char.prompt
           : `${char.realName}的线下剧情开场（请重写本段 AI：勿复读旧稿，保持人设与硬性输出格式含 <thinking>）`
-        const onlineCtx = await getOnlineMemoryContext(char.id)
+        const plotTail = formatRecentPlotsForPrompt(before, char.realName, 1600)
+        const onlineCtx = await getOnlineMemoryContext(char.id, { userText: userMsg ?? '', plotTail })
         const playerIdentity = await loadPlayerIdentityForDating(char.id)
         const genOpts = {
           godPerspective: archive.godPerspective,

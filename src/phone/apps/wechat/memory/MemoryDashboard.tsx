@@ -11,12 +11,10 @@ export function MemoryDashboard({
   contacts,
   playerIdentityId,
   playerDisplayName,
-  playerAvatarUrl,
 }: {
   contacts: WeChatContactRow[]
   playerIdentityId: string
   playerDisplayName: string
-  playerAvatarUrl?: string
 }) {
   const [tab, setTab] = useState<Tab>('private')
 
@@ -64,11 +62,7 @@ export function MemoryDashboard({
         {tab === 'private' ? (
           <PrivateMemoryList contacts={contacts} />
         ) : (
-          <GroupMemoryList
-            playerIdentityId={playerIdentityId}
-            playerDisplayName={playerDisplayName}
-            playerAvatarUrl={playerAvatarUrl}
-          />
+          <GroupMemoryList playerIdentityId={playerIdentityId} playerDisplayName={playerDisplayName} />
         )}
       </div>
     </div>

@@ -32,6 +32,7 @@ import type {
   Character,
   CharacterBusySettingsRow,
   CharacterDanmakuSettingsRow,
+  GroupPsycheArchive,
   HeartWhisper,
   PlayerIdentity,
   Relationship,
@@ -44,6 +45,7 @@ import type {
 } from './newFriendsPersona/types'
 import {
   requestWeChatHeartWhisper,
+  requestWeChatGroupPsyche,
   requestWeChatDanmakuVarietyShow,
   requestWeChatPeerReplyBubbles,
   requestWeChatPeerReplyBubblesWithImage,
@@ -69,6 +71,13 @@ import {
   buildNpcGroupChatsRecentDigestForPrivatePrompt,
   buildNpcPrivateChatDigestForGroupPrompt,
 } from './groupChatPrivateDigest'
+import {
+  buildMemoryRelevanceHaystack,
+  buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt,
+  formatUnsummarizedCurrentGroupChatBlock,
+  formatUnsummarizedPrivateChatBlock,
+  formatUnsummarizedPrivateDigestForGroupMember,
+} from './wechatMemoryPromptBlocks'
 import { buildNpcRelationshipRomanceProfileForGroupPrompt } from './groupChatMemberRelationshipPrompt'
 import {
   buildGroupLeanSessionIdentityPromptBlock,
@@ -132,6 +141,7 @@ import {
 import { CheckPhoneFlow } from './checkPhone/CheckPhoneFlow'
 import { WeChatChatCameraScreen } from './WeChatChatCameraScreen'
 import { useWeChatConsole } from './WeChatConsoleContext'
+import { GroupPsycheModal } from './GroupPsycheModal'
 import { HeartWhisperModal } from './HeartWhisperModal'
 import { RedPacketChatRow } from './redPacket/RedPacketChatRow'
 import { TransferChatRow } from './transfer/TransferChatRow'
@@ -1491,36 +1501,6 @@ export function ChatRoom({
     }
   }, [peerAvatarUrl, useLumiProjectAssistantPrompt, personaCharacterId, conversationCharacterId])
 
-  const [memoryNotesForPrompt, setMemoryNotesForPrompt] = useState('')
-
-  useEffect(() => {
-    if (roomType === 'group') {
-      setMemoryNotesForPrompt('')
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      try {
-        const s = await personaDb.formatCharacterMemoriesForPrompt(conversationCharacterId)
-        if (!cancelled) setMemoryNotesForPrompt(s)
-      } catch {
-        if (!cancelled) setMemoryNotesForPrompt('')
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [conversationCharacterId, roomType])
-
-  useEffect(() => {
-    if (roomType === 'group') return
-    const onStorage = () => {
-      void personaDb.formatCharacterMemoriesForPrompt(conversationCharacterId).then(setMemoryNotesForPrompt)
-    }
-    window.addEventListener('wechat-storage-changed', onStorage)
-    return () => window.removeEventListener('wechat-storage-changed', onStorage)
-  }, [conversationCharacterId, roomType])
-
   /**
    * 私聊专用：仅从 IndexedDB 拼「群聊近期消息摘录」，**不调用模型**（与约会线下剧情参考同源思路）。
    * 注入系统提示独立区块 {@link recentGroupChatsReference}，与长期记忆总结分列。
@@ -1544,6 +1524,42 @@ export function ChatRoom({
       return ''
     }
   }, [roomType, useLumiProjectAssistantPrompt, personaCharacterId, playerIdentityId])
+
+  /** 私聊主模型：关键词筛选长期记忆 + 未总结私聊/群聊摘录（每轮现算，避免全量记忆常驻 state）。 */
+  const buildPrivateMemoryInjectionForAi = useCallback(
+    async (transcript: ChatTranscriptTurn[], biasText: string) => {
+      if (roomType === 'group' || useLumiProjectAssistantPrompt) {
+        return { memory: '', unsPrivate: '', unsGroup: '' }
+      }
+      const pc = personaCharacterId?.trim()
+      if (!pc || pc === WECHAT_LUMI_PEER_CHARACTER_ID) {
+        return { memory: '', unsPrivate: '', unsGroup: '' }
+      }
+      const hay = buildMemoryRelevanceHaystack([...transcript.slice(-32).map((t) => t.text), biasText])
+      const [memory, chRow] = await Promise.all([
+        personaDb.formatCharacterMemoriesForPromptByRelevance(pc, hay),
+        personaDb.getCharacter(pc),
+      ])
+      const unsPrivate = (
+        await formatUnsummarizedPrivateChatBlock({
+          conversationKey,
+          maxMessages: 100,
+          maxChars: 3200,
+        })
+      ).trim()
+      const unsGroup = (
+        await buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt({
+          npcCharacterId: pc,
+          sessionPlayerIdentityId: playerIdentityId.trim(),
+          boundPlayerIdentityId: chRow?.playerIdentityId,
+          maxMessagesPerGroup: 50,
+          charCap: 4200,
+        })
+      ).trim()
+      return { memory: memory.trim(), unsPrivate, unsGroup }
+    },
+    [conversationKey, roomType, useLumiProjectAssistantPrompt, personaCharacterId, playerIdentityId],
+  )
 
   const formatWxTimeLabel = useCallback((ts: number) => {
     return formatWeChatChatTimestamp(ts, currentTimeMs)
@@ -2245,6 +2261,7 @@ export function ChatRoom({
   const [redPacketModalId, setRedPacketModalId] = useState<string | null>(null)
   const [heartWhisperLoading, setHeartWhisperLoading] = useState(false)
   const [heartWhisperData, setHeartWhisperData] = useState<HeartWhisper | null>(null)
+  const [groupPsycheArchive, setGroupPsycheArchive] = useState<GroupPsycheArchive | null>(null)
   const retryReplyBiasRef = useRef('')
   const { openConsole } = useWeChatConsole()
   const [composerToast, setComposerToast] = useState<string | null>(null)
@@ -3096,6 +3113,92 @@ export function ChatRoom({
     })
   }, [danmakuEnabled, effectiveDm, personaCharacterId, conversationCharacterId, logger, dmBullets.length])
 
+  const generateGroupPsyche = useCallback(async () => {
+    if (heartWhisperLoading || roomType !== 'group') return
+    const g = groupLive ?? groupDocRef.current
+    if (!g) {
+      showComposerToast('群资料未就绪')
+      return
+    }
+    const npcs = filterGroupNpcMembersExcludingUserAndBot(g.members)
+    if (!npcs.length) {
+      showComposerToast('群内暂无 NPC 成员')
+      return
+    }
+    setHeartWhisperLoading(true)
+    try {
+      let playerIdentity: PlayerIdentity | null = null
+      const piid = playerIdentityId.trim()
+      if (piid && piid !== '__none__') {
+        playerIdentity = await personaDb.getPlayerIdentity(piid)
+      }
+      const peerName = playerDisplayName.trim() || state.profile.displayName.trim() || '朋友'
+      const groupRef = await loadPrivateGroupChatsRecentReference()
+      const tx = itemsToTranscript(itemsRef.current, {
+        groupSpeakerLabel: (msg) => {
+          if (msg.from === 'self') return undefined
+          const sid = msg.senderCharacterId?.trim()
+          if (!sid) return undefined
+          if (sid === WECHAT_GROUP_BOT_CHARACTER_ID) return '群管家'
+          const gr = groupLive ?? groupDocRef.current
+          return gr ? findGroupMember(gr, sid)?.groupNickname : undefined
+        },
+      })
+      const memPack = await buildPrivateMemoryInjectionForAi(tx, '')
+      const roster = await Promise.all(
+        npcs.map(async (m) => {
+          const ch = await personaDb.getCharacter(m.charId)
+          const name = (m.groupNickname || '').trim() || ch?.name?.trim() || m.charId
+          const avatarUrl = (ch?.avatarUrl || '').trim()
+          const npcPronoun = ch?.gender === 'female' ? ('她' as const) : ('他' as const)
+          return { charId: m.charId, name, avatarUrl, npcPronoun }
+        }),
+      )
+      const userAliasesToStrip = [
+        ...new Set(
+          [peerName, state.profile.displayName]
+            .map((s) => String(s ?? '').trim())
+            .filter((s) => s.length >= 2),
+        ),
+      ]
+      const archive = await requestWeChatGroupPsyche({
+        apiConfig,
+        playerIdentity,
+        playerDisplayName: peerName,
+        transcript: tx,
+        roster,
+        userAliasesToStrip,
+        nowMs: getCurrentTimeMs(),
+        longTermMemoryNotes: memPack.memory || undefined,
+        offlineDatingPlotsContext: undefined,
+        recentGroupChatsReference: groupRef || undefined,
+        unsummarizedPrivateNotes: memPack.unsPrivate || undefined,
+        unsummarizedGroupNotes: memPack.unsGroup || undefined,
+      })
+      await personaDb.putGroupPsyche(conversationCharacterId, archive)
+      setGroupPsycheArchive(archive)
+      showComposerToast('心语已更新')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '生成失败'
+      showComposerToast(`心语生成失败：${msg}`)
+    } finally {
+      setHeartWhisperLoading(false)
+    }
+  }, [
+    apiConfig,
+    buildPrivateMemoryInjectionForAi,
+    conversationCharacterId,
+    getCurrentTimeMs,
+    groupLive,
+    heartWhisperLoading,
+    loadPrivateGroupChatsRecentReference,
+    playerDisplayName,
+    playerIdentityId,
+    roomType,
+    showComposerToast,
+    state.profile.displayName,
+  ])
+
   const generateHeartWhisper = useCallback(async () => {
     if (heartWhisperLoading) return
     setHeartWhisperLoading(true)
@@ -3124,18 +3227,22 @@ export function ChatRoom({
           ? await loadOfflineDatingPlotsPromptBlock(pcid, character?.name ?? null)
           : ''
       const groupRef = await loadPrivateGroupChatsRecentReference()
+      const tx = itemsToTranscript(itemsRef.current)
+      const memPack = await buildPrivateMemoryInjectionForAi(tx, '')
       const whisper = await requestWeChatHeartWhisper({
         apiConfig,
         character,
         playerIdentity,
         playerDisplayName: peerName,
-        transcript: itemsToTranscript(itemsRef.current),
+        transcript: tx,
         promptMode,
         nowMs: getCurrentTimeMs(),
-        longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
+        longTermMemoryNotes: memPack.memory || undefined,
         worldBackgroundPrompt,
         offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
         recentGroupChatsReference: groupRef || undefined,
+        unsummarizedPrivateNotes: memPack.unsPrivate || undefined,
+        unsummarizedGroupNotes: memPack.unsGroup || undefined,
       })
       await personaDb.putHeartWhisper(conversationCharacterId, whisper)
       setHeartWhisperData(whisper)
@@ -3151,7 +3258,7 @@ export function ChatRoom({
     conversationCharacterId,
     getCurrentTimeMs,
     heartWhisperLoading,
-    memoryNotesForPrompt,
+    buildPrivateMemoryInjectionForAi,
     loadPrivateGroupChatsRecentReference,
     personaCharacterId,
     playerDisplayName,
@@ -3165,6 +3272,12 @@ export function ChatRoom({
     if (!heartWhisperOpen) return
     let cancelled = false
     void (async () => {
+      if (roomType === 'group') {
+        const row = await personaDb.getGroupPsyche(conversationCharacterId)
+        if (cancelled) return
+        setGroupPsycheArchive(row?.archive ?? null)
+        return
+      }
       const row = await personaDb.getHeartWhisper(conversationCharacterId)
       if (cancelled) return
       setHeartWhisperData(row?.data ?? null)
@@ -3172,7 +3285,7 @@ export function ChatRoom({
     return () => {
       cancelled = true
     }
-  }, [conversationCharacterId, heartWhisperOpen])
+  }, [conversationCharacterId, heartWhisperOpen, roomType])
 
   const flushAiReplies = useCallback(async () => {
     const nowGate = Date.now()
@@ -3203,7 +3316,9 @@ export function ChatRoom({
 
         let persistCharacterId = conversationCharacterId
         let notifyPeerRound = peerNotifyTitle.trim() || '对方'
-        let memoryRound = memoryNotesForPrompt.trim()
+        let memoryRound = ''
+        let unsPrivateRound = ''
+        let unsGroupRound = ''
         let recentGroupChatsReference =
           roomType !== 'group' && !useLumiProjectAssistantPrompt
             ? (await loadPrivateGroupChatsRecentReference()).trim()
@@ -3224,6 +3339,8 @@ export function ChatRoom({
           persistCharacterId = firstNpc
           notifyPeerRound = findGroupMember(gFresh, firstNpc)?.groupNickname || '群成员'
           memoryRound = ''
+          unsPrivateRound = ''
+          unsGroupRound = ''
           recentGroupChatsReference = ''
         }
 
@@ -3419,6 +3536,20 @@ export function ChatRoom({
             })()
             const finalReplyBias = [mergedReplyBias, recallBias, groupCtxBias, atYouBias].filter((x) => x.trim()).join('\n\n')
             pendingRecalledUserTextRef.current = null
+            const isPrivatePersonaRound =
+              roomType !== 'group' && !lumiAssistantChat && !!personaCharacterId?.trim()
+            if (isPrivatePersonaRound) {
+              try {
+                const pack = await buildPrivateMemoryInjectionForAi(transcript, finalReplyBias)
+                memoryRound = pack.memory
+                unsPrivateRound = pack.unsPrivate
+                unsGroupRound = pack.unsGroup
+              } catch {
+                memoryRound = ''
+                unsPrivateRound = ''
+                unsGroupRound = ''
+              }
+            }
             // 关键：如果玩家在发图后又补了一句文字（例如“你看不见吗”），则最后一条 self 可能是纯文本。
             // 为确保模型能对“最近一次发的图片”做出反应，这里改为：优先取“最近一次 self 图片消息”，但仅限于发生在最近一次 other 消息之后（即本轮玩家侧发送的图）。
             const lastSelfWithImage = reversed.find((x) => {
@@ -3484,6 +3615,20 @@ export function ChatRoom({
                 pendingAiRepliesRef.current = 0
                 continue
               }
+              let groupUnsummarizedBlock = ''
+              try {
+                groupUnsummarizedBlock = (
+                  await formatUnsummarizedCurrentGroupChatBlock({
+                    groupId: groupId.trim(),
+                    playerIdentityId: playerIdentityId.trim(),
+                    group: gChat ?? null,
+                    maxMessages: 100,
+                    maxChars: 4000,
+                  })
+                ).trim()
+              } catch {
+                groupUnsummarizedBlock = ''
+              }
               const nickToId = new Map<string, string>()
               for (const m of npcMembers) {
                 if (m.groupNickname?.trim()) nickToId.set(m.groupNickname.trim(), m.charId)
@@ -3514,11 +3659,44 @@ export function ChatRoom({
                 })
                 if (ch?.wechatNickname?.trim()) nickToId.set(ch.wechatNickname.trim(), m.charId)
                 if (ch?.name?.trim()) nickToId.set(ch.name.trim(), m.charId)
+                let privateDigest = ''
+                try {
+                  privateDigest = (
+                    await buildNpcPrivateChatDigestForGroupPrompt({
+                      npcCharacterId: m.charId,
+                      sessionPlayerIdentityId: playerIdentityId.trim(),
+                      boundPlayerIdentityId: ch?.playerIdentityId,
+                      messageCap: 42,
+                      charCap: 3800,
+                    })
+                  ).trim()
+                } catch {
+                  privateDigest = ''
+                }
+                const memberHay = buildMemoryRelevanceHaystack([
+                  ...transcript.slice(-36).map((t) => `${t.speakerLabel ?? ''} ${t.text}`),
+                  finalReplyBias,
+                  privateDigest.slice(0, 1400),
+                ])
                 let memNotes = ''
                 try {
-                  memNotes = (await personaDb.formatCharacterMemoriesForPrompt(m.charId)).trim()
+                  memNotes = (await personaDb.formatCharacterMemoriesForPromptByRelevance(m.charId, memberHay)).trim()
                 } catch {
                   memNotes = ''
+                }
+                let unsPrivMember = ''
+                try {
+                  unsPrivMember = (
+                    await formatUnsummarizedPrivateDigestForGroupMember({
+                      npcCharacterId: m.charId,
+                      sessionPlayerIdentityId: sessionPidForGroup,
+                      boundPlayerIdentityId: ch?.playerIdentityId,
+                      maxMessagesPerKey: 56,
+                      charCap: 2600,
+                    })
+                  ).trim()
+                } catch {
+                  unsPrivMember = ''
                 }
                 const boundPid = ch?.playerIdentityId?.trim()
                 let boundRels: Relationship[] | undefined
@@ -3563,20 +3741,6 @@ export function ChatRoom({
                 } catch {
                   /* ignore */
                 }
-                let privateDigest = ''
-                try {
-                  privateDigest = (
-                    await buildNpcPrivateChatDigestForGroupPrompt({
-                      npcCharacterId: m.charId,
-                      sessionPlayerIdentityId: playerIdentityId.trim(),
-                      boundPlayerIdentityId: ch?.playerIdentityId,
-                      messageCap: 42,
-                      charCap: 3800,
-                    })
-                  ).trim()
-                } catch {
-                  privateDigest = ''
-                }
                 let wbp = ''
                 try {
                   if (ch?.worldBackgroundEnabled !== false && ch?.worldBackgroundId?.trim()) {
@@ -3596,6 +3760,7 @@ export function ChatRoom({
                   worldBackground: wbp || undefined,
                   relationshipRomanceProfile: relRomanceProfile || undefined,
                   privateChatDigest: privateDigest || undefined,
+                  unsummarizedPrivateNotes: unsPrivMember || undefined,
                 })
                 const plot = await loadOfflineDatingPlotsPromptBlock(m.charId, ch?.name ?? null)
                 if (plot.trim()) offlineCombined += `\n【${m.groupNickname}】\n${plot.trim()}\n`
@@ -3676,6 +3841,7 @@ export function ChatRoom({
                 playerSection: piBlock,
                 replyBias: finalReplyBias || undefined,
                 offlinePlotsCombined: offlineCombined.trim() || undefined,
+                groupUnsummarizedNotes: groupUnsummarizedBlock || undefined,
                 groupStrangerPairsPrompt,
                 groupSelfAuditBlock: groupSelfAuditBlock.trim() || undefined,
                 groupShieldedModeratorAnnex: groupShieldedModeratorAnnex.trim() || undefined,
@@ -3725,6 +3891,8 @@ export function ChatRoom({
                   worldBackgroundPrompt,
                   offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
                   recentGroupChatsReference: recentGroupChatsReference || undefined,
+                  unsummarizedPrivateNotes: unsPrivateRound.trim() || undefined,
+                  unsummarizedGroupNotes: unsGroupRound.trim() || undefined,
                   replyBias: finalReplyBias || undefined,
                   busyContext,
                   includeThinkingChain,
@@ -3747,6 +3915,8 @@ export function ChatRoom({
                   worldBackgroundPrompt,
                   offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
                   recentGroupChatsReference: recentGroupChatsReference || undefined,
+                  unsummarizedPrivateNotes: unsPrivateRound.trim() || undefined,
+                  unsummarizedGroupNotes: unsGroupRound.trim() || undefined,
                   replyBias: finalReplyBias || undefined,
                   busyContext,
                   includeThinkingChain,
@@ -3767,6 +3937,8 @@ export function ChatRoom({
                 worldBackgroundPrompt,
                 offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
                 recentGroupChatsReference: recentGroupChatsReference || undefined,
+                unsummarizedPrivateNotes: unsPrivateRound.trim() || undefined,
+                unsummarizedGroupNotes: unsGroupRound.trim() || undefined,
                 replyBias: finalReplyBias || undefined,
                 busyContext,
                 includeThinkingChain,
@@ -3791,6 +3963,8 @@ export function ChatRoom({
                   worldBackgroundPrompt,
                   offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
                   recentGroupChatsReference: recentGroupChatsReference || undefined,
+                  unsummarizedPrivateNotes: unsPrivateRound.trim() || undefined,
+                  unsummarizedGroupNotes: unsGroupRound.trim() || undefined,
                 })
                 logger.log('ai', `[DMDBG] split-call enabled lines=${splitLines.length}`)
                 if (splitLines.length > 0) queueMicrotask(() => enqueueDanmakuLines(splitLines))
@@ -4817,7 +4991,7 @@ export function ChatRoom({
     state.profile.displayName,
     useLumiProjectAssistantPrompt,
     loadPrivateGroupChatsRecentReference,
-    memoryNotesForPrompt,
+    buildPrivateMemoryInjectionForAi,
     peerNotifyTitle,
     enqueueDanmakuLines,
     danmakuEnabled,
@@ -7636,6 +7810,7 @@ export function ChatRoom({
               : ''
           const transcript = itemsToTranscript(itemsRef.current)
           const groupRef = await loadPrivateGroupChatsRecentReference()
+          const vMem = await buildPrivateMemoryInjectionForAi(transcript, '')
           const res = await requestWeChatVoiceCallDecision({
             apiConfig,
             character,
@@ -7643,10 +7818,12 @@ export function ChatRoom({
             playerDisplayName: peerName,
             transcript,
             promptMode,
-            longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
+            longTermMemoryNotes: vMem.memory || undefined,
             worldBackgroundPrompt,
             offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
             recentGroupChatsReference: groupRef || undefined,
+            unsummarizedPrivateNotes: vMem.unsPrivate || undefined,
+            unsummarizedGroupNotes: vMem.unsGroup || undefined,
             currentTimeMs: getCurrentTimeMs(),
           })
           if (res.decision === 'ACCEPT') {
@@ -7747,6 +7924,7 @@ export function ChatRoom({
             },
           ]
           const groupRef = await loadPrivateGroupChatsRecentReference()
+          const vMem = await buildPrivateMemoryInjectionForAi(transcript, text)
           return await requestWeChatVoiceCallReplyText({
             apiConfig,
             character,
@@ -7754,10 +7932,12 @@ export function ChatRoom({
             playerDisplayName: peerName,
             transcript,
             promptMode,
-            longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
+            longTermMemoryNotes: vMem.memory || undefined,
             worldBackgroundPrompt,
             offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
             recentGroupChatsReference: groupRef || undefined,
+            unsummarizedPrivateNotes: vMem.unsPrivate || undefined,
+            unsummarizedGroupNotes: vMem.unsGroup || undefined,
             currentTimeMs: getCurrentTimeMs(),
           })
         }}
@@ -7773,13 +7953,23 @@ export function ChatRoom({
         }}
       />
 
-      <HeartWhisperModal
-        open={heartWhisperOpen}
-        loading={heartWhisperLoading}
-        data={heartWhisperData}
-        onClose={() => setHeartWhisperOpen(false)}
-        onGenerate={() => void generateHeartWhisper()}
-      />
+      {roomType === 'group' ? (
+        <GroupPsycheModal
+          open={heartWhisperOpen}
+          loading={heartWhisperLoading}
+          archive={groupPsycheArchive}
+          onClose={() => setHeartWhisperOpen(false)}
+          onGenerate={() => void generateGroupPsyche()}
+        />
+      ) : (
+        <HeartWhisperModal
+          open={heartWhisperOpen}
+          loading={heartWhisperLoading}
+          data={heartWhisperData}
+          onClose={() => setHeartWhisperOpen(false)}
+          onGenerate={() => void generateHeartWhisper()}
+        />
+      )}
 
       {redPacketModalSender ? (
         <RedPacketModal

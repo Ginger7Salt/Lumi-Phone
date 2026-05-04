@@ -27,6 +27,8 @@ export function useWeChatDanmakuAi() {
       worldBackgroundPrompt?: string
       offlineDatingPlotsContext?: string
       recentGroupChatsReference?: string
+      unsummarizedPrivateNotes?: string
+      unsummarizedGroupNotes?: string
     }) => {
       return requestWeChatDanmakuVarietyShow(params)
     },

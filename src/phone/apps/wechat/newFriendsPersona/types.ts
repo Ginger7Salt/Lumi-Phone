@@ -328,6 +328,9 @@ export type GroupChatRow = {
 /** 长期记忆来源：私聊会话 vs 群聊提炼 */
 export type CharacterMemoryScope = 'private' | 'group'
 
+/** 记忆注入方式：始终进参考 vs 仅关键词命中时注入 */
+export type CharacterMemoryTriggerMode = 'always' | 'keyword'
+
 /** 角色长期记忆（IndexedDB `characterMemories`） */
 export type CharacterMemory = {
   id: string
@@ -343,6 +346,22 @@ export type CharacterMemory = {
   groupId?: string
   /** 群聊记忆涉及的角色 id（用于检索与私聊/线下穿透） */
   involvedCharIds?: string[]
+  /**
+   * `always`：每轮参考均注入（仍受条数上限约束）；`keyword`：仅命中下方触发词时注入。
+   * 未设置：兼容旧数据——无三维度且无 memoryKeywords 时走「无标签兜底」；否则视为关键词模式。
+   */
+  memoryTriggerMode?: CharacterMemoryTriggerMode
+  /** 大分类触发词；用户手写不限字数，自动总结 JSON 会按模型提示约束为 ≤5 字 */
+  memoryTriggerCategory?: string
+  /** 精准匹配词；用户手写不限字数，自动总结会约束为 ≤10 字 */
+  memoryTriggerPrecise?: string
+  /** 情绪/需求侧触发词列表；用户手写不限条数/长度，自动总结会约束为最多 5 条、每条 ≤12 字 */
+  memoryTriggerEmotionNeed?: string[]
+  /**
+   * 附加匹配词（任一命中即参考）；与三维度并列参与匹配。
+   * 逗号/分号/换行分隔均可入库时解析。
+   */
+  memoryKeywords?: string[]
 }
 
 /** 全局记忆设置（IndexedDB `memorySettings`，主键 id 固定为 `default`） */
@@ -351,6 +370,11 @@ export type MemorySettingsRow = {
   /** 自动总结总开关：关闭后仅支持手动总结 */
   autoSummaryEnabled: boolean
   autoSummaryInterval: number
+  /**
+   * 自动总结写入「新记忆」时的默认 `memoryTriggerMode`；缺省为 `keyword`。
+   * 不论此项为何，入库时仍会写入模型提炼的 category / precise / emotion_need，并合并写入 `memoryKeywords` 备份，便于日后从「始终触发」改为「关键词触发」时不丢词。
+   */
+  autoSummaryDefaultMemoryTriggerMode?: CharacterMemoryTriggerMode
   /** 各会话自上次自动总结以来已完成的「AI 回复轮」计数 */
   aiRoundCountByConversation?: Record<string, number>
   /** 各会话最近一次自动总结覆盖到的消息时间戳（闭区间右端） */
@@ -480,6 +504,34 @@ export type HeartWhisper = {
   outfit: string
   innerThoughts: string
   userImpression: string
+}
+
+/**
+ * 群聊心语弹窗：单名 NPC 的物理状态与内心档案（与模型 JSON 字段一一对应后写入 UI）。
+ * clothing / posture / monologue / impressionOnUser 为展示层命名。
+ */
+export type CharacterPsyche = {
+  charId: string
+  avatarUrl: string
+  name: string
+  location: string
+  clothing: string
+  posture: string
+  monologue: string
+  impressionOnUser: string
+}
+
+/** 一群聊会话一次生成的心语快照（IndexedDB `groupPsyche`，主键 conversationId） */
+export type GroupPsycheArchive = {
+  timestamp: string
+  characters: CharacterPsyche[]
+}
+
+export type GroupPsycheRow = {
+  /** 与 `wechatGroupPeerCharacterId(groupId)` 一致 */
+  conversationId: string
+  archive: GroupPsycheArchive
+  updatedAt: number
 }
 
 /** 按角色覆盖存储的心语（IndexedDB `heartWhispers`，主键 characterId） */

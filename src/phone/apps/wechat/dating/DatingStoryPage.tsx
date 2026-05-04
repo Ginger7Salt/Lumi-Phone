@@ -19,6 +19,7 @@ import type { Character, PlayerIdentity } from '../newFriendsPersona/types'
 import { formatWorldBackgroundForPrompt } from '../newFriendsPersona/worldBackgroundFormat'
 import { loadOfflineDatingPlotsPromptBlock } from './loadOfflineDatingPlotsForWechatPrompt'
 import { requestWeChatHeartWhisper, type ChatTranscriptTurn } from '../wechatChatAi'
+import { buildMemoryRelevanceHaystack } from '../wechatMemoryPromptBlocks'
 import { HeartWhisperModal } from '../HeartWhisperModal'
 import { useDating, vnRollbackJumpStorageKey } from './DatingContext'
 import { splitDatingAssistantOutput } from './plotCoT'
@@ -591,7 +592,9 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         playerIdentityId && playerIdentityId !== '__none__'
           ? ((await personaDb.getPlayerIdentity(playerIdentityId)) as PlayerIdentity | null)
           : null
-      const memoryNotes = (await personaDb.formatCharacterMemoriesForPrompt(cid)).trim() || undefined
+      const transcript = buildTranscriptFromDatingPlots()
+      const hay = buildMemoryRelevanceHaystack(transcript.map((t) => t.text))
+      const memoryNotes = (await personaDb.formatCharacterMemoriesForPromptByRelevance(cid, hay)).trim() || undefined
       let worldBackgroundPrompt: string | undefined
       if (character?.worldBackgroundEnabled !== false && character?.worldBackgroundId?.trim()) {
         const wbg = await personaDb.getWorldBackground(character.worldBackgroundId.trim())
@@ -601,7 +604,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       const offlineDatingPlotsContext =
         character ? await loadOfflineDatingPlotsPromptBlock(cid, character?.name ?? null) : ''
       // 线下剧情模式心语：严格基于当前剧情流生成，优先参考最新一轮 AI 剧情回复。
-      const transcript = buildTranscriptFromDatingPlots()
       const whisper = await requestWeChatHeartWhisper({
         apiConfig,
         character,

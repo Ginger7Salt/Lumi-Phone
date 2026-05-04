@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { WeChatContactRow } from '../../../../components/WeChatContactsInstagram'
 import { Pressable } from '../../../components/Pressable'
 import { personaDb } from '../newFriendsPersona/idb'
+import type { CharacterMemoryTriggerMode } from '../newFriendsPersona/types'
 import { MemoryDashboard } from './MemoryDashboard'
 
 const COLORS = {
@@ -65,17 +66,17 @@ export function MemoryManagementApp({
   contacts,
   playerIdentityId,
   playerDisplayName,
-  playerAvatarUrl,
   onBack,
 }: {
   /** 与微信通讯录 `WeChatContactsInstagram` 相同的合并列表（人设同步联系人等） */
   contacts: WeChatContactRow[]
   playerIdentityId: string | null
   playerDisplayName: string
-  playerAvatarUrl?: string
   onBack: () => void
 }) {
   const [autoSummaryEnabled, setAutoSummaryEnabled] = useState(true)
+  const [autoSummaryDefaultTrigger, setAutoSummaryDefaultTrigger] =
+    useState<CharacterMemoryTriggerMode>('keyword')
   const [intervalN, setIntervalN] = useState(10)
   const [loading, setLoading] = useState(true)
 
@@ -85,6 +86,9 @@ export function MemoryManagementApp({
     try {
       const settings = await personaDb.getMemorySettings()
       setAutoSummaryEnabled(settings.autoSummaryEnabled !== false)
+      setAutoSummaryDefaultTrigger(
+        settings.autoSummaryDefaultMemoryTriggerMode === 'always' ? 'always' : 'keyword',
+      )
       setIntervalN(settings.autoSummaryInterval)
     } finally {
       if (!silent) setLoading(false)
@@ -115,6 +119,11 @@ export function MemoryManagementApp({
     await personaDb.putMemorySettings({ autoSummaryEnabled: next })
   }
 
+  const commitAutoSummaryDefaultTrigger = async (mode: CharacterMemoryTriggerMode) => {
+    setAutoSummaryDefaultTrigger(mode)
+    await personaDb.putMemorySettings({ autoSummaryDefaultMemoryTriggerMode: mode })
+  }
+
   const pid = playerIdentityId?.trim() ?? ''
 
   return (
@@ -126,12 +135,45 @@ export function MemoryManagementApp({
       >
         <div className="shrink-0 border-b border-neutral-100 bg-neutral-50/80 px-4 pb-3 pt-2">
           <div className="mx-auto max-w-xl rounded-[12px] border border-neutral-100 bg-white px-4 py-3 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
               <span className="text-[15px]" style={{ color: COLORS.text }}>
                 自动总结
               </span>
-              <WxSwitch on={autoSummaryEnabled} onToggle={() => void toggleAutoSummary()} />
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <div role="radiogroup" aria-label="自动总结新记忆默认触发方式" className="flex gap-1.5">
+                  <Pressable
+                    type="button"
+                    role="radio"
+                    aria-checked={autoSummaryDefaultTrigger === 'keyword'}
+                    onClick={() => void commitAutoSummaryDefaultTrigger('keyword')}
+                    className={`rounded-[8px] border px-2.5 py-2 text-[12px] font-medium transition-colors ${
+                      autoSummaryDefaultTrigger === 'keyword'
+                        ? 'border-black bg-black text-white'
+                        : 'border-black bg-white text-black hover:bg-neutral-100'
+                    }`}
+                  >
+                    关键词
+                  </Pressable>
+                  <Pressable
+                    type="button"
+                    role="radio"
+                    aria-checked={autoSummaryDefaultTrigger === 'always'}
+                    onClick={() => void commitAutoSummaryDefaultTrigger('always')}
+                    className={`rounded-[8px] border px-2.5 py-2 text-[12px] font-medium transition-colors ${
+                      autoSummaryDefaultTrigger === 'always'
+                        ? 'border-black bg-black text-white'
+                        : 'border-black bg-white text-black hover:bg-neutral-100'
+                    }`}
+                  >
+                    始终
+                  </Pressable>
+                </div>
+                <WxSwitch on={autoSummaryEnabled} onToggle={() => void toggleAutoSummary()} />
+              </div>
             </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
+              新记忆默认选「始终」或「关键词」；每次自动总结仍会在后台写入模型提炼的触发词（含合并备份），之后改为「关键词」不会丢词。
+            </p>
             <div className="mt-3 flex items-center justify-between gap-3 border-t border-neutral-100 pt-3">
               <span className="text-[15px]" style={{ color: COLORS.text }}>
                 间隔轮数
@@ -167,7 +209,6 @@ export function MemoryManagementApp({
             contacts={contacts}
             playerIdentityId={pid || '__none__'}
             playerDisplayName={playerDisplayName.trim() || '我'}
-            playerAvatarUrl={playerAvatarUrl}
           />
         )}
       </div>

@@ -7,13 +7,16 @@ export type ParsedMemoryWithSources = {
   body: string
 }
 
-/** 解析入库时写入的 `[线上]` `[群聊]` `[线下]` 前缀（仅前缀；顺序与入库一致） */
+/** 解析入库前缀：`[私聊]`（新）或 `[线上]`（旧）表示私聊来源，随后可为 `[群聊]` `[线下]`（顺序须一致） */
 export function parseMemorySourcePrefix(raw: string): ParsedMemoryWithSources {
   let s = String(raw ?? '')
   let hasOnlineTag = false
   let hasGroupChatTag = false
   let hasOfflineTag = false
-  if (s.startsWith('[线上]')) {
+  if (s.startsWith('[私聊]')) {
+    hasOnlineTag = true
+    s = s.slice('[私聊]'.length)
+  } else if (s.startsWith('[线上]')) {
     hasOnlineTag = true
     s = s.slice('[线上]'.length)
   }
@@ -35,7 +38,7 @@ export function composeMemoryWithSourcePrefix(
   body: string,
 ): string {
   let s = ''
-  if (flags.hasOnlineTag) s += '[线上]'
+  if (flags.hasOnlineTag) s += '[私聊]'
   if (flags.hasGroupChatTag) s += '[群聊]'
   if (flags.hasOfflineTag) s += '[线下]'
   const b = String(body ?? '').replace(/^\s+/, '')
@@ -66,7 +69,7 @@ export function MemorySourceLegendStrip({ className }: { className?: string }) {
     >
       <span className="text-neutral-400">来源</span>
       <span className={chip} style={BADGE_ONLINE}>
-        线上
+        私聊
       </span>
       <span className={chip} style={BADGE_GROUP}>
         群聊
@@ -78,7 +81,7 @@ export function MemorySourceLegendStrip({ className }: { className?: string }) {
   )
 }
 
-/** 长期记忆列表/详情：把 `[线上][群聊][线下]` 前缀渲染为高亮标签，正文单独排版 */
+/** 长期记忆列表/详情：把来源前缀渲染为「私聊」「群聊」「线下」标签，正文单独排版 */
 export function MemoryContentWithSourceBadges({
   content,
   bodyClassName,
@@ -105,7 +108,7 @@ export function MemoryContentWithSourceBadges({
         className={`mr-1 inline-block shrink-0 align-middle font-semibold leading-tight shadow-sm ${sc}`}
         style={BADGE_ONLINE}
       >
-        线上
+        私聊
       </span>,
     )
   }

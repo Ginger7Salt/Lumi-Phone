@@ -3,7 +3,7 @@ import { Edit2, Plus, Search, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Pressable } from '../../../components/Pressable'
 import { personaDb } from '../newFriendsPersona/idb'
-import type { CharacterMemory, GroupChatRow } from '../newFriendsPersona/types'
+import type { CharacterMemory, CharacterMemoryTriggerMode, GroupChatRow } from '../newFriendsPersona/types'
 import { uid } from '../newFriendsPersona/utils'
 import {
   groupMemoryBucketCharacterId,
@@ -17,6 +17,9 @@ import {
   MemoryContentWithSourceBadges,
   parseMemorySourcePrefix,
 } from './memorySourceBadges'
+import { MemoryManualKeywordEditor } from './MemoryManualKeywordEditor'
+import { MemoryTriggerModeBadge } from './MemoryTriggerModeBadge'
+import { flattenMemoryTriggerKeywords, formatMemoryTriggerSummaryLine } from './memoryTriggerUtils'
 
 function formatTs(ts: number): string {
   const d = new Date(ts)
@@ -60,47 +63,6 @@ function involvedIdsForGroup(g: GroupChatRow | undefined): string[] | undefined 
   return ids.length ? ids : undefined
 }
 
-function AvatarStack({
-  members,
-  resolveAvatar,
-  extraCount,
-}: {
-  members: { charId: string; label: string }[]
-  resolveAvatar: (charId: string) => string | undefined
-  extraCount: number
-}) {
-  const max = 5
-  const shown = members.slice(0, max)
-  const overflow = Math.max(0, extraCount > 0 ? extraCount : members.length - max)
-
-  return (
-    <div className="flex items-center pl-2">
-      {shown.map((m, i) => (
-        <div
-          key={m.charId}
-          className="-ml-2 flex size-8 items-center justify-center overflow-hidden rounded-full border-2 border-white bg-neutral-100 text-[10px] text-neutral-400 shadow-sm first:ml-0"
-          style={{ zIndex: shown.length - i }}
-          title={m.label}
-        >
-          {resolveAvatar(m.charId) ? (
-            <img src={resolveAvatar(m.charId)} alt="" className="size-full object-cover" />
-          ) : (
-            <span className="max-w-[28px] truncate px-0.5">{m.label.slice(0, 1)}</span>
-          )}
-        </div>
-      ))}
-      {overflow > 0 ? (
-        <div
-          className="-ml-2 flex size-8 items-center justify-center rounded-full border-2 border-white bg-neutral-950 text-[10px] font-medium text-white shadow-sm"
-          style={{ zIndex: 0 }}
-        >
-          +{overflow}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 const groupCardVariants = {
   hidden: { opacity: 0 },
   show: {
@@ -117,11 +79,9 @@ const groupItemVariants = {
 export function GroupMemoryList({
   playerIdentityId,
   playerDisplayName: _playerDisplayName,
-  playerAvatarUrl,
 }: {
   playerIdentityId: string
   playerDisplayName: string
-  playerAvatarUrl?: string
 }) {
   const pid = playerIdentityId.trim()
   const [memories, setMemories] = useState<CharacterMemory[]>([])
@@ -164,35 +124,6 @@ export function GroupMemoryList({
     for (const g of groups) m.set(g.id.trim(), g)
     return m
   }, [groups])
-
-  const [avatarCache, setAvatarCache] = useState<Record<string, string | undefined>>({})
-
-  useEffect(() => {
-    if (!pid || !memories.length) return
-    let cancelled = false
-    void (async () => {
-      const ids = new Set<string>()
-      for (const mem of memories) {
-        const gid = mem.groupId?.trim() || parseGroupIdFromMemoryBucketCharacterId(mem.characterId) || ''
-        const g = gid ? groupMetaById.get(gid) : undefined
-        for (const m of g?.members ?? []) {
-          if (m.charId !== WECHAT_GROUP_BOT_CHARACTER_ID) ids.add(m.charId)
-        }
-      }
-      const next: Record<string, string | undefined> = {}
-      for (const id of ids) {
-        if (id === WECHAT_GROUP_USER_CHAR_ID) next[id] = playerAvatarUrl
-        else {
-          const ch = await personaDb.getCharacter(id)
-          next[id] = ch?.avatarUrl?.trim()
-        }
-      }
-      if (!cancelled) setAvatarCache(next)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [pid, memories, groupMetaById, playerAvatarUrl])
 
   const grouped = useMemo(() => {
     const m = new Map<string, CharacterMemory[]>()
@@ -247,6 +178,9 @@ export function GroupMemoryList({
 
   const [editRow, setEditRow] = useState<CharacterMemory | null>(null)
   const [editDraft, setEditDraft] = useState('')
+  const [editTriggerMode, setEditTriggerMode] = useState<CharacterMemoryTriggerMode>('keyword')
+  const [editKeywords, setEditKeywords] = useState<string[]>([])
+  const [editKwKey, setEditKwKey] = useState(0)
 
   const saveEdit = async () => {
     if (!editRow) return
@@ -254,9 +188,17 @@ export function GroupMemoryList({
     if (!t) return
     const flags = parseMemorySourcePrefix(editRow.content)
     const content = composeMemoryWithSourcePrefix(flags, t).slice(0, 4000)
+    const mode: CharacterMemoryTriggerMode = editTriggerMode === 'always' ? 'always' : 'keyword'
+    const normalized = [...new Set(editKeywords.map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean))]
+    const kws = normalized.length ? normalized : undefined
     await personaDb.upsertCharacterMemory({
       ...editRow,
       content,
+      memoryTriggerMode: mode,
+      memoryTriggerCategory: undefined,
+      memoryTriggerPrecise: undefined,
+      memoryTriggerEmotionNeed: undefined,
+      memoryKeywords: kws,
       updatedAt: Date.now(),
       isAutoGenerated: false,
     })
@@ -267,6 +209,9 @@ export function GroupMemoryList({
   const [addOpen, setAddOpen] = useState(false)
   const [addTargetGid, setAddTargetGid] = useState<string | null>(null)
   const [addDraft, setAddDraft] = useState('')
+  const [addTriggerMode, setAddTriggerMode] = useState<CharacterMemoryTriggerMode>('keyword')
+  const [addKeywords, setAddKeywords] = useState<string[]>([])
+  const [addKwKey, setAddKwKey] = useState(0)
 
   const saveAdd = async () => {
     const gid = addTargetGid?.trim()
@@ -276,6 +221,9 @@ export function GroupMemoryList({
     const now = Date.now()
     const meta = groupMetaById.get(gid)
     const involvedCharIds = involvedIdsForGroup(meta)
+    const mode: CharacterMemoryTriggerMode = addTriggerMode === 'always' ? 'always' : 'keyword'
+    const normalized = [...new Set(addKeywords.map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean))]
+    const kws = normalized.length ? normalized : undefined
     await personaDb.upsertCharacterMemory({
       id: uid('mem'),
       characterId: groupMemoryBucketCharacterId(gid),
@@ -285,29 +233,17 @@ export function GroupMemoryList({
       isAutoGenerated: false,
       memoryScope: 'group',
       groupId: gid,
+      memoryTriggerMode: mode,
+      memoryTriggerCategory: undefined,
+      memoryTriggerPrecise: undefined,
+      memoryTriggerEmotionNeed: undefined,
+      memoryKeywords: kws,
       ...(involvedCharIds ? { involvedCharIds } : {}),
     })
     setAddOpen(false)
     setAddTargetGid(null)
     setAddDraft('')
     await reload({ silent: true })
-  }
-
-  const stackMembersForGroup = (g: GroupChatRow) => {
-    const list = g.members
-      .filter((m) => m.charId !== WECHAT_GROUP_BOT_CHARACTER_ID)
-      .map((m) => ({
-        charId: m.charId,
-        label: (m.groupNickname || '').trim() || m.charId.slice(0, 6),
-      }))
-    const shownForStack = list.slice(0, 5)
-    const extra = list.length > 5 ? list.length - 5 : 0
-    return { shownForStack, extra, list }
-  }
-
-  const resolveAv = (charId: string) => {
-    if (charId === WECHAT_GROUP_USER_CHAR_ID) return playerAvatarUrl
-    return avatarCache[charId]
   }
 
   if (!pid) {
@@ -362,7 +298,7 @@ export function GroupMemoryList({
             {displayBlocks.map(({ gid, items }) => {
               const meta = groupMetaById.get(gid)
               const title = meta?.name?.trim() || `群聊 ${gid.slice(0, 6)}`
-              const { shownForStack, extra } = meta ? stackMembersForGroup(meta) : { shownForStack: [], extra: 0 }
+              const groupAvatarSrc = meta?.avatar?.trim()
 
               return (
                 <motion.section key={gid} variants={groupItemVariants} className="rounded-[14px] border border-neutral-100 bg-white shadow-sm">
@@ -377,6 +313,9 @@ export function GroupMemoryList({
                         onClick={() => {
                           setAddTargetGid(gid)
                           setAddDraft('')
+                          setAddTriggerMode('keyword')
+                          setAddKeywords([])
+                          setAddKwKey((k) => k + 1)
                           setAddOpen(true)
                         }}
                         className="inline-flex items-center gap-1 rounded-[10px] border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] font-medium text-neutral-800 shadow-sm transition-colors hover:border-neutral-300 hover:bg-neutral-50"
@@ -384,13 +323,18 @@ export function GroupMemoryList({
                         <Plus className="size-3.5" strokeWidth={2} aria-hidden />
                         添加
                       </Pressable>
-                      {shownForStack.length ? (
-                        <AvatarStack
-                          members={shownForStack}
-                          resolveAvatar={(id) => resolveAv(id)}
-                          extraCount={extra}
-                        />
-                      ) : null}
+                      <div
+                        className="flex size-10 shrink-0 overflow-hidden rounded-full border border-neutral-200 bg-neutral-100 shadow-sm"
+                        title={title}
+                      >
+                        {groupAvatarSrc ? (
+                          <img src={groupAvatarSrc} alt="" className="size-full object-cover" />
+                        ) : (
+                          <span className="flex size-full items-center justify-center text-[11px] font-medium text-neutral-400">
+                            群
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <ul className="divide-y divide-neutral-100">
@@ -400,7 +344,10 @@ export function GroupMemoryList({
                       items.map((mem) => (
                         <li key={mem.id} className="group/row px-4 py-4">
                           <div className="flex items-start justify-between gap-3">
-                            <p className="text-[11px] text-neutral-400">{formatTs(mem.updatedAt)}</p>
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <MemoryTriggerModeBadge mode={mem.memoryTriggerMode} />
+                              <p className="text-[11px] text-neutral-400">{formatTs(mem.updatedAt)}</p>
+                            </div>
                             <div className="flex shrink-0 gap-1 opacity-40 transition-opacity group-hover/row:opacity-100">
                               <Pressable
                                 type="button"
@@ -409,6 +356,9 @@ export function GroupMemoryList({
                                 onClick={() => {
                                   setEditRow(mem)
                                   setEditDraft(parseMemorySourcePrefix(mem.content).body || mem.content)
+                                  setEditTriggerMode(mem.memoryTriggerMode === 'always' ? 'always' : 'keyword')
+                                  setEditKeywords(flattenMemoryTriggerKeywords(mem))
+                                  setEditKwKey((k) => k + 1)
                                 }}
                               >
                                 <Edit2 className="size-4" strokeWidth={1.5} />
@@ -425,6 +375,9 @@ export function GroupMemoryList({
                           </div>
                           <div className="mt-2">
                             <MemoryCardBody content={mem.content} clamp />
+                            <p className="mt-2 text-[12px] leading-snug text-neutral-500">
+                              {formatMemoryTriggerSummaryLine(mem)}
+                            </p>
                           </div>
                         </li>
                       ))
@@ -449,13 +402,13 @@ export function GroupMemoryList({
           <div
             role="dialog"
             aria-modal
-            className="w-full max-w-[400px] rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
+            className="max-h-[min(90vh,720px)] w-full max-w-[400px] overflow-y-auto rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <p className="text-[15px] font-medium text-neutral-950">添加群聊记忆</p>
             <p className="mt-1 text-[12px] leading-relaxed text-neutral-400">
               可直接输入正文；需要时在文首加
-              <span className="text-neutral-600"> [线上] [群聊] [线下] </span>
+              <span className="text-neutral-600"> [私聊] [群聊] [线下] </span>
               标记来源（顺序须一致）。
             </p>
             <textarea
@@ -463,6 +416,14 @@ export function GroupMemoryList({
               onChange={(e) => setAddDraft(e.target.value)}
               placeholder="输入记忆内容…"
               className="mt-3 min-h-[160px] w-full resize-y rounded-[10px] border border-neutral-100 bg-neutral-50 px-3 py-2 text-[14px] text-neutral-800 outline-none focus:border-neutral-950"
+            />
+            <MemoryManualKeywordEditor
+              key={addKwKey}
+              radioGroupName="group-memory-add-trigger"
+              triggerMode={addTriggerMode}
+              onTriggerMode={setAddTriggerMode}
+              keywords={addKeywords}
+              onKeywordsChange={setAddKeywords}
             />
             <div className="mt-4 flex justify-end gap-2">
               <Pressable
@@ -496,7 +457,7 @@ export function GroupMemoryList({
           <div
             role="dialog"
             aria-modal
-            className="w-full max-w-[400px] rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
+            className="max-h-[min(90vh,720px)] w-full max-w-[400px] overflow-y-auto rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <p className="text-[15px] font-medium text-neutral-950">编辑群聊记忆</p>
@@ -504,6 +465,14 @@ export function GroupMemoryList({
               value={editDraft}
               onChange={(e) => setEditDraft(e.target.value)}
               className="mt-3 min-h-[160px] w-full resize-y rounded-[10px] border border-neutral-100 bg-neutral-50 px-3 py-2 text-[14px] text-neutral-800 outline-none focus:border-neutral-950"
+            />
+            <MemoryManualKeywordEditor
+              key={editKwKey}
+              radioGroupName="group-memory-edit-trigger"
+              triggerMode={editTriggerMode}
+              onTriggerMode={setEditTriggerMode}
+              keywords={editKeywords}
+              onKeywordsChange={setEditKeywords}
             />
             <div className="mt-4 flex justify-end gap-2">
               <Pressable
