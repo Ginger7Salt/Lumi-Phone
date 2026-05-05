@@ -2,7 +2,8 @@ import { ChevronDown, Dice5, Plus, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { ApiConfig } from '../../api/types'
 import { generateWorldBookItemContent } from './ai'
-import type { Character, PlayerIdentity, WorldBook, WorldBookItem, WorldBookPriority } from './types'
+import type { Character, PlayerIdentity, WorldBook, WorldBookItem, WorldBookPriority, WorldBookPronounGuide } from './types'
+import { formatWorldBookItemLineForPrompt } from './worldBookPronounGuide'
 import { uid } from './utils'
 import { WorldBookItemGenLengthModal } from './WorldBookItemGenLengthModal'
 import { InlineDropdown } from './InlineDropdown'
@@ -21,6 +22,18 @@ const WB_ITEM_GENERATING_TEXT = '生成中…'
 
 function priorityLabel(p: WorldBookPriority) {
   return p === 'before' ? '聊天之前' : '聊天之后'
+}
+
+function worldBookPronounGuideLabel(forPlayerIdentity: boolean, g?: WorldBookPronounGuide): string {
+  const v = g ?? 'default'
+  if (forPlayerIdentity) {
+    if (v === 'user_as_i') return '我=本人'
+    if (v === 'third_person') return '第三人称写本人'
+    return '我=本人'
+  }
+  if (v === 'user_as_i') return '我=用户（非该角色）'
+  if (v === 'third_person') return '第三人称写角色为主'
+  return '我=该角色，你=用户'
 }
 
 /** 世界书/条目启用：黑白配色滑动开关（关：浅灰轨；开：黑轨 + 白点） */
@@ -78,6 +91,7 @@ export function WorldBooksEditor({
   const [wbItemGenPicker, setWbItemGenPicker] = useState<null | { wbId: string; itemId: string }>(null)
   /** 与 MBTI 一致的下拉：同一时间只展开一条目的「聊天之前/之后」 */
   const [priorityOpenKey, setPriorityOpenKey] = useState<string | null>(null)
+  const [pronounOpenKey, setPronounOpenKey] = useState<string | null>(null)
 
   const worldBooks = character.worldBooks ?? []
 
@@ -132,19 +146,32 @@ export function WorldBooksEditor({
     setWorldBooks(worldBooks.map((w) => (w.id === wbId ? { ...w, items: (w.items ?? []).filter((it) => it.id !== itemId) } : w)))
   }
 
+  const wbPromptVoice = forPlayerIdentity ? 'player_identity' : 'character_card'
+  const wbSubjectName =
+    String(character.name ?? '').trim() || (forPlayerIdentity ? '用户' : '该角色')
+
   const enabledBookText = useMemo(() => {
     return worldBooks
       .filter((w) => w.enabled)
       .map((w) => {
         const lines = (w.items ?? [])
           .filter((it) => it.enabled && String(it.content || '').trim())
-          .map((it) => `- [${it.priority === 'before' ? '聊天之前' : '聊天之后'}] ${it.name}：${String(it.content).trim()}`)
+          .map((it) =>
+            formatWorldBookItemLineForPrompt({
+              priority: it.priority,
+              name: it.name,
+              content: String(it.content).trim(),
+              pronounGuide: it.pronounGuide,
+              subjectName: wbSubjectName,
+              voice: wbPromptVoice,
+            }),
+          )
           .join('\n')
         return lines ? `世界书「${w.name}」\n${lines}` : ''
       })
       .filter(Boolean)
       .join('\n\n')
-  }, [worldBooks])
+  }, [worldBooks, wbPromptVoice, wbSubjectName])
 
   const canUseAi = !!apiConfig?.apiUrl && !!apiConfig?.apiKey && !!apiConfig?.modelId
 
@@ -321,6 +348,70 @@ export function WorldBooksEditor({
                                             }}
                                           >
                                             <span className="text-[13px] font-semibold">{priorityLabel(p)}</span>
+                                          </button>
+                                        )
+                                      })}
+                                    </div>
+                                  </InlineDropdown>
+                                </div>
+                              </div>
+
+                              <div className="mt-2">
+                                <span className="text-[12px]" style={{ color: COLORS.sub }}>
+                                  人称与视角
+                                </span>
+                                <p className="mt-0.5 text-[11px] leading-relaxed" style={{ color: COLORS.faint }}>
+                                  {forPlayerIdentity
+                                    ? '说明本条里「我」通常指身份卡上的你本人，减少与对话角色混淆。'
+                                    : '若以用户口吻写「我」（例如暗恋、职务），请选择「我=用户」；否则模型容易把「我」当成该角色。'}
+                                </p>
+                                <div className="mt-1">
+                                  <InlineDropdown
+                                    label="人称与视角"
+                                    valueText={worldBookPronounGuideLabel(forPlayerIdentity, it.pronounGuide)}
+                                    open={pronounOpenKey === key}
+                                    onToggle={() => setPronounOpenKey((k) => (k === key ? null : key))}
+                                  >
+                                    <div className="border-b px-3 py-2" style={{ borderColor: '#f0f0f0' }}>
+                                      <p className="text-[11px] leading-relaxed" style={{ color: COLORS.sub }}>
+                                        注入 AI 提示时会在本条后附一句「本条代词」说明，用于生成 NPC、私聊、简介等场景。
+                                      </p>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-2 px-3 py-2">
+                                      {(
+                                        [
+                                          'default',
+                                          ...(forPlayerIdentity ? [] : (['user_as_i'] as const)),
+                                          'third_person',
+                                        ] as WorldBookPronounGuide[]
+                                      ).map((pg) => {
+                                        const active = (it.pronounGuide ?? 'default') === pg
+                                        return (
+                                          <button
+                                            key={pg}
+                                            type="button"
+                                            className="rounded-xl border px-3 py-2.5 text-left text-[12px] transition-all duration-200 ease-out"
+                                            style={{
+                                              borderColor: '#e5e5e5',
+                                              background: active ? '#111827' : '#ffffff',
+                                              color: active ? '#ffffff' : '#000000',
+                                            }}
+                                            onClick={() => {
+                                              updateItem(wb.id, it.id, { pronounGuide: pg })
+                                              setPronounOpenKey(null)
+                                            }}
+                                          >
+                                            <span className="font-semibold">{worldBookPronounGuideLabel(forPlayerIdentity, pg)}</span>
+                                            {pg === 'user_as_i' && !forPlayerIdentity ? (
+                                              <span className="mt-0.5 block text-[11px] font-normal opacity-90">
+                                                适用于世界书里用「我」指用户、用「你」指角色的写法。
+                                              </span>
+                                            ) : null}
+                                            {pg === 'third_person' ? (
+                                              <span className="mt-0.5 block text-[11px] font-normal opacity-90">
+                                                以他/她或全名描写为主，弱化「我」的单一归属。
+                                              </span>
+                                            ) : null}
                                           </button>
                                         )
                                       })}

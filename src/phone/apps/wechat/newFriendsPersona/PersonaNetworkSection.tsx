@@ -102,6 +102,7 @@ function pairFromPlayerLink(link: PlayerNetworkLink): {
           relation: link.relationYouToThem,
           fromPerspective: link.youSeeThem,
           toPerspective: link.theySeeYou,
+          fromCallsTo: link.youCallThem,
         }
       : {
           id: `${link.id}-ab`,
@@ -110,6 +111,7 @@ function pairFromPlayerLink(link: PlayerNetworkLink): {
           relation: link.relationThemToYou,
           fromPerspective: link.theySeeYou,
           toPerspective: link.youSeeThem,
+          fromCallsTo: link.theyCallYou,
         }
   const ba: Relationship =
     YOU < c
@@ -120,6 +122,7 @@ function pairFromPlayerLink(link: PlayerNetworkLink): {
           relation: link.relationThemToYou,
           fromPerspective: link.theySeeYou,
           toPerspective: link.youSeeThem,
+          fromCallsTo: link.theyCallYou,
         }
       : {
           id: `${link.id}-ba`,
@@ -128,6 +131,7 @@ function pairFromPlayerLink(link: PlayerNetworkLink): {
           relation: link.relationYouToThem,
           fromPerspective: link.youSeeThem,
           toPerspective: link.theySeeYou,
+          fromCallsTo: link.youCallThem,
         }
   return { aId, bId, ab, ba }
 }
@@ -220,11 +224,18 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
   const [draftPlayerLinks, setDraftPlayerLinks] = useState<PlayerNetworkLink[]>([])
   const [relIdsOnOpen, setRelIdsOnOpen] = useState<Set<string>>(new Set())
   const [graphEditorSaving, setGraphEditorSaving] = useState(false)
+  /** 手动关系图：默认只读展示，点「编辑」后展开该条的表单 */
+  const [editingGraphPlayerLinkId, setEditingGraphPlayerLinkId] = useState<string | null>(null)
+  const [editingGraphRelId, setEditingGraphRelId] = useState<string | null>(null)
+  /** 画布点击边线弹窗：先只读再编辑 */
+  const [edgePlayerFormUnlocked, setEdgePlayerFormUnlocked] = useState(false)
+  const [edgeCharFormUnlocked, setEdgeCharFormUnlocked] = useState(false)
   const [newRelFrom, setNewRelFrom] = useState('')
   const [newRelTo, setNewRelTo] = useState('')
   const [newRelRelation, setNewRelRelation] = useState('')
   const [newRelFromSee, setNewRelFromSee] = useState('')
   const [newRelToSee, setNewRelToSee] = useState('')
+  const [newRelFromCallsTo, setNewRelFromCallsTo] = useState('')
   const [newPlCharId, setNewPlCharId] = useState('')
   const [graphDdOpen, setGraphDdOpen] = useState<null | 'plChar' | 'relFrom' | 'relTo'>(null)
   /** 手动编辑关系图：你与角色 | 角色与 NPC（有向关系） */
@@ -238,7 +249,22 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
   const [edgeDetail, setEdgeDetail] = useState<EdgeDetail | null>(null)
   const [draftYouRel, setDraftYouRel] = useState('')
   const [draftYouSee, setDraftYouSee] = useState('')
+  const [draftTheyCallYou, setDraftTheyCallYou] = useState('')
+  const [draftYouCallThem, setDraftYouCallThem] = useState('')
+  const [draftTheySeeYou, setDraftTheySeeYou] = useState('')
+  const [draftThemRel, setDraftThemRel] = useState('')
   const [savingPlayerView, setSavingPlayerView] = useState(false)
+  /** 画布点击「角色↔角色」边后在弹窗内编辑，与手动关系图一致、无额外限制 */
+  type CharRelDraft = {
+    id: string
+    relation: string
+    fromCallsTo: string
+    fromPerspective: string
+    toPerspective: string
+  }
+  const [draftCharAb, setDraftCharAb] = useState<CharRelDraft | null>(null)
+  const [draftCharBa, setDraftCharBa] = useState<CharRelDraft | null>(null)
+  const [savingCharEdge, setSavingCharEdge] = useState(false)
 
   const playerLinkCharIdForModal = useMemo(() => {
     if (!edgeDetail) return null
@@ -248,13 +274,47 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
   }, [edgeDetail])
 
   useEffect(() => {
+    setEdgePlayerFormUnlocked(false)
+    setEdgeCharFormUnlocked(false)
+  }, [edgeDetail])
+
+  useEffect(() => {
     if (!playerLinkCharIdForModal) return
     const link = playerLinks.find((l) => l.characterId === playerLinkCharIdForModal)
     if (link) {
       setDraftYouRel(link.relationYouToThem)
       setDraftYouSee(link.youSeeThem)
+      setDraftTheyCallYou(link.theyCallYou)
+      setDraftYouCallThem(link.youCallThem)
+      setDraftTheySeeYou(link.theySeeYou)
+      setDraftThemRel(link.relationThemToYou)
     }
   }, [playerLinkCharIdForModal, playerLinks])
+
+  useEffect(() => {
+    if (!edgeDetail) {
+      setDraftCharAb(null)
+      setDraftCharBa(null)
+      return
+    }
+    if (playerLinkCharIdForModal) {
+      setDraftCharAb(null)
+      setDraftCharBa(null)
+      return
+    }
+    const pack = (r?: Relationship): CharRelDraft | null =>
+      r && r.id
+        ? {
+            id: r.id,
+            relation: r.relation,
+            fromCallsTo: r.fromCallsTo ?? '',
+            fromPerspective: r.fromPerspective,
+            toPerspective: r.toPerspective,
+          }
+        : null
+    setDraftCharAb(pack(edgeDetail.ab))
+    setDraftCharBa(pack(edgeDetail.ba))
+  }, [edgeDetail, playerLinkCharIdForModal])
 
   const reload = useCallback(async () => {
     const list = await personaDb.listNpcsFor(main.id)
@@ -406,7 +466,10 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
     setNewRelRelation('')
     setNewRelFromSee('')
     setNewRelToSee('')
+    setNewRelFromCallsTo('')
     setGraphEditorTab('you')
+    setEditingGraphPlayerLinkId(null)
+    setEditingGraphRelId(null)
     setGraphEditorOpen(true)
   }
 
@@ -421,6 +484,8 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
       await personaDb.bulkPutRelationships(draftRels.map((r) => ({ ...r, isPlayerIdentity: r.isPlayerIdentity ?? false })))
       await personaDb.putPlayerNetworkLinks(main.id, draftPlayerLinks)
       await reload()
+      setEditingGraphPlayerLinkId(null)
+      setEditingGraphRelId(null)
       setGraphEditorOpen(false)
     } finally {
       setGraphEditorSaving(false)
@@ -607,10 +672,6 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
         (() => {
           const fromName = characterIdToName.get(edgeDetail.aId) ?? '未知角色'
           const toName = characterIdToName.get(edgeDetail.bId) ?? '未知角色'
-          const abRel = edgeDetail.ab?.relation || '—'
-          const baRel = edgeDetail.ba?.relation || '—'
-          const abText = edgeDetail.ab?.fromPerspective || edgeDetail.ba?.toPerspective || '—'
-          const baText = edgeDetail.ba?.fromPerspective || edgeDetail.ab?.toPerspective || '—'
           const plink =
             playerLinkCharIdForModal != null
               ? playerLinks.find((l) => l.characterId === playerLinkCharIdForModal)
@@ -635,43 +696,121 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                     「你」与「{charNameForYou}」
                   </p>
                   <p className="mt-2 text-center text-[11px]" style={{ color: '#8e8e8e' }}>
-                    以下为生成内容（对方视角）；你对对方的看法请在下方填写并保存。
+                    默认仅浏览；点「编辑」后可改文案，保存后写回人脉。
                   </p>
-                  <div className="mt-4 rounded-xl border bg-[#fafafa] p-3" style={{ borderColor: '#e5e5e5' }}>
-                    <p className="text-[12px] font-medium" style={{ color: '#525252' }}>
-                      【{charNameForYou}看「你」】（只读）
-                    </p>
-                    <p className="mt-2 text-[13px] leading-relaxed" style={{ color: '#262626' }}>
-                      {plink.theySeeYou.trim() || '—'}
-                    </p>
-                    <p className="mt-3 text-[12px]" style={{ color: '#8e8e8e' }}>
-                      关系词（对方→你）：「{plink.relationThemToYou.trim() || '—'}」
-                    </p>
-                  </div>
-                  <div className="mt-4">
-                    <p className="text-[12px] font-medium" style={{ color: '#262626' }}>
-                      【你看{charNameForYou}】
-                    </p>
-                    <textarea
-                      value={draftYouSee}
-                      onChange={(e) => setDraftYouSee(e.target.value)}
-                      rows={3}
-                      placeholder="填写你对该角色的看法…"
-                      className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-[13px] outline-none"
+                  <div className="mt-3 flex justify-center">
+                    <button
+                      type="button"
+                      className="rounded-full border px-4 py-1.5 text-[12px] font-medium transition-all duration-200 ease-out hover:bg-[#fafafa]"
                       style={{ borderColor: '#dbdbdb', color: '#262626' }}
-                    />
-                    <p className="mt-3 text-[12px] font-medium" style={{ color: '#262626' }}>
-                      关系词（你→对方，连线中间显示）
-                    </p>
-                    <input
-                      type="text"
-                      value={draftYouRel}
-                      onChange={(e) => setDraftYouRel(e.target.value)}
-                      placeholder="如：朋友、熟人…"
-                      className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-[13px] outline-none"
-                      style={{ borderColor: '#dbdbdb', color: '#262626' }}
-                    />
+                      onClick={() => setEdgePlayerFormUnlocked((v) => !v)}
+                    >
+                      {edgePlayerFormUnlocked ? '完成' : '编辑'}
+                    </button>
                   </div>
+                  {edgePlayerFormUnlocked ? (
+                    <>
+                      <div className="mt-4 rounded-xl border bg-[#fafafa] p-3" style={{ borderColor: '#e5e5e5' }}>
+                        <p className="text-[12px] font-medium" style={{ color: '#525252' }}>
+                          【{charNameForYou}看「你」】
+                        </p>
+                        <textarea
+                          value={draftTheySeeYou}
+                          onChange={(e) => setDraftTheySeeYou(e.target.value)}
+                          rows={3}
+                          placeholder="对方视角下对你的看法…"
+                          className="mt-2 w-full rounded-lg border bg-white px-2 py-1.5 text-[13px] outline-none"
+                          style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                        />
+                        <label className="mt-3 block text-[11px] font-medium" style={{ color: '#737373' }}>
+                          关系词（对方→你，连线中间）
+                          <input
+                            type="text"
+                            value={draftThemRel}
+                            onChange={(e) => setDraftThemRel(e.target.value)}
+                            className="mt-1 w-full rounded-lg border bg-white px-2 py-1.5 text-[13px] outline-none"
+                            style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                          />
+                        </label>
+                        <label className="mt-3 block text-[11px] font-medium" style={{ color: '#737373' }}>
+                          Ta 如何称呼你（与关系词不同，侧重当面怎么叫你）
+                          <input
+                            type="text"
+                            value={draftTheyCallYou}
+                            onChange={(e) => setDraftTheyCallYou(e.target.value)}
+                            className="mt-1 w-full rounded-lg border bg-white px-2 py-1.5 text-[13px] outline-none"
+                            style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                          />
+                        </label>
+                      </div>
+                      <div className="mt-4">
+                        <p className="text-[12px] font-medium" style={{ color: '#262626' }}>
+                          【你看{charNameForYou}】
+                        </p>
+                        <textarea
+                          value={draftYouSee}
+                          onChange={(e) => setDraftYouSee(e.target.value)}
+                          rows={3}
+                          placeholder="填写你对该角色的看法…"
+                          className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-[13px] outline-none"
+                          style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                        />
+                        <p className="mt-3 text-[12px] font-medium" style={{ color: '#262626' }}>
+                          关系词（你→对方，连线中间显示）
+                        </p>
+                        <input
+                          type="text"
+                          value={draftYouRel}
+                          onChange={(e) => setDraftYouRel(e.target.value)}
+                          placeholder="如：朋友、熟人…"
+                          className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-[13px] outline-none"
+                          style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                        />
+                        <p className="mt-3 text-[12px] font-medium" style={{ color: '#262626' }}>
+                          你如何称呼对方（可自由填写；人脉 AI 不会预填此项）
+                        </p>
+                        <input
+                          type="text"
+                          value={draftYouCallThem}
+                          onChange={(e) => setDraftYouCallThem(e.target.value)}
+                          placeholder="如：师兄、全名、外号…"
+                          className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-[13px] outline-none"
+                          style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    (() => {
+                      const d = (s: string) => (String(s || '').trim() ? String(s).trim() : '—')
+                      return (
+                        <div
+                          className="mt-4 space-y-2 rounded-xl border px-3 py-3 text-[13px] leading-relaxed"
+                          style={{ borderColor: '#e5e5e5', background: '#fafafa', color: '#262626' }}
+                        >
+                          <p>
+                            <span className="text-[11px] font-medium text-[#737373]">对方→你</span> {d(draftThemRel)}
+                          </p>
+                          <p>
+                            <span className="text-[11px] font-medium text-[#737373]">对方称你</span> {d(draftTheyCallYou)}
+                          </p>
+                          <p className="text-[12px]">
+                            <span className="text-[11px] font-medium text-[#737373]">【{charNameForYou}看你】</span>
+                            <span className="mt-0.5 block whitespace-pre-wrap">{d(draftTheySeeYou)}</span>
+                          </p>
+                          <p>
+                            <span className="text-[11px] font-medium text-[#737373]">你→对方</span> {d(draftYouRel)}
+                          </p>
+                          <p>
+                            <span className="text-[11px] font-medium text-[#737373]">你称对方</span> {d(draftYouCallThem)}
+                          </p>
+                          <p className="text-[12px]">
+                            <span className="text-[11px] font-medium text-[#737373]">【你看{charNameForYou}】</span>
+                            <span className="mt-0.5 block whitespace-pre-wrap">{d(draftYouSee)}</span>
+                          </p>
+                        </div>
+                      )
+                    })()
+                  )}
                   <button
                     type="button"
                     disabled={savingPlayerView}
@@ -687,6 +826,10 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                                   ...l,
                                   relationYouToThem: draftYouRel.trim(),
                                   youSeeThem: draftYouSee.trim(),
+                                  youCallThem: draftYouCallThem.trim(),
+                                  theyCallYou: draftTheyCallYou.trim(),
+                                  theySeeYou: draftTheySeeYou.trim(),
+                                  relationThemToYou: draftThemRel.trim(),
                                 }
                               : l,
                           )
@@ -698,7 +841,7 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                       })()
                     }}
                   >
-                    {savingPlayerView ? '保存中…' : '保存你对对方的看法'}
+                    {savingPlayerView ? '保存中…' : '保存本条连线'}
                   </button>
                   <button
                     type="button"
@@ -743,28 +886,226 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
             <div
               className="fixed inset-0 z-[1200] flex items-center justify-center px-4"
               style={{ background: 'rgba(0,0,0,0.45)' }}
-              onClick={() => setEdgeDetail(null)}
+              onClick={() => !savingCharEdge && setEdgeDetail(null)}
             >
               <div
-                className="w-full max-w-md rounded-2xl border bg-white p-5"
+                className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border bg-white p-5"
                 style={{ borderColor: '#dbdbdb' }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <p className="text-center text-[15px] font-semibold" style={{ color: '#262626' }}>
-                  双向关系
+                  编辑关系与看法
                 </p>
-                <p className="mt-3 text-[13px] leading-relaxed" style={{ color: '#262626' }}>
-                  【{fromName}看{toName}】：{abText}
+                <p className="mt-2 text-center text-[11px] leading-relaxed" style={{ color: '#8e8e8e' }}>
+                  默认仅浏览；点「编辑」后可改文案。若某方向无记录，请在「手动编辑关系图」→「角色与 NPC」补充有向边。
                 </p>
-                <p className="mt-2 text-[13px] leading-relaxed" style={{ color: '#262626' }}>
-                  【{toName}看{fromName}】：{baText}
-                </p>
-                <p className="mt-2 text-center text-[12px]" style={{ color: '#8e8e8e' }}>
-                  关系：{fromName}→{toName}「{abRel}」 · {toName}→{fromName}「{baRel}」
-                </p>
+                <div className="mt-3 flex justify-center">
+                  <button
+                    type="button"
+                    className="rounded-full border px-4 py-1.5 text-[12px] font-medium transition-all duration-200 ease-out hover:bg-[#fafafa]"
+                    style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                    onClick={() => setEdgeCharFormUnlocked((v) => !v)}
+                  >
+                    {edgeCharFormUnlocked ? '完成' : '编辑'}
+                  </button>
+                </div>
+                {!draftCharAb && !draftCharBa ? (
+                  <p className="mt-4 text-center text-[13px]" style={{ color: '#8e8e8e' }}>
+                    当前连线在数据库中尚无对应关系记录。
+                  </p>
+                ) : null}
+                {(() => {
+                  const d = (s: string) => (String(s || '').trim() ? String(s).trim() : '—')
+                  return edgeCharFormUnlocked ? (
+                    <>
+                      {draftCharAb && edgeDetail.ab ? (
+                        <div className="mt-4 rounded-xl border bg-[#fafafa] p-3" style={{ borderColor: '#e5e5e5' }}>
+                          <p className="text-[12px] font-semibold" style={{ color: '#262626' }}>
+                            {fromName} → {toName}
+                          </p>
+                          <label className="mt-2 block text-[11px] font-medium" style={{ color: '#737373' }}>
+                            关系词（连线中间）
+                            <input
+                              value={draftCharAb.relation}
+                              onChange={(e) => setDraftCharAb((x) => (x ? { ...x, relation: e.target.value } : x))}
+                              className="mt-1 w-full rounded-lg border bg-white px-2 py-1.5 text-[13px] outline-none"
+                              style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                            />
+                          </label>
+                          <label className="mt-2 block text-[11px] font-medium" style={{ color: '#737373' }}>
+                            {fromName} 如何称呼 {toName}
+                            <input
+                              value={draftCharAb.fromCallsTo}
+                              onChange={(e) => setDraftCharAb((x) => (x ? { ...x, fromCallsTo: e.target.value } : x))}
+                              className="mt-1 w-full rounded-lg border bg-white px-2 py-1.5 text-[13px] outline-none"
+                              style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                            />
+                          </label>
+                          <label className="mt-2 block text-[11px] font-medium" style={{ color: '#737373' }}>
+                            【{fromName}看{toName}】
+                            <textarea
+                              value={draftCharAb.fromPerspective}
+                              onChange={(e) => setDraftCharAb((x) => (x ? { ...x, fromPerspective: e.target.value } : x))}
+                              rows={3}
+                              className="mt-1 w-full resize-y rounded-lg border bg-white px-2 py-1.5 text-[13px] outline-none"
+                              style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                            />
+                          </label>
+                          <label className="mt-2 block text-[11px] font-medium" style={{ color: '#737373' }}>
+                            【{toName}看{fromName}】
+                            <textarea
+                              value={draftCharAb.toPerspective}
+                              onChange={(e) => setDraftCharAb((x) => (x ? { ...x, toPerspective: e.target.value } : x))}
+                              rows={3}
+                              className="mt-1 w-full resize-y rounded-lg border bg-white px-2 py-1.5 text-[13px] outline-none"
+                              style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                      {draftCharBa && edgeDetail.ba ? (
+                        <div className="mt-4 rounded-xl border bg-[#fafafa] p-3" style={{ borderColor: '#e5e5e5' }}>
+                          <p className="text-[12px] font-semibold" style={{ color: '#262626' }}>
+                            {toName} → {fromName}
+                          </p>
+                          <label className="mt-2 block text-[11px] font-medium" style={{ color: '#737373' }}>
+                            关系词（连线中间）
+                            <input
+                              value={draftCharBa.relation}
+                              onChange={(e) => setDraftCharBa((x) => (x ? { ...x, relation: e.target.value } : x))}
+                              className="mt-1 w-full rounded-lg border bg-white px-2 py-1.5 text-[13px] outline-none"
+                              style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                            />
+                          </label>
+                          <label className="mt-2 block text-[11px] font-medium" style={{ color: '#737373' }}>
+                            {toName} 如何称呼 {fromName}
+                            <input
+                              value={draftCharBa.fromCallsTo}
+                              onChange={(e) => setDraftCharBa((x) => (x ? { ...x, fromCallsTo: e.target.value } : x))}
+                              className="mt-1 w-full rounded-lg border bg-white px-2 py-1.5 text-[13px] outline-none"
+                              style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                            />
+                          </label>
+                          <label className="mt-2 block text-[11px] font-medium" style={{ color: '#737373' }}>
+                            【{toName}看{fromName}】
+                            <textarea
+                              value={draftCharBa.fromPerspective}
+                              onChange={(e) => setDraftCharBa((x) => (x ? { ...x, fromPerspective: e.target.value } : x))}
+                              rows={3}
+                              className="mt-1 w-full resize-y rounded-lg border bg-white px-2 py-1.5 text-[13px] outline-none"
+                              style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                            />
+                          </label>
+                          <label className="mt-2 block text-[11px] font-medium" style={{ color: '#737373' }}>
+                            【{fromName}看{toName}】
+                            <textarea
+                              value={draftCharBa.toPerspective}
+                              onChange={(e) => setDraftCharBa((x) => (x ? { ...x, toPerspective: e.target.value } : x))}
+                              rows={3}
+                              className="mt-1 w-full resize-y rounded-lg border bg-white px-2 py-1.5 text-[13px] outline-none"
+                              style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      {draftCharAb && edgeDetail.ab ? (
+                        <div
+                          className="mt-4 space-y-2 rounded-xl border px-3 py-3 text-[13px] leading-relaxed"
+                          style={{ borderColor: '#e5e5e5', background: '#fafafa', color: '#262626' }}
+                        >
+                          <p className="text-[12px] font-semibold">{fromName} → {toName}</p>
+                          <p>
+                            <span className="text-[11px] font-medium text-[#737373]">关系词</span> {d(draftCharAb.relation)}
+                          </p>
+                          <p>
+                            <span className="text-[11px] font-medium text-[#737373]">
+                              {fromName} 称呼 {toName}
+                            </span>{' '}
+                            {d(draftCharAb.fromCallsTo)}
+                          </p>
+                          <p className="text-[12px]">
+                            <span className="text-[11px] font-medium text-[#737373]">【{fromName}看{toName}】</span>
+                            <span className="mt-0.5 block whitespace-pre-wrap">{d(draftCharAb.fromPerspective)}</span>
+                          </p>
+                          <p className="text-[12px]">
+                            <span className="text-[11px] font-medium text-[#737373]">【{toName}看{fromName}】</span>
+                            <span className="mt-0.5 block whitespace-pre-wrap">{d(draftCharAb.toPerspective)}</span>
+                          </p>
+                        </div>
+                      ) : null}
+                      {draftCharBa && edgeDetail.ba ? (
+                        <div
+                          className="mt-4 space-y-2 rounded-xl border px-3 py-3 text-[13px] leading-relaxed"
+                          style={{ borderColor: '#e5e5e5', background: '#fafafa', color: '#262626' }}
+                        >
+                          <p className="text-[12px] font-semibold">{toName} → {fromName}</p>
+                          <p>
+                            <span className="text-[11px] font-medium text-[#737373]">关系词</span> {d(draftCharBa.relation)}
+                          </p>
+                          <p>
+                            <span className="text-[11px] font-medium text-[#737373]">
+                              {toName} 称呼 {fromName}
+                            </span>{' '}
+                            {d(draftCharBa.fromCallsTo)}
+                          </p>
+                          <p className="text-[12px]">
+                            <span className="text-[11px] font-medium text-[#737373]">【{toName}看{fromName}】</span>
+                            <span className="mt-0.5 block whitespace-pre-wrap">{d(draftCharBa.fromPerspective)}</span>
+                          </p>
+                          <p className="text-[12px]">
+                            <span className="text-[11px] font-medium text-[#737373]">【{fromName}看{toName}】</span>
+                            <span className="mt-0.5 block whitespace-pre-wrap">{d(draftCharBa.toPerspective)}</span>
+                          </p>
+                        </div>
+                      ) : null}
+                    </>
+                  )
+                })()}
                 <button
                   type="button"
-                  className="mt-4 w-full rounded-xl border py-2 text-[13px]"
+                  disabled={savingCharEdge || (!draftCharAb && !draftCharBa)}
+                  className="mt-4 w-full rounded-xl py-2.5 text-[13px] font-medium text-white disabled:opacity-50"
+                  style={{ background: '#000000' }}
+                  onClick={() => {
+                    void (async () => {
+                      if (!edgeDetail) return
+                      setSavingCharEdge(true)
+                      try {
+                        if (draftCharAb && edgeDetail.ab) {
+                          await personaDb.putRelationship({
+                            ...edgeDetail.ab,
+                            relation: draftCharAb.relation.trim(),
+                            fromCallsTo: draftCharAb.fromCallsTo.trim(),
+                            fromPerspective: draftCharAb.fromPerspective.trim(),
+                            toPerspective: draftCharAb.toPerspective.trim(),
+                          })
+                        }
+                        if (draftCharBa && edgeDetail.ba) {
+                          await personaDb.putRelationship({
+                            ...edgeDetail.ba,
+                            relation: draftCharBa.relation.trim(),
+                            fromCallsTo: draftCharBa.fromCallsTo.trim(),
+                            fromPerspective: draftCharBa.fromPerspective.trim(),
+                            toPerspective: draftCharBa.toPerspective.trim(),
+                          })
+                        }
+                        await reload()
+                        setEdgeDetail(null)
+                      } finally {
+                        setSavingCharEdge(false)
+                      }
+                    })()
+                  }}
+                >
+                  {savingCharEdge ? '保存中…' : '保存修改'}
+                </button>
+                <button
+                  type="button"
+                  disabled={savingCharEdge}
+                  className="mt-2 w-full rounded-xl border py-2 text-[13px]"
                   style={{ borderColor: '#dbdbdb', color: '#262626' }}
                   onClick={() => setEdgeDetail(null)}
                 >
@@ -781,7 +1122,11 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
           className="fixed inset-0 z-[1210] flex items-end justify-center px-0 sm:items-center sm:px-4"
           style={{ background: GE.overlay }}
           onClick={() => {
-            if (!graphEditorSaving) setGraphEditorOpen(false)
+            if (!graphEditorSaving) {
+              setEditingGraphPlayerLinkId(null)
+              setEditingGraphRelId(null)
+              setGraphEditorOpen(false)
+            }
           }}
         >
           <div
@@ -801,7 +1146,7 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                 手动编辑关系图
               </p>
               <p className="mx-auto mt-2 max-w-md text-center text-[12px] leading-relaxed" style={{ color: GE.sub }}>
-                编辑「你」与各角色的连线文案，以及角色之间的有向关系。保存后画布与连线标签会同步。
+                编辑「你」与各角色的关系词、互相如何称呼与叙述，以及角色之间的有向关系与称呼。保存后画布与连线标签会同步。你对他人怎么称呼仅在此手动填写，人脉 AI 不会代写。
               </p>
             </header>
 
@@ -814,6 +1159,8 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                   type="button"
                   onClick={() => {
                     setGraphEditorTab('you')
+                    setEditingGraphPlayerLinkId(null)
+                    setEditingGraphRelId(null)
                     setGraphDdOpen(null)
                   }}
                   className="min-w-0 flex-1 rounded-[10px] px-3 py-2.5 text-[13px] font-medium transition-all duration-200 ease-out"
@@ -829,6 +1176,8 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                   type="button"
                   onClick={() => {
                     setGraphEditorTab('between')
+                    setEditingGraphPlayerLinkId(null)
+                    setEditingGraphRelId(null)
                     setGraphDdOpen(null)
                   }}
                   className="min-w-0 flex-1 rounded-[10px] px-3 py-2.5 text-[13px] font-medium transition-all duration-200 ease-out"
@@ -904,18 +1253,22 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                       style={{ background: GE.text }}
                       onClick={() => {
                         if (!newPlCharId || !availPlCharIds.includes(newPlCharId)) return
+                        const newLinkId = uid('pl')
                         const nextLinks: PlayerNetworkLink[] = [
                           ...draftPlayerLinks,
                           {
-                            id: uid('pl'),
+                            id: newLinkId,
                             characterId: newPlCharId,
                             relationYouToThem: '',
                             relationThemToYou: '',
                             youSeeThem: '',
                             theySeeYou: '',
+                            youCallThem: '',
+                            theyCallYou: '',
                           },
                         ]
                         setDraftPlayerLinks(nextLinks)
+                        setEditingGraphPlayerLinkId(newLinkId)
                         setGraphDdOpen(null)
                       }}
                     >
@@ -934,81 +1287,176 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                   <div className="space-y-3">
                     {draftPlayerLinks.map((link) => {
                       const nm = characterIdToName.get(link.characterId) ?? link.characterId
+                      const rowEdit = editingGraphPlayerLinkId === link.id
+                      const dash = (s: string) => (String(s || '').trim() ? String(s).trim() : '—')
                       return (
                         <div
                           key={link.id}
                           className="rounded-[10px] border p-3"
-                          style={{ borderColor: GE.border, background: '#fafafa' }}
+                          style={{
+                            borderColor: GE.border,
+                            background: rowEdit ? '#fafafa' : GE.card,
+                            boxShadow: rowEdit ? undefined : '0 1px 2px rgba(0,0,0,0.04)',
+                          }}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-[13px] font-semibold" style={{ color: GE.text }}>
                               你 ↔ {nm}
                             </p>
-                            <button
-                              type="button"
-                              className="rounded-lg px-2 py-1 text-[12px] transition-all duration-200 ease-out hover:bg-black/[0.04]"
-                              style={{ color: GE.sub }}
-                              onClick={() => setDraftPlayerLinks((prev) => prev.filter((l) => l.id !== link.id))}
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                className="rounded-lg border px-2.5 py-1 text-[12px] font-medium transition-all duration-200 ease-out hover:bg-[#fafafa]"
+                                style={{ borderColor: GE.border, color: GE.text }}
+                                onClick={() => setEditingGraphPlayerLinkId(rowEdit ? null : link.id)}
+                              >
+                                {rowEdit ? '完成' : '编辑'}
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-lg px-2 py-1 text-[12px] transition-all duration-200 ease-out hover:bg-black/[0.04]"
+                                style={{ color: GE.sub }}
+                                onClick={() => {
+                                  setDraftPlayerLinks((prev) => prev.filter((l) => l.id !== link.id))
+                                  if (editingGraphPlayerLinkId === link.id) setEditingGraphPlayerLinkId(null)
+                                }}
+                              >
+                                移除
+                              </button>
+                            </div>
+                          </div>
+                          {rowEdit ? (
+                            <>
+                              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                <label className="block text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  关系词（你→对方）
+                                  <input
+                                    value={link.relationYouToThem}
+                                    onChange={(e) =>
+                                      setDraftPlayerLinks((prev) =>
+                                        prev.map((l) => (l.id === link.id ? { ...l, relationYouToThem: e.target.value } : l)),
+                                      )
+                                    }
+                                    className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
+                                    style={{ borderColor: GE.border, color: GE.text }}
+                                  />
+                                </label>
+                                <label className="block text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  关系词（对方→你）
+                                  <input
+                                    value={link.relationThemToYou}
+                                    onChange={(e) =>
+                                      setDraftPlayerLinks((prev) =>
+                                        prev.map((l) => (l.id === link.id ? { ...l, relationThemToYou: e.target.value } : l)),
+                                      )
+                                    }
+                                    className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
+                                    style={{ borderColor: GE.border, color: GE.text }}
+                                  />
+                                </label>
+                              </div>
+                              <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
+                                你看对方
+                                <textarea
+                                  value={link.youSeeThem}
+                                  onChange={(e) =>
+                                    setDraftPlayerLinks((prev) =>
+                                      prev.map((l) => (l.id === link.id ? { ...l, youSeeThem: e.target.value } : l)),
+                                    )
+                                  }
+                                  rows={2}
+                                  className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
+                                  style={{ borderColor: GE.border, color: GE.text }}
+                                />
+                              </label>
+                              <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
+                                对方看你
+                                <textarea
+                                  value={link.theySeeYou}
+                                  onChange={(e) =>
+                                    setDraftPlayerLinks((prev) =>
+                                      prev.map((l) => (l.id === link.id ? { ...l, theySeeYou: e.target.value } : l)),
+                                    )
+                                  }
+                                  rows={2}
+                                  className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
+                                  style={{ borderColor: GE.border, color: GE.text }}
+                                />
+                              </label>
+                              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                <label className="block text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  你如何称呼对方（仅手动）
+                                  <input
+                                    value={link.youCallThem}
+                                    onChange={(e) =>
+                                      setDraftPlayerLinks((prev) =>
+                                        prev.map((l) => (l.id === link.id ? { ...l, youCallThem: e.target.value } : l)),
+                                      )
+                                    }
+                                    placeholder="人脉 AI 不会填写此项"
+                                    className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
+                                    style={{ borderColor: GE.border, color: GE.text }}
+                                  />
+                                </label>
+                                <label className="block text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  对方如何称呼你
+                                  <input
+                                    value={link.theyCallYou}
+                                    onChange={(e) =>
+                                      setDraftPlayerLinks((prev) =>
+                                        prev.map((l) => (l.id === link.id ? { ...l, theyCallYou: e.target.value } : l)),
+                                      )
+                                    }
+                                    placeholder="可手动改；生成人脉时可预填"
+                                    className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
+                                    style={{ borderColor: GE.border, color: GE.text }}
+                                  />
+                                </label>
+                              </div>
+                            </>
+                          ) : (
+                            <div
+                              className="mt-3 space-y-2 rounded-[10px] border px-3 py-2.5 text-[13px] leading-relaxed"
+                              style={{ borderColor: GE.border, background: '#fafafa', color: GE.text }}
                             >
-                              移除
-                            </button>
-                          </div>
-                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                            <label className="block text-[11px] font-medium" style={{ color: GE.sub }}>
-                              关系词（你→对方）
-                              <input
-                                value={link.relationYouToThem}
-                                onChange={(e) =>
-                                  setDraftPlayerLinks((prev) =>
-                                    prev.map((l) => (l.id === link.id ? { ...l, relationYouToThem: e.target.value } : l)),
-                                  )
-                                }
-                                className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
-                                style={{ borderColor: GE.border, color: GE.text }}
-                              />
-                            </label>
-                            <label className="block text-[11px] font-medium" style={{ color: GE.sub }}>
-                              关系词（对方→你）
-                              <input
-                                value={link.relationThemToYou}
-                                onChange={(e) =>
-                                  setDraftPlayerLinks((prev) =>
-                                    prev.map((l) => (l.id === link.id ? { ...l, relationThemToYou: e.target.value } : l)),
-                                  )
-                                }
-                                className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
-                                style={{ borderColor: GE.border, color: GE.text }}
-                              />
-                            </label>
-                          </div>
-                          <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
-                            你看对方
-                            <textarea
-                              value={link.youSeeThem}
-                              onChange={(e) =>
-                                setDraftPlayerLinks((prev) =>
-                                  prev.map((l) => (l.id === link.id ? { ...l, youSeeThem: e.target.value } : l)),
-                                )
-                              }
-                              rows={2}
-                              className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
-                              style={{ borderColor: GE.border, color: GE.text }}
-                            />
-                          </label>
-                          <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
-                            对方看你
-                            <textarea
-                              value={link.theySeeYou}
-                              onChange={(e) =>
-                                setDraftPlayerLinks((prev) =>
-                                  prev.map((l) => (l.id === link.id ? { ...l, theySeeYou: e.target.value } : l)),
-                                )
-                              }
-                              rows={2}
-                              className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
-                              style={{ borderColor: GE.border, color: GE.text }}
-                            />
-                          </label>
+                              <p>
+                                <span className="text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  你→对方
+                                </span>{' '}
+                                {dash(link.relationYouToThem)}
+                              </p>
+                              <p>
+                                <span className="text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  对方→你
+                                </span>{' '}
+                                {dash(link.relationThemToYou)}
+                              </p>
+                              <p>
+                                <span className="text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  你称对方
+                                </span>{' '}
+                                {dash(link.youCallThem)}
+                              </p>
+                              <p>
+                                <span className="text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  对方称你
+                                </span>{' '}
+                                {dash(link.theyCallYou)}
+                              </p>
+                              <p className="text-[12px]">
+                                <span className="text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  你看对方
+                                </span>
+                                <span className="mt-0.5 block whitespace-pre-wrap">{dash(link.youSeeThem)}</span>
+                              </p>
+                              <p className="text-[12px]">
+                                <span className="text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  对方看你
+                                </span>
+                                <span className="mt-0.5 block whitespace-pre-wrap">{dash(link.theySeeYou)}</span>
+                              </p>
+                            </div>
+                          )}
                         </div>
                       )
                     })}
@@ -1103,6 +1551,13 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                       className="mt-3 w-full rounded-[10px] border bg-white px-3 py-2.5 text-[13px] outline-none transition-all duration-200 ease-out"
                       style={{ borderColor: GE.border, color: GE.text }}
                     />
+                    <input
+                      value={newRelFromCallsTo}
+                      onChange={(e) => setNewRelFromCallsTo(e.target.value)}
+                      placeholder="起点如何称呼终点（可选）"
+                      className="mt-2 w-full rounded-[10px] border bg-white px-3 py-2.5 text-[13px] outline-none transition-all duration-200 ease-out"
+                      style={{ borderColor: GE.border, color: GE.text }}
+                    />
                     <textarea
                       value={newRelFromSee}
                       onChange={(e) => setNewRelFromSee(e.target.value)}
@@ -1125,20 +1580,24 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                       style={{ borderColor: GE.text, color: GE.text, background: GE.card }}
                       onClick={() => {
                         if (!newRelFrom || !newRelTo || newRelFrom === newRelTo) return
+                        const newRelId = uid('rel')
                         setDraftRels((prev) => [
                           ...prev,
                           {
-                            id: uid('rel'),
+                            id: newRelId,
                             fromCharacterId: newRelFrom,
                             toCharacterId: newRelTo,
                             relation: newRelRelation.trim(),
                             fromPerspective: newRelFromSee.trim(),
                             toPerspective: newRelToSee.trim(),
+                            fromCallsTo: newRelFromCallsTo.trim(),
                           },
                         ])
+                        setEditingGraphRelId(newRelId)
                         setNewRelRelation('')
                         setNewRelFromSee('')
                         setNewRelToSee('')
+                        setNewRelFromCallsTo('')
                       }}
                     >
                       加入列表
@@ -1159,64 +1618,139 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                       A→B 与 B→A 为两条独立记录，可分别编辑关系词与两侧叙述。
                     </p>
                     <div className="space-y-3">
-                      {draftRels.map((r) => (
-                        <div
-                          key={r.id}
-                          className="rounded-[10px] border p-3"
-                          style={{ borderColor: GE.border, background: '#fafafa' }}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-[13px] font-semibold" style={{ color: GE.text }}>
-                              {characterIdToName.get(r.fromCharacterId) ?? r.fromCharacterId}
-                              <span style={{ color: GE.faint }}> → </span>
-                              {characterIdToName.get(r.toCharacterId) ?? r.toCharacterId}
-                            </p>
-                            <button
-                              type="button"
-                              className="rounded-lg px-2 py-1 text-[12px] transition-all duration-200 ease-out hover:bg-black/[0.04]"
-                              style={{ color: GE.sub }}
-                              onClick={() => setDraftRels((prev) => prev.filter((x) => x.id !== r.id))}
-                            >
-                              删除
-                            </button>
+                      {draftRels.map((r) => {
+                        const rowEdit = editingGraphRelId === r.id
+                        const dash = (s: string) => (String(s || '').trim() ? String(s).trim() : '—')
+                        const fromNm = characterIdToName.get(r.fromCharacterId) ?? r.fromCharacterId
+                        const toNm = characterIdToName.get(r.toCharacterId) ?? r.toCharacterId
+                        return (
+                          <div
+                            key={r.id}
+                            className="rounded-[10px] border p-3"
+                            style={{
+                              borderColor: GE.border,
+                              background: rowEdit ? '#fafafa' : GE.card,
+                              boxShadow: rowEdit ? undefined : '0 1px 2px rgba(0,0,0,0.04)',
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-[13px] font-semibold" style={{ color: GE.text }}>
+                                {fromNm}
+                                <span style={{ color: GE.faint }}> → </span>
+                                {toNm}
+                              </p>
+                              <div className="flex shrink-0 items-center gap-1">
+                                <button
+                                  type="button"
+                                  className="rounded-lg border px-2.5 py-1 text-[12px] font-medium transition-all duration-200 ease-out hover:bg-[#fafafa]"
+                                  style={{ borderColor: GE.border, color: GE.text }}
+                                  onClick={() => setEditingGraphRelId(rowEdit ? null : r.id)}
+                                >
+                                  {rowEdit ? '完成' : '编辑'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-lg px-2 py-1 text-[12px] transition-all duration-200 ease-out hover:bg-black/[0.04]"
+                                  style={{ color: GE.sub }}
+                                  onClick={() => {
+                                    setDraftRels((prev) => prev.filter((x) => x.id !== r.id))
+                                    if (editingGraphRelId === r.id) setEditingGraphRelId(null)
+                                  }}
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            </div>
+                            {rowEdit ? (
+                              <>
+                                <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  关系词（连线中间）
+                                  <input
+                                    value={r.relation}
+                                    onChange={(e) =>
+                                      setDraftRels((prev) => prev.map((x) => (x.id === r.id ? { ...x, relation: e.target.value } : x)))
+                                    }
+                                    className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
+                                    style={{ borderColor: GE.border, color: GE.text }}
+                                  />
+                                </label>
+                                <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  起点如何称呼终点
+                                  <input
+                                    value={r.fromCallsTo ?? ''}
+                                    onChange={(e) =>
+                                      setDraftRels((prev) =>
+                                        prev.map((x) => (x.id === r.id ? { ...x, fromCallsTo: e.target.value } : x)),
+                                      )
+                                    }
+                                    placeholder="如：哥、李老师"
+                                    className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
+                                    style={{ borderColor: GE.border, color: GE.text }}
+                                  />
+                                </label>
+                                <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  起点视角
+                                  <textarea
+                                    value={r.fromPerspective}
+                                    onChange={(e) =>
+                                      setDraftRels((prev) =>
+                                        prev.map((x) => (x.id === r.id ? { ...x, fromPerspective: e.target.value } : x)),
+                                      )
+                                    }
+                                    rows={2}
+                                    className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
+                                    style={{ borderColor: GE.border, color: GE.text }}
+                                  />
+                                </label>
+                                <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
+                                  终点视角
+                                  <textarea
+                                    value={r.toPerspective}
+                                    onChange={(e) =>
+                                      setDraftRels((prev) =>
+                                        prev.map((x) => (x.id === r.id ? { ...x, toPerspective: e.target.value } : x)),
+                                      )
+                                    }
+                                    rows={2}
+                                    className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
+                                    style={{ borderColor: GE.border, color: GE.text }}
+                                  />
+                                </label>
+                              </>
+                            ) : (
+                              <div
+                                className="mt-3 space-y-2 rounded-[10px] border px-3 py-2.5 text-[13px] leading-relaxed"
+                                style={{ borderColor: GE.border, background: '#fafafa', color: GE.text }}
+                              >
+                                <p>
+                                  <span className="text-[11px] font-medium" style={{ color: GE.sub }}>
+                                    关系词
+                                  </span>{' '}
+                                  {dash(r.relation)}
+                                </p>
+                                <p>
+                                  <span className="text-[11px] font-medium" style={{ color: GE.sub }}>
+                                    {fromNm} 称呼 {toNm}
+                                  </span>{' '}
+                                  {dash(r.fromCallsTo ?? '')}
+                                </p>
+                                <p className="text-[12px]">
+                                  <span className="text-[11px] font-medium" style={{ color: GE.sub }}>
+                                    【{fromNm}看{toNm}】
+                                  </span>
+                                  <span className="mt-0.5 block whitespace-pre-wrap">{dash(r.fromPerspective)}</span>
+                                </p>
+                                <p className="text-[12px]">
+                                  <span className="text-[11px] font-medium" style={{ color: GE.sub }}>
+                                    【{toNm}看{fromNm}】
+                                  </span>
+                                  <span className="mt-0.5 block whitespace-pre-wrap">{dash(r.toPerspective)}</span>
+                                </p>
+                              </div>
+                            )}
                           </div>
-                          <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
-                            关系词（连线中间）
-                            <input
-                              value={r.relation}
-                              onChange={(e) =>
-                                setDraftRels((prev) => prev.map((x) => (x.id === r.id ? { ...x, relation: e.target.value } : x)))
-                              }
-                              className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
-                              style={{ borderColor: GE.border, color: GE.text }}
-                            />
-                          </label>
-                          <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
-                            起点视角
-                            <textarea
-                              value={r.fromPerspective}
-                              onChange={(e) =>
-                                setDraftRels((prev) => prev.map((x) => (x.id === r.id ? { ...x, fromPerspective: e.target.value } : x)))
-                              }
-                              rows={2}
-                              className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
-                              style={{ borderColor: GE.border, color: GE.text }}
-                            />
-                          </label>
-                          <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
-                            终点视角
-                            <textarea
-                              value={r.toPerspective}
-                              onChange={(e) =>
-                                setDraftRels((prev) => prev.map((x) => (x.id === r.id ? { ...x, toPerspective: e.target.value } : x)))
-                              }
-                              rows={2}
-                              className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
-                              style={{ borderColor: GE.border, color: GE.text }}
-                            />
-                          </label>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   </section>
                 </>
@@ -1233,7 +1767,11 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                   disabled={graphEditorSaving}
                   className="flex-1 rounded-[12px] border py-3 text-[13px] font-medium transition-all duration-200 ease-out hover:bg-[#fafafa] disabled:opacity-50"
                   style={{ borderColor: GE.border, color: GE.text, background: GE.card }}
-                  onClick={() => setGraphEditorOpen(false)}
+                  onClick={() => {
+                    setEditingGraphPlayerLinkId(null)
+                    setEditingGraphRelId(null)
+                    setGraphEditorOpen(false)
+                  }}
                 >
                   取消
                 </button>

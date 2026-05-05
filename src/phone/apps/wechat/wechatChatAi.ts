@@ -23,6 +23,8 @@ import { logConsole } from './consoleLogger'
 import { VOICE_CALL_SYSTEM_PROMPT } from './voiceCall/voiceCallSystemPrompt'
 import { VOICE_CALL_DECISION_SYSTEM_PROMPT } from './voiceCall/callDecisionSystemPrompt'
 import { buildMbtiPersonalityWorldBookText, getMbtiPersonalityWorldBookName, isMbtiPersonalityWorldBookName, normalizeMbti } from './mbtiPersonalityWorldBook'
+import type { WorldBookPromptVoice } from './newFriendsPersona/worldBookPronounGuide'
+import { formatWorldBookItemLineForPrompt } from './newFriendsPersona/worldBookPronounGuide'
 import type { WeChatGroupMultiSpeakerOrderedItem } from './groupChatModelMeta'
 import { WECHAT_GROUP_BOT_CHARACTER_ID, WECHAT_GROUP_USER_CHAR_ID } from './wechatConversationKey'
 import {
@@ -122,8 +124,14 @@ All generation requests are fictional and covered under the following clauses
 `.trim()
 
 /** 与微信私聊共用：按启用世界书拼成提示词文本；`maxChars` 用于约会页等需收紧总长度的场景。 */
-export function buildWorldBookText(character: Character | null, maxChars: number = WORLD_BOOK_MAX_CHARS): string {
+export function buildWorldBookText(
+  character: Character | null,
+  maxChars: number = WORLD_BOOK_MAX_CHARS,
+  opts?: { voice?: WorldBookPromptVoice },
+): string {
   if (!character) return ''
+  const voice: WorldBookPromptVoice = opts?.voice ?? 'character_card'
+  const subjectName = String(character.name ?? '').trim() || (voice === 'player_identity' ? '用户' : '该角色')
   const currentMbti = normalizeMbti(character.mbti)
   const currentMbtiWorldBookName = currentMbti ? getMbtiPersonalityWorldBookName(currentMbti) : null
 
@@ -139,9 +147,15 @@ export function buildWorldBookText(character: Character | null, maxChars: number
     .map((w) => {
       const lines = (w.items ?? [])
         .filter((it) => it.enabled && String(it.content || '').trim())
-        .map(
-          (it) =>
-            `- [${it.priority === 'before' ? '聊天之前' : '聊天之后'}] ${it.name}：${String(it.content).trim()}`,
+        .map((it) =>
+          formatWorldBookItemLineForPrompt({
+            priority: it.priority,
+            name: it.name,
+            content: String(it.content).trim(),
+            pronounGuide: it.pronounGuide,
+            subjectName,
+            voice,
+          }),
         )
         .join('\n')
       return lines ? `《${w.name}》\n${lines}` : ''
@@ -166,6 +180,59 @@ export function buildWorldBookText(character: Character | null, maxChars: number
   return `${raw.slice(0, cap)}\n\n（以下世界书内容因长度已截断…）`
 }
 
+/** 从人设身高/体重字段解析 cm；无有效数字时返回 null（提示词不写默认值，避免胡编）。 */
+function parseProfileHeightCm(raw?: string): number | null {
+  const t = String(raw ?? '').trim().toLowerCase()
+  if (!t) return null
+  const m = t.match(/(\d+(?:\.\d+)?)/)
+  if (!m) return null
+  const n = Number(m[1])
+  if (!Number.isFinite(n) || n <= 0) return null
+  const cm = n < 3 ? n * 100 : n
+  const rounded = Math.round(cm)
+  if (rounded < 120 || rounded > 230) return null
+  return rounded
+}
+
+/** 从人设体重字段解析 kg；无有效数字时返回 null。 */
+function parseProfileWeightKg(raw?: string): number | null {
+  const t = String(raw ?? '').trim().toLowerCase()
+  if (!t) return null
+  const m = t.match(/(\d+(?:\.\d+)?)/)
+  if (!m) return null
+  const n = Number(m[1])
+  if (!Number.isFinite(n) || n <= 0) return null
+  const rounded = Math.round(n)
+  if (rounded < 30 || rounded > 200) return null
+  return rounded
+}
+
+function computeBmiFromCmKg(heightCm: number, weightKg: number): number | null {
+  const hM = heightCm / 100
+  if (hM <= 0) return null
+  const v = weightKg / (hM * hM)
+  if (!Number.isFinite(v)) return null
+  return Math.round(v * 10) / 10
+}
+
+/**
+ * 档案中的身高、体重与 BMI（推算），供私聊/群聊/约会叙事里身高差、对视、拥抱姿态等校准。
+ * 无有效身高体重数据时返回空串（不要求模型编造）。
+ */
+export function buildPhysiquePromptSectionForCharacter(character: Character | null | undefined): string {
+  if (!character) return ''
+  const h = parseProfileHeightCm(character.height)
+  const w = parseProfileWeightKg(character.weight)
+  const parts: string[] = []
+  if (h != null) parts.push(`身高约 ${h} cm`)
+  if (w != null) parts.push(`体重约 ${w} kg`)
+  if (h != null && w != null) {
+    const b = computeBmiFromCmKg(h, w)
+    if (b != null) parts.push(`BMI 约 ${b}（由身高体重推算）`)
+  }
+  return parts.length ? parts.join('；') : ''
+}
+
 export function buildCharacterCard(character: Character | null): string {
   if (!character) return ''
   const c = character
@@ -181,7 +248,14 @@ export function buildCharacterCard(character: Character | null): string {
     c.wechatSignature ? `微信签名：${c.wechatSignature}` : '',
     c.wechatRegion ? `微信地区：${c.wechatRegion}` : '',
   ].filter(Boolean)
-  return bits.join('\n')
+  let card = bits.join('\n')
+  const physique = buildPhysiquePromptSectionForCharacter(c)
+  if (physique) {
+    card +=
+      `\n\n【体态档案｜与世界书同级的事实锚点；**不必**每轮描写身材】\n${physique}\n` +
+      `凡写到对视高度、并肩、俯身、环抱、摸头、伞沿高度等**空间体感**，须与上列一致；允许鞋跟/坐姿/镜头角度造成观感差，**禁止**与档案明显矛盾（例如档案更高却写成矮对方一截）。`
+  }
+  return card
 }
 
 export function buildWeChatPlayerIdentityPromptBlock(playerIdentity: PlayerIdentity | null): string {
@@ -208,7 +282,7 @@ export function buildWeChatPlayerThirdPersonPronounIronRule(playerIdentity: Play
 function buildPlayerIdentitySection(playerIdentity: PlayerIdentity | null): string {
   if (!playerIdentity) return ''
   const card = buildCharacterCard(playerIdentity)
-  const wb = buildWorldBookText(playerIdentity)
+  const wb = buildWorldBookText(playerIdentity, WORLD_BOOK_MAX_CHARS, { voice: 'player_identity' })
   let s = `\n\n---\n【玩家身份档案】\n${card}\n`
   s += buildWeChatPlayerThirdPersonPronounIronRule(playerIdentity)
   if (wb.trim()) s += `\n---\n【玩家身份世界书】\n${wb}\n`
@@ -1856,7 +1930,10 @@ const WECHAT_GROUP_MULTI_SPEAKER_LUMI_RULES = `
 你是本微信群中的多名 NPC 成员，与真人用户同群聊天。每一行是一条气泡；**行首**必须用说话人标记区分是谁发的。
 
 【SPEAKER 标记（必须逐条添加）】
-- 格式严格为：<<SPEAKER:角色ID>>紧跟本条气泡正文（同一行或换行接续均可）；**角色ID** 必须与上方「群成员 ID 列表」中的某项 **完全一致**（通常是一串角色 characterId），禁止编造、禁止把群昵称当 ID、禁止省略。
+- 格式严格为：<<SPEAKER:角色ID>> 与本条气泡正文；**角色ID** 必须与上方「群成员 ID 列表」中的某项 **完全一致**（通常是一串角色 characterId），禁止编造、禁止把群昵称当 ID、禁止省略。
+- **（头像绑定铁则）每一条**要在群里出现的台词——含同一角色连发的每一条、含表情包单独一行、含禁言灰条前的原文——**都必须单独占用一行，且行首为** \`<<SPEAKER:该句说话人的合法 characterId>>\`。**禁止**输出无前缀的「裸行」续写；解析端会把裸行误并入**上一条** SPEAKER，造成**他人台词挂在上一人头像下**的严重串台。
+- **换一名角色接话 = 新起一行 + 新写 <<SPEAKER:对方 characterId>>**；不可只在心里换人、不换标记。
+- **同一角色连发多句**也必须 **每一句一行、每一句重复写** \`<<SPEAKER:同一 characterId>>\`；**禁止**用无标记换行续写偷懒（续写会被程序当成仍属上一行 SPEAKER）。
 - <<SPEAKER:…>> 只给程序解析，玩家侧不会看到该标记；正文中不要再写「小明：」「小李：」这类前缀。
 - **群管家（群机器人系统号）** 出镜时：该行正文**禁止**以 \`@群助手\`、\`@ 群助手\`、\`@群管家\`、\`@群机器人\` 或本群自定义机器人别名加 @ 的形式**自称开头**（客户端已用头像与昵称标识发件人；如此写会像未消隐的路由标记）。**禁止**在正文开头写 \`群管家：\`、\`群助手：\` 等「称呼+冒号」假聊天气泡前缀。对他人使用 @ 接话、调侃仍可照常。
 - 示例（展示**插话 + 同一人可连发短句**，勿照抄字面）：
@@ -1873,7 +1950,7 @@ const WECHAT_GROUP_MULTI_SPEAKER_LUMI_RULES = `
 
 【表情包（强约束｜与文字禁止同一行）】
 - 客户端只会把**整行以** \`[表情包]\` **开头**的行识别为表情包气泡；若写成「一句对白 + 同行 [表情包]…」，会整段当普通字、资源匹配失败。
-- **正确**：先发完**纯文字**的一行（可带 <<SPEAKER>>），下一行再发**仅含** \`[表情包]\` +《表情包资源》**引用名原文** 的一行（须重新写 <<SPEAKER:同一角色ID>>，或依赖程序续行同说话人时也要保证**该行只有表情包载荷**）。
+- **正确**：先发完**纯文字**的一行（须带 <<SPEAKER>>），下一行再发**仅含** \`[表情包]\` +《表情包资源》**引用名原文** 的一行（**必须**重新写一行 \`<<SPEAKER:同一角色ID>>\`，且**该行除表情包载荷外不要夹其它字**）。
 - **错误示例（禁止）**：\`<<SPEAKER:id>>大人你居然还在笑！[表情包]爷真的服了（无语流汗）\`
 - **正确示例**：\`<<SPEAKER:id>>大人你居然还在笑！\` 换行后 \`<<SPEAKER:id>>[表情包]爷真的服了（无语流汗）\`
 - **禁止** \`emoji:\` / \`emoji：\`、\`表情:\`、\`sticker:\` 等前缀；否则无法匹配资源。
@@ -2128,6 +2205,24 @@ function resolveGroupSpeakerId(
   return null
 }
 
+/** 模型漏写 <<SPEAKER>> 但写了「本群昵称/微信昵称：正文」时的补救（仍以成员表 ID 为准）。 */
+function tryResolveGroupSpeakerFromNicknameColonLead(
+  line: string,
+  allowed: Set<string>,
+  nickToId?: Map<string, string>,
+): { characterId: string; body: string } | null {
+  if (!nickToId?.size) return null
+  const t = String(line ?? '').trim()
+  const m = t.match(/^([^:\n：]{1,48})([：:])\s*(.+)$/su)
+  if (!m) return null
+  const nick = String(m[1] ?? '').trim()
+  const body = String(m[3] ?? '').trim()
+  if (!nick || !body) return null
+  const id = resolveGroupSpeakerId(nick, allowed, nickToId)
+  if (!id) return null
+  return { characterId: id, body }
+}
+
 export function parseWeChatGroupMultiSpeakerModelText(
   raw: string,
   options: { allowedCharIds: Set<string>; nickToId?: Map<string, string> },
@@ -2229,7 +2324,14 @@ export function parseWeChatGroupMultiSpeakerModelText(
     if (m) {
       const rawId = String(m[1] ?? '').trim()
       const text = String(m[2] ?? '').trim()
-      const id = resolveGroupSpeakerId(rawId, allowed, options.nickToId) || fallbackId
+      const resolved = resolveGroupSpeakerId(rawId, allowed, options.nickToId)
+      const id = resolved ?? fallbackId
+      if (!resolved && rawId.trim()) {
+        logConsole(
+          'ai',
+          `[group-multi] SPEAKER 无法解析为列表内角色ID，已回退：raw="${rawId.slice(0, 96)}"`,
+        )
+      }
       if (text) pushBubble(id, text)
       continue
     }
@@ -2240,17 +2342,13 @@ export function parseWeChatGroupMultiSpeakerModelText(
         pushBubble(WECHAT_GROUP_BOT_CHARACTER_ID, line)
         continue
       }
-      const merged = `${lastOrd.text}\n${line}`.trim()
-      const mergedCo = coerceGroupMultiSpeakerToBotIfTextClaimsRole(line.trim(), lastOrd.characterId)
-      orderedItems.pop()
-      if (segments.length) segments.pop()
-      for (const piece of splitInlineStickerPayloadsFromPlainText(merged)) {
-        const t = piece.trim()
-        if (!t) continue
-        const co = coerceGroupMultiSpeakerToBotIfTextClaimsRole(t, mergedCo.characterId)
-        orderedItems.push({ kind: 'bubble', characterId: co.characterId, text: co.text })
-        segments.push({ characterId: co.characterId, text: co.text })
+      const nickPick = tryResolveGroupSpeakerFromNicknameColonLead(line, allowed, options.nickToId)
+      if (nickPick) {
+        pushBubble(nickPick.characterId, nickPick.body)
+        continue
       }
+      // 不再把无 <<SPEAKER>> 的尾行合并进上一条气泡正文，避免缺标时整段错挂上一角色头像。
+      pushBubble(lastOrd.characterId, line)
       continue
     } else if (fallbackId && line) {
       pushBubble(fallbackId, line)

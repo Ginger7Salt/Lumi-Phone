@@ -80,6 +80,11 @@ function Card({ children }: { children: React.ReactNode }) {
   return <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)]" style={{ background: card }}>{children}</div>
 }
 
+/** 人脉「你↔主角」所在根：主角本人为 id，NPC 为 generatedForCharacterId */
+function networkRootCharacterId(ch: Pick<Character, 'id' | 'generatedForCharacterId'>): string {
+  return (ch.generatedForCharacterId || ch.id).trim()
+}
+
 function TopBar({ title, onBack, right }: { title: string; onBack: () => void; right?: React.ReactNode }) {
   return (
     <div className="sticky top-0 z-30 bg-white px-4" style={{ paddingTop: 'max(10px, env(safe-area-inset-top,0px))', paddingBottom: 10 }}>
@@ -1042,17 +1047,22 @@ function PersonaEditPage({
   const [ioExporting, setIoExporting] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [keyboardInset, setKeyboardInset] = useState(0)
+  /** 主角在剧情/人脉中对用户的称呼（PlayerNetworkLink.theyCallYou，characterId = 根主角 id） */
+  const [protagonistCallsUser, setProtagonistCallsUser] = useState('')
+  const protagonistCallsTouchedRef = useRef(false)
 
   useEffect(() => {
     void (async () => {
       if (draft) {
         setData(draft)
         setDirty(false)
+        protagonistCallsTouchedRef.current = false
         return
       }
       const c = await personaDb.getCharacter(id)
       setData(c)
       setDirty(false)
+      protagonistCallsTouchedRef.current = false
     })()
   }, [draft, id])
 
@@ -1097,6 +1107,23 @@ function PersonaEditPage({
         setLinkedNpcsWbContext(formatLinkedNpcsForWorldBookPrompt(others))
       } catch {
         setLinkedNpcsWbContext('')
+      }
+    })()
+  }, [data?.id, data?.generatedForCharacterId, editTab])
+
+  /** 从人脉同步「主角→用户」称呼；切回基础信息时刷新（人脉页可能已改过）；未改写过本字段时不覆盖本地输入 */
+  useEffect(() => {
+    if (!data?.id || editTab !== 'basic') return
+    if (protagonistCallsTouchedRef.current) return
+    const rootId = networkRootCharacterId(data)
+    if (!rootId) return
+    void (async () => {
+      try {
+        const links = await personaDb.getPlayerNetworkLinks(rootId)
+        const link = links.find((l) => l.characterId === rootId)
+        setProtagonistCallsUser(link?.theyCallYou ?? '')
+      } catch {
+        setProtagonistCallsUser('')
       }
     })()
   }, [data?.id, data?.generatedForCharacterId, editTab])
@@ -1218,6 +1245,32 @@ function PersonaEditPage({
     const identityId = data.playerIdentityId?.trim() || (isNew ? await personaDb.getCurrentIdentityId() : '')
     const next = { ...data, playerIdentityId: identityId || undefined, updatedAt: Date.now() }
     await personaDb.upsertCharacter(next)
+    const rootId = networkRootCharacterId(next)
+    if (rootId) {
+      const links = await personaDb.getPlayerNetworkLinks(rootId)
+      const idx = links.findIndex((l) => l.characterId === rootId)
+      const trimmedCalls = protagonistCallsUser.trim()
+      if (idx >= 0) {
+        const merged = [...links]
+        merged[idx] = { ...merged[idx], theyCallYou: trimmedCalls }
+        await personaDb.putPlayerNetworkLinks(rootId, merged)
+      } else {
+        await personaDb.putPlayerNetworkLinks(rootId, [
+          ...links,
+          {
+            id: uid('pl'),
+            characterId: rootId,
+            relationYouToThem: '',
+            relationThemToYou: '',
+            youSeeThem: '',
+            theySeeYou: '',
+            youCallThem: '',
+            theyCallYou: trimmedCalls,
+          },
+        ])
+      }
+      protagonistCallsTouchedRef.current = false
+    }
     if (isNew && next.generatedForCharacterId) {
       const parentId = next.generatedForCharacterId
       const inNet = await personaDb.listRelationshipsInNetwork([parentId, next.id])
@@ -1232,6 +1285,7 @@ function PersonaEditPage({
           relation: '认识',
           fromPerspective: '',
           toPerspective: '',
+          fromCallsTo: '',
         })
       }
       if (!hasBA) {
@@ -1242,6 +1296,7 @@ function PersonaEditPage({
           relation: '认识',
           fromPerspective: '',
           toPerspective: '',
+          fromCallsTo: '',
         })
       }
       if (extras.length) await personaDb.bulkPutRelationships(extras)
@@ -1581,6 +1636,28 @@ function PersonaEditPage({
                   <Dice5 className="size-5" />
                 </button>
               </div>
+            </label>
+
+            <label className="block">
+              <p className="text-[13px]" style={{ color: sub }}>
+                {data.generatedForCharacterId ? '主角对用户的称呼' : '对用户的称呼'}
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed" style={{ color: sub }}>
+                {data.generatedForCharacterId
+                  ? '与当前主角人脉里「你↔主角」连线一致，在此修改会写回人脉并同步到主角资料页。'
+                  : '主角在剧情里如何称呼你；写入人脉「你↔本角色」连线，进入同人脉下 NPC 设定页也会显示同一数据。'}
+              </p>
+              <input
+                value={protagonistCallsUser}
+                onChange={(e) => {
+                  protagonistCallsTouchedRef.current = true
+                  setProtagonistCallsUser(e.target.value)
+                  setDirty(true)
+                }}
+                placeholder="如：老同学、姐、小哥…"
+                className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none transition-all duration-200 ease-out"
+                style={{ borderColor: border, color: text }}
+              />
             </label>
 
             <div className="grid grid-cols-3 gap-2">

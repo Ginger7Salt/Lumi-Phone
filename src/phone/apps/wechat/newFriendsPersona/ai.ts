@@ -1,4 +1,5 @@
 import type { Character, PlayerIdentity, WorldBook, WorldBookItem } from './types'
+import { formatWorldBookItemLineForPrompt, normalizeWorldBookPronounGuide, worldBookPronounGuideAnnotation } from './worldBookPronounGuide'
 import type { ApiConfig } from '../../api/types'
 import { LUMI_SYS_TOKENS_TOTAL_KEY } from '../../dataArchive/constants'
 import { clampWbItemGenTargetChars } from './worldBookItemGenConstants'
@@ -25,13 +26,16 @@ function buildExistingWorldBookEntriesContext(params: {
   const { character, worldBook, item } = params
   const chunks: string[] = []
 
+  const subjectName = String(character.name ?? '').trim() || '该角色'
   const sameBookLines: string[] = []
   for (const it of worldBook.items ?? []) {
     if (it.id === item.id) continue
     const c = String(it.content ?? '').trim()
     if (!c) continue
     const flag = it.enabled ? '' : '（当前关闭，仍勿与之下矛盾或重复）'
-    sameBookLines.push(`- 「${it.name}」${flag}：${sliceForWbPrompt(c, WB_ITEM_PROMPT_CONTENT_CAP)}`)
+    const body = sliceForWbPrompt(c, WB_ITEM_PROMPT_CONTENT_CAP)
+    const ann = worldBookPronounGuideAnnotation(it.pronounGuide, subjectName, 'character_card')
+    sameBookLines.push(`- 「${it.name}」${flag}：${body}${ann ? ` ${ann}` : ''}`)
   }
   if (sameBookLines.length) {
     chunks.push(`【同一世界书内已有条目正文（勿重复、勿改头换面复述同义内容；性格态度等须与之下一致、不可自相矛盾）】\n${sameBookLines.join('\n')}`)
@@ -44,7 +48,9 @@ function buildExistingWorldBookEntriesContext(params: {
       if (!it.enabled) continue
       const c = String(it.content ?? '').trim()
       if (!c) continue
-      otherBookLines.push(`- 世界书「${w.name}」·条目「${it.name}」：${sliceForWbPrompt(c, WB_ITEM_PROMPT_CONTENT_CAP)}`)
+      const body = sliceForWbPrompt(c, WB_ITEM_PROMPT_CONTENT_CAP)
+      const ann = worldBookPronounGuideAnnotation(it.pronounGuide, subjectName, 'character_card')
+      otherBookLines.push(`- 世界书「${w.name}」·条目「${it.name}」：${body}${ann ? ` ${ann}` : ''}`)
     }
   }
   if (otherBookLines.length) {
@@ -771,12 +777,22 @@ export async function generateCharacterBio(params: {
   const cfg = params.apiConfig
   if (!cfg || !cfg.apiUrl || !cfg.apiKey) throw new Error('未配置 AI API')
   const c = params.character
+  const charName = String(c.name ?? '').trim() || '该角色'
   const worldBookText = c.worldBooks
     .filter((w) => w.enabled)
     .map((w) => {
       const lines = w.items
         .filter((it) => it.enabled && String(it.content || '').trim())
-        .map((it) => `- [${it.priority === 'before' ? '聊天之前' : '聊天之后'}] ${it.name}：${String(it.content).trim()}`)
+        .map((it) =>
+          formatWorldBookItemLineForPrompt({
+            priority: it.priority,
+            name: it.name,
+            content: String(it.content).trim(),
+            pronounGuide: it.pronounGuide,
+            subjectName: charName,
+            voice: 'character_card',
+          }),
+        )
         .join('\n')
       return lines ? `世界书「${w.name}」\n${lines}` : ''
     })
@@ -927,6 +943,19 @@ export async function generateWorldBookItemContent(params: {
   const npcBlock =
     !forId && params.linkedNpcsContext?.trim() ? `\n${params.linkedNpcsContext.trim()}\n` : ''
 
+  const pronounWriterNote = (() => {
+    if (forId) return ''
+    const g = normalizeWorldBookPronounGuide(params.item.pronounGuide)
+    const cn = String(params.character.name ?? '').trim() || '该角色'
+    if (g === 'user_as_i') {
+      return `\n【本条人称标记】编辑者已选择「我=用户/操作者」：本条正文里的「我」指用户本人，≠角色「${cn}」；生成或续写必须保持该约定，勿改回「我=角色」。\n`
+    }
+    if (g === 'third_person') {
+      return `\n【本条人称标记】编辑者已选择「第三人称描写角色为主」：续写时勿把「我」默认写成该角色的第一人称独白。\n`
+    }
+    return ''
+  })()
+
   const existingEntriesContext = buildExistingWorldBookEntriesContext({
     character: params.character,
     worldBook: params.worldBook,
@@ -954,7 +983,7 @@ export async function generateWorldBookItemContent(params: {
     { role: 'system', content: systemContent },
     {
       role: 'user',
-      content: `${baseHint}${npcBlock}${context}${coherenceBlock}${wbgBlock}${styleBlock}${attitudeBookExtra}请生成本条目的正文内容。`,
+      content: `${baseHint}${pronounWriterNote}${npcBlock}${context}${coherenceBlock}${wbgBlock}${styleBlock}${attitudeBookExtra}请生成本条目的正文内容。`,
     },
   ]
   return await openAiCompatibleChat(cfg, messages, { max_tokens: maxTokens })

@@ -35,7 +35,12 @@ import { VNStoreProvider, useActiveSprite, useVNStore } from './useVNStore'
 import { SpriteEditorPage } from './SpriteEditorPage'
 import { ChromaKeyRenderer } from './ChromaKeyRenderer'
 import { extractVnBackgroundCue, resolveVnBackgroundByName, VN_BACKGROUND_ASSETS } from './vnBackgroundCatalog'
-import { extractVnBgmCueName, resolveVnBgmByName } from './vnBgmCatalog'
+import {
+  extractVnBgmCueName,
+  resolveVnBgmByName,
+  vnBgmAssetDiversityKey,
+  VN_BGM_DIVERSITY_WINDOW,
+} from './vnBgmCatalog'
 import { createMiniMaxT2ASyncAudioBlob } from '../../voiceprint/services/minimaxApi'
 
 type Props = {
@@ -219,22 +224,6 @@ function extractVnBackgroundCueName(rawLine: string): { backgroundName: string |
   return { backgroundName: null, rest: t }
 }
 
-function isInnerThoughtText(rawText: string, speaker: string | null): boolean {
-  const t = String(rawText || '').trim()
-  if (!t) return false
-  // 主路径：显式星号包裹
-  if (/^\*{1,2}[\s\S]+\*{1,2}$/u.test(t) || /\*\*[\s\S]+\*\*/u.test(t)) return true
-  // 常见显式标签：内心/OS
-  if (/^(?:\(|（|\[|【)?\s*(?:内心|心声|OS|os)\s*(?:\)|）|\]|】)?[：:]/u.test(t)) return true
-  // 无说话者时，识别“第一人称心理动词”句式，避免裸写内心被当旁白。
-  if (!speaker && /(?:^|，|。|！|？)\s*我(?:在|就|只|突然|忽然|一直|总是)?(?:想|觉得|以为|盼着|希望|害怕|担心|庆幸|后悔|记得|明白|意识到)/u.test(t)) {
-    return true
-  }
-  // 兜底：无说话者 + 第一人称短句，通常是该角色心声
-  if (!speaker && /^我(?:[，。！？、\s]|$)/u.test(t)) return true
-  return false
-}
-
 function stripInnerThoughtDecorators(text: string): string {
   let t = String(text || '').trim()
   if (!t) return ''
@@ -242,6 +231,22 @@ function stripInnerThoughtDecorators(text: string): string {
   const wrapMatch = t.match(/^\*{1,2}([\s\S]+)\*{1,2}$/u)
   if (wrapMatch?.[1]) t = wrapMatch[1].trim()
   return t
+}
+
+/**
+ * 行首标签为唯一气泡类型来源（与提示词一致）；不做正文语义推断。
+ * 无标签行：若符合「姓名：」语法则视为**兼容旧稿的对白**，否则整行视为旁白。
+ */
+function splitTaggedVnLine(raw: string): { mode: 'tagged-narration' | 'tagged-inner' | 'tagged-dialogue' | 'legacy'; body: string } {
+  const t = String(raw || '').trim()
+  if (!t) return { mode: 'legacy', body: '' }
+  const nar = t.match(/^【\s*旁白\s*】\s*(.*)$/su)
+  if (nar) return { mode: 'tagged-narration', body: String(nar[1] || '').trim() }
+  const inn = t.match(/^【\s*(?:内心|心声|OS|os)\s*】\s*(.*)$/su)
+  if (inn) return { mode: 'tagged-inner', body: String(inn[1] || '').trim() }
+  const dia = t.match(/^【\s*对白\s*】\s*(.+)$/su)
+  if (dia) return { mode: 'tagged-dialogue', body: String(dia[1] || '').trim() }
+  return { mode: 'legacy', body: t }
 }
 
 /** 一行即一个气泡；不在此按字数/标点切段，边界完全由模型正文换行决定（见 DatingContext VN 格式说明）。 */
@@ -294,21 +299,49 @@ function splitVnContentToBubbles(
     if (bgCue.backgroundName) pendingBgCue = bgCue.backgroundName
     const lineForBubble = String(bgCue.rest || '').trim()
     if (!lineForBubble) continue
-    const parsed = parseVnBubble(lineForBubble, defaultSpeaker)
-    if (!parsed.text) continue
-    const rawSpeaker = String(parsed.speaker || '').trim()
-    const speakerIsInnerMarker = /^(?:\[|【|\(|（)?\s*(?:内心|心声|OS|os)\s*(?:\]|】|\)|）)?$/u.test(rawSpeaker)
-    const normalizedSpeaker = speakerIsInnerMarker ? null : parsed.speaker
-    const isInnerThoughtLine = isInnerThoughtText(parsed.text, normalizedSpeaker)
-    const normalizedText = isInnerThoughtLine ? stripInnerThoughtDecorators(parsed.text) : parsed.text
-    let clean = sanitizeDanglingThoughtMarker(normalizedText.replace(/\*\*/g, ''))
-    if (userDisplayName?.trim()) {
-      clean = stripMisplacedYouInDialogueBody(clean, userDisplayName.trim(), normalizedSpeaker)
+    const tagged = splitTaggedVnLine(lineForBubble)
+    let speaker: string | null = null
+    let isInnerThoughtLine = false
+    let clean = ''
+    if (tagged.mode === 'tagged-narration') {
+      clean = sanitizeDanglingThoughtMarker(String(tagged.body || '').replace(/\*\*/g, ''))
+      if (userDisplayName?.trim()) {
+        clean = stripMisplacedYouInDialogueBody(clean, userDisplayName.trim(), null)
+      }
+    } else if (tagged.mode === 'tagged-inner') {
+      isInnerThoughtLine = true
+      const stripped = stripInnerThoughtDecorators(tagged.body)
+      clean = sanitizeDanglingThoughtMarker(String(stripped || '').replace(/\*\*/g, ''))
+      if (userDisplayName?.trim()) {
+        clean = stripMisplacedYouInDialogueBody(clean, userDisplayName.trim(), null)
+      }
+    } else if (tagged.mode === 'tagged-dialogue') {
+      const parsed = parseVnBubble(tagged.body, defaultSpeaker)
+      if (!parsed.text) continue
+      speaker = String(parsed.speaker || '').trim() || null
+      clean = sanitizeDanglingThoughtMarker(String(parsed.text || '').replace(/\*\*/g, ''))
+      if (userDisplayName?.trim()) {
+        clean = stripMisplacedYouInDialogueBody(clean, userDisplayName.trim(), speaker)
+      }
+    } else {
+      const parsed = parseVnBubble(lineForBubble, defaultSpeaker)
+      if (parsed.speaker && parsed.text) {
+        speaker = String(parsed.speaker || '').trim() || null
+        clean = sanitizeDanglingThoughtMarker(String(parsed.text || '').replace(/\*\*/g, ''))
+        if (userDisplayName?.trim()) {
+          clean = stripMisplacedYouInDialogueBody(clean, userDisplayName.trim(), speaker)
+        }
+      } else {
+        clean = sanitizeDanglingThoughtMarker(String(parsed.text || lineForBubble || '').replace(/\*\*/g, ''))
+        if (userDisplayName?.trim()) {
+          clean = stripMisplacedYouInDialogueBody(clean, userDisplayName.trim(), null)
+        }
+      }
     }
     if (!clean) continue
     out.push({
       text: clean,
-      speaker: normalizedSpeaker,
+      speaker,
       isInnerThought: isInnerThoughtLine,
       bgmCueName: pendingBgmCue,
       backgroundCueName: pendingBgCue,
@@ -495,7 +528,10 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const clampVnBgmBalance = (balance: number) => Math.max(VN_BGM_BALANCE_MIN, Math.min(VN_BGM_BALANCE_MAX, balance))
   const [vnBgmVolumeScale, setVnBgmVolumeScale] = useState<number>(() => {
     try {
-      const raw = Number(localStorage.getItem(VN_BGM_VOLUME_SCALE_LS_KEY) ?? '')
+      const stored = localStorage.getItem(VN_BGM_VOLUME_SCALE_LS_KEY)
+      // Number('')===0 会把「未存过」误判成静音；未配置时必须默认 1（持平）
+      if (stored == null || String(stored).trim() === '') return 1
+      const raw = Number(stored)
       if (!Number.isFinite(raw)) return 1
       return Math.max(0, Math.min(2, raw))
     } catch {
@@ -594,7 +630,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           : null
       const transcript = buildTranscriptFromDatingPlots()
       const hay = buildMemoryRelevanceHaystack(transcript.map((t) => t.text))
-      const memoryNotes = (await personaDb.formatCharacterMemoriesForPromptByRelevance(cid, hay)).trim() || undefined
+      const memoryNotes = (
+        await personaDb.formatCharacterMemoriesForPromptByRelevance(cid, hay, {
+          apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
+        })
+      ).trim() || undefined
       let worldBackgroundPrompt: string | undefined
       if (character?.worldBackgroundEnabled !== false && character?.worldBackgroundId?.trim()) {
         const wbg = await personaDb.getWorldBackground(character.worldBackgroundId.trim())
@@ -949,8 +989,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const vnBgmCurrentUrlRef = useRef('')
   const vnBgmPendingUrlRef = useRef('')
   const vnBgmPendingNameRef = useRef('')
+  const vnBgmPendingDiversityKeyRef = useRef('')
   const vnBgmRequestedUrlRef = useRef('')
   const vnBgmRequestTokenRef = useRef(0)
+  /** 最近成功切换的曲目键（用于「5 次内同一文件最多 3 次」） */
+  const vnBgmRecentKeysRef = useRef<string[]>([])
   const didAutoScrollBottomRef = useRef<string>('')
   const vnLineAudioRef = useRef<HTMLAudioElement | null>(null)
   const vnLineSpeechRef = useRef<SpeechSynthesisUtterance | null>(null)
@@ -1160,16 +1203,19 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     vnBgmCurrentUrlRef.current = ''
     vnBgmPendingUrlRef.current = ''
     vnBgmPendingNameRef.current = ''
+    vnBgmPendingDiversityKeyRef.current = ''
     vnBgmRequestedUrlRef.current = ''
     vnBgmRequestTokenRef.current += 1
     setVnBgmCurrentName('')
     setVnBgmAwaitingGesture(false)
   }, [])
+
+  useEffect(() => {
+    vnBgmRecentKeysRef.current = []
+  }, [currentCharacter.id])
   const updateVnBgmVolumeScale = useCallback((nextRaw: number) => {
     const next = Math.max(0, Math.min(2, nextRaw))
     setVnBgmVolumeScale(next)
-    const current = vnBgmAudioRef.current
-    if (current) current.volume = Math.max(0, Math.min(1, VN_BGM_BASE_VOLUME * next))
     try {
       localStorage.setItem(VN_BGM_VOLUME_SCALE_LS_KEY, String(next))
     } catch {
@@ -1177,11 +1223,18 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     }
   }, [])
 
+  /** 音量滑杆须同步到「当前正在用的」Audio；仅靠在 update 里写 ref 会在 play() 尚未 resolve 时写到旧节点。 */
+  useEffect(() => {
+    const el = vnBgmAudioRef.current
+    if (!el) return
+    el.volume = vnBgmVolume
+  }, [vnBgmVolume])
+
   const switchVnBgmByName = useCallback(
     (rawName: string | null | undefined) => {
       const name = String(rawName || '').trim()
       if (!name) return
-      const hit = resolveVnBgmByName(name)
+      const hit = resolveVnBgmByName(name, { recentResolvedKeys: vnBgmRecentKeysRef.current })
       if (!hit?.url) return
       if (vnBgmCurrentUrlRef.current === hit.url) return
       if (vnBgmRequestedUrlRef.current === hit.url) return
@@ -1197,6 +1250,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       next.preload = 'auto'
       next.loop = true
       next.volume = vnBgmVolume
+      vnBgmAudioRef.current = next
       const applyStart = () => {
         if (vnBgmRequestTokenRef.current !== token) {
           next.pause()
@@ -1207,7 +1261,12 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         vnBgmCurrentUrlRef.current = hit.url
         vnBgmPendingUrlRef.current = ''
         vnBgmPendingNameRef.current = ''
+        vnBgmPendingDiversityKeyRef.current = ''
         vnBgmRequestedUrlRef.current = ''
+        const dk = vnBgmAssetDiversityKey(hit)
+        if (dk) {
+          vnBgmRecentKeysRef.current = [...vnBgmRecentKeysRef.current, dk].slice(-VN_BGM_DIVERSITY_WINDOW)
+        }
         setVnBgmCurrentName(hit.name)
         setVnBgmAwaitingGesture(false)
       }
@@ -1226,6 +1285,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           // 移动端常见：未发生用户手势时被自动播放策略拦截，等待下一次点击重试。
           vnBgmPendingUrlRef.current = hit.url
           vnBgmPendingNameRef.current = hit.name
+          vnBgmPendingDiversityKeyRef.current = vnBgmAssetDiversityKey(hit)
           setVnBgmAwaitingGesture(true)
         })
     },
@@ -1253,9 +1313,14 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           }
           vnBgmAudioRef.current = next
           vnBgmCurrentUrlRef.current = url
+          const dk = vnBgmPendingDiversityKeyRef.current
           vnBgmPendingUrlRef.current = ''
           vnBgmPendingNameRef.current = ''
+          vnBgmPendingDiversityKeyRef.current = ''
           vnBgmRequestedUrlRef.current = ''
+          if (dk) {
+            vnBgmRecentKeysRef.current = [...vnBgmRecentKeysRef.current, dk].slice(-VN_BGM_DIVERSITY_WINDOW)
+          }
           setVnBgmCurrentName(name)
           setVnBgmAwaitingGesture(false)
         })
@@ -1486,7 +1551,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         out.push({
           id: `${p.id}-ai-${i}`,
           kind,
-          name: b.speaker?.trim() || currentCharacter.realName,
+          name:
+            kind === 'narration' ? '旁白' : kind === 'innerThought' ? '内心' : b.speaker?.trim() || currentCharacter.realName,
           text,
           isUser: (() => {
             const n = String(b.speaker || '').replace(/\s+/g, '')
@@ -2241,7 +2307,10 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       setVnSubmitting(true)
       stageBranchChoice(x)
       try {
-        const ok = await sendPlayerInput(x.content, perspective, narrativeGenOptions)
+        const ok = await sendPlayerInput(x.content, perspective, {
+          ...narrativeGenOptions,
+          branchContinuationHint: x.nextPrompt,
+        })
         if (ok) {
           setInput('')
         }
@@ -3080,7 +3149,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 name={vnDialogName}
                 loading={vnBoxLoading}
                 innerVoice={vnBubbleIsInnerThought}
-                showNameTag={!!vnBubble.speaker || vnBubbleIsInnerThought}
+                showNameTag={!!vnBubble.speaker && !vnBubbleIsInnerThought}
                 canPlayVoice={vnCanPlayBubbleVoice}
                 voiceDisabled={!!currentArchive.vnVoiceDisabled}
                 voiceGenerating={vnLineVoiceGenerating}

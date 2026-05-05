@@ -77,6 +77,7 @@ export function PersonaBindingsManager({
   const [crossRel, setCrossRel] = useState('')
   const [crossFromSee, setCrossFromSee] = useState('')
   const [crossToSee, setCrossToSee] = useState('')
+  const [crossFromCallsTo, setCrossFromCallsTo] = useState('')
 
   const [bindIdentityId, setBindIdentityId] = useState('')
   const [bindCharId, setBindCharId] = useState('')
@@ -166,11 +167,13 @@ export function PersonaBindingsManager({
       relation: crossRel.trim(),
       fromPerspective: crossFromSee.trim(),
       toPerspective: crossToSee.trim(),
+      fromCallsTo: crossFromCallsTo.trim(),
       isPlayerIdentity: false,
     })
     setCrossRel('')
     setCrossFromSee('')
     setCrossToSee('')
+    setCrossFromCallsTo('')
   }
 
   const bindIdentityToCharacter = async () => {
@@ -341,6 +344,13 @@ export function PersonaBindingsManager({
                 className="mt-3 w-full rounded-xl border bg-white px-3 py-2.5 text-[13px] outline-none transition-all duration-200 ease-out"
                 style={{ borderColor: border, color: text }}
               />
+              <input
+                value={crossFromCallsTo}
+                onChange={(e) => setCrossFromCallsTo(e.target.value)}
+                placeholder="起点如何称呼终点（可选，如：哥、师姐）"
+                className="mt-2 w-full rounded-xl border bg-white px-3 py-2.5 text-[13px] outline-none transition-all duration-200 ease-out"
+                style={{ borderColor: border, color: text }}
+              />
               <textarea
                 value={crossFromSee}
                 onChange={(e) => setCrossFromSee(e.target.value)}
@@ -397,6 +407,12 @@ export function PersonaBindingsManager({
                       </div>
                       <p className="mt-2 text-[12px]" style={{ color: sub }}>
                         「{r.relation || '—'}」
+                        {r.fromCallsTo?.trim() ? (
+                          <span>
+                            {' '}
+                            · 称呼：「{r.fromCallsTo.trim()}」
+                          </span>
+                        ) : null}
                       </p>
                     </div>
                   ))

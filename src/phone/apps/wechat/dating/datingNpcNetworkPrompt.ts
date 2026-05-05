@@ -1,5 +1,6 @@
 import { personaDb } from '../newFriendsPersona/idb'
 import type { Character } from '../newFriendsPersona/types'
+import { worldBookPronounGuideAnnotation } from '../newFriendsPersona/worldBookPronounGuide'
 
 const MAX_CHARS = 4200
 const NPC_WB_PER_NPC = 380
@@ -13,7 +14,8 @@ function formatNpcWorldBooksSnippet(n: Character): string {
       if (!it.enabled) continue
       const c = String(it.content || '').trim()
       if (!c) continue
-      chunks.push(`《${w.name}》${it.name}：${c}`)
+      const ann = worldBookPronounGuideAnnotation(it.pronounGuide, String(n.name || '').trim() || '该角色', 'character_card')
+      chunks.push(`《${w.name}》${it.name}：${c}${ann ? ` ${ann}` : ''}`)
     }
   }
   const raw = chunks.join('｜')
@@ -77,11 +79,13 @@ export async function loadDatingNpcNetworkPromptBlock(params: {
         const b = idToName.get(r.toCharacterId)
         if (!a || !b) continue
         const rel = (r.relation || '').trim()
+        const call = (r.fromCallsTo || '').trim()
         const fp = (r.fromPerspective || '').trim().slice(0, 100)
         const tp = (r.toPerspective || '').trim().slice(0, 100)
         const mid = rel || '关系'
+        const callBit = call ? ` · ${a}称${b}「${call}」` : ''
         const tail = [fp && `（从${a}看：${fp}）`, tp && `（从${b}看：${tp}）`].filter(Boolean).join('')
-        lines.push(`- ${a} —「${mid}」→ ${b}${tail}`)
+        lines.push(`- ${a} —「${mid}」→ ${b}${callBit}${tail}`)
       }
     }
 
@@ -90,9 +94,16 @@ export async function loadDatingNpcNetworkPromptBlock(params: {
       for (const pl of playerLinks.slice(0, 24)) {
         const nm = idToName.get(pl.characterId)
         if (!nm) continue
-        const bits = [pl.relationThemToYou, pl.theySeeYou].map((x) => String(x || '').trim()).filter(Boolean)
+        const bits = [
+          pl.theyCallYou ? `称呼你：${String(pl.theyCallYou).trim()}` : '',
+          pl.youCallThem ? `你称呼TA：${String(pl.youCallThem).trim()}` : '',
+          pl.relationThemToYou,
+          pl.theySeeYou,
+        ]
+          .map((x) => String(x || '').trim())
+          .filter(Boolean)
         if (!bits.length) continue
-        lines.push(`- 对「${nm}」：${bits.join('；').slice(0, 220)}`)
+        lines.push(`- 对「${nm}」：${bits.join('；').slice(0, 280)}`)
       }
     }
 

@@ -4,6 +4,13 @@ export type Gender = 'male' | 'female' | 'other'
 
 export type WorldBookPriority = 'before' | 'after'
 
+/**
+ * 世界书条目正文里的人称约定（告诉模型如何解读「我/你/他」）。
+ * - default：角色卡上「我」=该角色；玩家身份卡上「我」=用户。
+ * - user_as_i：角色世界书里以用户第一人称书写（「我」指用户，非该角色）。
+ */
+export type WorldBookPronounGuide = 'default' | 'user_as_i' | 'third_person'
+
 export type WorldBookItem = {
   id: string
   name: string
@@ -13,6 +20,8 @@ export type WorldBookItem = {
   content: string
   updatedAt: number
   collapsed?: boolean
+  /** 本条正文里「我/你/他」指谁；注入提示词时在条目后附说明 */
+  pronounGuide?: WorldBookPronounGuide
 }
 
 export type WorldBook = {
@@ -362,6 +371,10 @@ export type CharacterMemory = {
    * 逗号/分号/换行分隔均可入库时解析。
    */
   memoryKeywords?: string[]
+  /** OpenAI 兼容 embedding，用于向量语义召回（与关键词并存） */
+  memoryEmbedding?: number[]
+  /** 与 `memoryEmbedding` 对应的 `buildMemoryEmbedText` 内容哈希，正文或触发词变更后需重算向量 */
+  memoryEmbeddingHash?: string
 }
 
 /** 全局记忆设置（IndexedDB `memorySettings`，主键 id 固定为 `default`） */
@@ -384,6 +397,22 @@ export type MemorySettingsRow = {
    * 与微信消息游标独立；与 `aiRoundCountByConversation` 共用同一计数阈值。
    */
   datingPlotSummaryCursorByCharacterId?: Record<string, number>
+  /**
+   * 长期记忆向量语义召回：显式 `false` 关闭；缺省为开启（仍需聊天 API 里配置有效 url+key 才会实际请求 embedding）。
+   */
+  memoryVectorRecallEnabled?: boolean
+  /** 覆盖默认 `text-embedding-3-small`（须与当前 API 兼容） */
+  memoryEmbeddingModelId?: string
+  /**
+   * 向量召回专用 API 根地址（OpenAI 兼容，将请求 `…/v1/embeddings`）。
+   * 留空则使用当前「聊天 / chatCard」里的 apiUrl。
+   */
+  memoryEmbeddingApiUrl?: string
+  /**
+   * 向量召回专用 API Key；留空则使用聊天 apiKey。
+   * 可与 `memoryEmbeddingApiUrl` 组合：只填其一则另一项回落到主配置。
+   */
+  memoryEmbeddingApiKey?: string
 }
 
 /** 微信私聊持久化消息（IndexedDB `chatMessages`） */
@@ -552,6 +581,8 @@ export type Relationship = {
   relation: string
   fromPerspective: string
   toPerspective: string
+  /** 起点如何称呼终点（当面常用，短）；与 relation 不同：侧重「叫什么」 */
+  fromCallsTo: string
   /** 标识该关系是否是「玩家身份 ↔ 角色」的绑定关系 */
   isPlayerIdentity?: boolean
 }
@@ -954,11 +985,15 @@ export type PlayerNetworkLink = {
   characterId: string
   /** 你→对方 连线中间词；由用户填写，AI 不生成 */
   relationYouToThem: string
-  /** 对方→你 连线中间词；AI 生成 */
+  /** 对方→你 连线中间词；AI 可预填，用户可改 */
   relationThemToYou: string
   /** 【你看对方】描述；由用户填写，AI 不生成 */
   youSeeThem: string
   /** 【对方看你】描述；AI 生成 */
   theySeeYou: string
+  /** 你如何称呼对方（口语/备注）；**仅用户填写**，AI 人脉生成不得写入 */
+  youCallThem: string
+  /** 对方如何称呼你；人脉 AI 生成时可预填，用户可改 */
+  theyCallYou: string
 }
 

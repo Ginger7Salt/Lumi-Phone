@@ -79,7 +79,7 @@ export function VNDialogBox({
         />
       ) : null}
       <div
-        className="relative min-h-[132px] overflow-hidden px-4 pb-3 pt-8"
+        className={`relative min-h-[132px] overflow-hidden px-4 pb-3 ${showNameTag ? 'pt-8' : 'pt-3'}`}
         style={{
           // 默认：纯白为主，轻微毛玻璃即可（不要高透强模糊）
           background: innerVoice ? 'rgba(18,18,20,0.82)' : 'rgba(255,255,255,0.92)',

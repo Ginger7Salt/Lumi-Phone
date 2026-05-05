@@ -100,18 +100,52 @@ export function buildVnBgmPromptBlock(): string {
     `需要切换音乐时，在对应气泡前单独输出一行「【BGM】音乐名」。` +
     `文件名里若用「、」等串联多个情绪/场景词，你只需输出**任意一个词或一小段**即可命中对应曲目；不必写全名，也无需固定写第一个词。` +
     `同一轮可多次切换，且必须从上述列表中选最符合当下情绪和场景的一项；` +
-    `若当前音乐已合适则不要重复输出。`
+    `若当前音乐已合适则不要重复输出。` +
+    `【去重】客户端对**最近 5 次**成功切换的曲目做统计：**同一首**在这 5 次里**最多出现 3 次**；超出时会在你点的情绪/场景下自动换一首（仍优先高分匹配）。` +
+    `为减少机械重复，情绪相近时请尽量换用列表里**不同文件名**中的关键词（例如同悲伤可多写几种细分词，不必总写同一个词）。`
   )
 }
 
-export function resolveVnBgmByName(name: string): VnBgmAsset | null {
+/** 最近若干次选曲窗口长度（与 MAX_SAME_IN_WINDOW 配合：5 次里同一文件最多 3 次） */
+export const VN_BGM_DIVERSITY_WINDOW = 5
+export const VN_BGM_MAX_SAME_IN_WINDOW = 3
+
+export type ResolveVnBgmOptions = {
+  /** 最近已成功播放的曲目键（与 vnBgmAssetDiversityKey 一致），旧→新 */
+  recentResolvedKeys?: readonly string[]
+}
+
+export function vnBgmAssetDiversityKey(asset: VnBgmAsset): string {
+  const k = String(asset.fileName || asset.url || '').trim()
+  return k || normalizeBgmKey(asset.name)
+}
+
+function countSameInWindowAfterPick(
+  recentFifo: readonly string[],
+  pickKey: string,
+  windowSize: number,
+): number {
+  const next = [...recentFifo, pickKey].slice(-windowSize)
+  return next.filter((k) => k === pickKey).length
+}
+
+export function resolveVnBgmByName(name: string, options?: ResolveVnBgmOptions): VnBgmAsset | null {
   const raw = String(name || '').trim()
   if (!raw) return null
   const key = normalizeBgmKey(raw)
   if (!key) return null
 
   const exact = VN_BGM_ASSETS.find((x) => normalizeBgmKey(x.name) === key)
-  if (exact) return exact
+  const recent = options?.recentResolvedKeys ?? []
+  if (exact) {
+    const dk = vnBgmAssetDiversityKey(exact)
+    if (
+      countSameInWindowAfterPick(recent, dk, VN_BGM_DIVERSITY_WINDOW) <= VN_BGM_MAX_SAME_IN_WINDOW
+    ) {
+      return exact
+    }
+    // 歌名完全一致但最近播放次数已达上限：继续走模糊匹配，在同一 cue 下换一首
+  }
 
   let cueTokens = bgmNameToTokens(raw)
   if (!cueTokens.length && key.length >= 2) cueTokens = [key]
@@ -146,9 +180,19 @@ export function resolveVnBgmByName(name: string): VnBgmAsset | null {
 
   if (!scored.length) return null
 
-  const maxScore = Math.max(...scored.map((s) => s.score))
-  const top = scored.filter((s) => s.score === maxScore).map((s) => s.asset)
   const rrKey = `${key}::${cueTokens.join('|')}`
+  const passes = (a: VnBgmAsset) =>
+    countSameInWindowAfterPick(recent, vnBgmAssetDiversityKey(a), VN_BGM_DIVERSITY_WINDOW) <=
+    VN_BGM_MAX_SAME_IN_WINDOW
+
+  const scoreLevels = [...new Set(scored.map((s) => s.score))].sort((a, b) => b - a)
+  for (const lev of scoreLevels) {
+    const tierAssets = scored.filter((s) => s.score === lev).map((s) => s.asset)
+    const eligible = tierAssets.filter(passes)
+    if (eligible.length) return pickRoundRobin(`${rrKey}::s${lev}`, eligible)
+  }
+  const maxScore = scoreLevels[0]!
+  const top = scored.filter((s) => s.score === maxScore).map((s) => s.asset)
   return pickRoundRobin(rrKey, top)
 }
 

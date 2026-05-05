@@ -1537,7 +1537,9 @@ export function ChatRoom({
       }
       const hay = buildMemoryRelevanceHaystack([...transcript.slice(-32).map((t) => t.text), biasText])
       const [memory, chRow] = await Promise.all([
-        personaDb.formatCharacterMemoriesForPromptByRelevance(pc, hay),
+        personaDb.formatCharacterMemoriesForPromptByRelevance(pc, hay, {
+          apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
+        }),
         personaDb.getCharacter(pc),
       ])
       const unsPrivate = (
@@ -1558,7 +1560,7 @@ export function ChatRoom({
       ).trim()
       return { memory: memory.trim(), unsPrivate, unsGroup }
     },
-    [conversationKey, roomType, useLumiProjectAssistantPrompt, personaCharacterId, playerIdentityId],
+    [apiConfig, conversationKey, roomType, useLumiProjectAssistantPrompt, personaCharacterId, playerIdentityId],
   )
 
   const formatWxTimeLabel = useCallback((ts: number) => {
@@ -3680,7 +3682,11 @@ export function ChatRoom({
                 ])
                 let memNotes = ''
                 try {
-                  memNotes = (await personaDb.formatCharacterMemoriesForPromptByRelevance(m.charId, memberHay)).trim()
+                  memNotes = (
+                    await personaDb.formatCharacterMemoriesForPromptByRelevance(m.charId, memberHay, {
+                      apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
+                    })
+                  ).trim()
                 } catch {
                   memNotes = ''
                 }

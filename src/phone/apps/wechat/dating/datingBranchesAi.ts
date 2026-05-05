@@ -182,8 +182,14 @@ export async function generateDatingBranchesAi(params: {
   tailContext: string
   godPerspective: boolean
   apiConfig: ApiConfig | null
+  /** 身份卡上的玩家姓名：card 内禁止用该字符串指玩家（须用「你」或「我」依视角） */
+  playerIdentityCardName?: string | null
 }): Promise<BranchOption[]> {
-  const { character, latestAiPlotBody, tailContext, godPerspective, apiConfig } = params
+  const { character, latestAiPlotBody, tailContext, godPerspective, apiConfig, playerIdentityCardName } = params
+  const idPlayerName = String(playerIdentityCardName ?? '').trim()
+  const banPlayerLegalName = idPlayerName
+    ? `**禁止**在 card 中用身份卡姓名「${idPlayerName}」指玩家`
+    : '**禁止**在 card 中用身份卡所载玩家姓名指玩家'
   if (!apiConfig?.apiUrl || !apiConfig?.apiKey || !apiConfig?.modelId) {
     await new Promise((r) => window.setTimeout(r, 200))
     return []
@@ -196,17 +202,17 @@ export async function generateDatingBranchesAi(params: {
 - 单条 card **必须 ≤20 个字**（按汉字计，含标点也算字符），超长会被直接截断。`
 
   const cardRule = godPerspective
-    ? `四条「card」均为**第三人称旁白**为主的一到两句短卡（用他/她/${character.realName} 等），符合上帝视角：写屏外可见动作或信息差；**禁止**写玩家第一人称；**禁止**用「你」使唤读者或指约会对象。
+    ? `四条「card」均为**第三人称旁白**为主的一到两句短卡（用他/她/${character.realName} 等），符合上帝视角：写屏外可见动作或信息差；**禁止**把玩家写成叙事主「我」。凡文案指向玩家（心念、惦记、视线、话语对象），须用「你」，${banPlayerLegalName}；**禁止**用「你」指约会对象${character.realName}。
 ${formatBlock}
-- 格式示例（注意对白用「」，便于 JSON）：他把纸袋往桌角一推。「你定吧。」`
-    : `四条「card」均为**玩家视角**的一到两句短卡：以玩家将要做的事、说出口的话或心里一闪念为主；**禁止**用第三人称写玩家；**禁止**用「你」指玩家。
+- 格式示例（对白用「」，便于 JSON）：他把纸袋往桌角一推。「你定吧。」或：他指尖一顿，忽然想到了你。`
+    : `四条「card」均为**玩家视角**的一到两句短卡：以玩家将要做的事、说出口的话或心里一闪念为主；**禁止**用第三人称写玩家；立足点用「我」，${banPlayerLegalName}（勿把大名当旁白主语）；**禁止**用「你」指玩家自身（易与约会对象混淆；对白「」内称呼对方除外）。
 ${formatBlock}
 - 若玩家当场开口，对白用「…」括起来；**禁止**内心OS；若只有动作/决定，可全旁白。
 - 格式示例：我靠近一步。「别躲。」`
 
   const system = `你是线下约会剧情「分支选项」策划。**只输出合法 UTF-8 JSON 数组**，禁止 Markdown 代码围栏、禁止数组前后的解释文字、禁止注释。
 【JSON 语法铁律】style/card/director 为 JSON 字符串时：内部若需要引号，对白只用「」，不要用英文 "；反斜杠按需转义；不要尾随逗号。
-【分支卡片硬约束】card 字段：每条 **≤20 个字**；**禁止**任何内心活动（禁止 **...**）；尽量一句话表达可选行动/可说出口的话。
+【分支卡片硬约束】card 字段：每条 **≤20 个字**；**禁止**任何内心活动（禁止 **...**）；尽量一句话表达可选行动/可说出口的话。指向玩家须用「你」（上帝视角）或「我」（玩家视角），禁止写身份卡上的玩家大名。
 数组长度必须为 4，且按顺序对应风格标签（style 字段必须与之一致）：
 ${STYLE_ORDER.map((s) => `「${s}」`).join('、')}
 每项形如：{"style":"顺水推舟","card":"……","director":"……"}；card 内对白用「」，但不要写内心OS。`

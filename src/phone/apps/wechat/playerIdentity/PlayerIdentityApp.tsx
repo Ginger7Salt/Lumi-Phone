@@ -590,6 +590,8 @@ function IdentityEditPage({
       mainCharacterAvatarUrl: string
       relationYouToThem: string
       youSeeThem: string
+      youCallThem: string
+      theyCallYou: string
     }>
   >([])
   const [editingBinding, setEditingBinding] = useState<{
@@ -597,6 +599,8 @@ function IdentityEditPage({
     otherId: string
     rootCharacterId: string
     relationYouToThem: string
+    youCallThem: string
+    theyCallYou: string
   } | null>(null)
   const [editTab, setEditTab] = useState<'basic' | 'worldbook' | 'bindings' | 'schedule'>('basic')
   const [identityWbPrompt, setIdentityWbPrompt] = useState('')
@@ -684,6 +688,8 @@ function IdentityEditPage({
             mainCharacterAvatarUrl: mainCharacter?.avatarUrl?.trim() || '',
             relationYouToThem: playerLink?.relationYouToThem?.trim() || r?.relation?.trim() || '',
             youSeeThem: playerLink?.youSeeThem?.trim() || r?.fromPerspective?.trim() || '',
+            youCallThem: playerLink?.youCallThem?.trim() || '',
+            theyCallYou: playerLink?.theyCallYou?.trim() || '',
           }
         }),
       )
@@ -788,6 +794,8 @@ function IdentityEditPage({
       next[idx] = {
         ...next[idx],
         relationYouToThem: editingBinding.relationYouToThem.trim(),
+        youCallThem: editingBinding.youCallThem.trim(),
+        theyCallYou: editingBinding.theyCallYou.trim(),
       }
     } else {
       next.push({
@@ -797,6 +805,8 @@ function IdentityEditPage({
         relationThemToYou: '',
         youSeeThem: '',
         theySeeYou: '',
+        youCallThem: editingBinding.youCallThem.trim(),
+        theyCallYou: editingBinding.theyCallYou.trim(),
       })
     }
     await personaDb.putPlayerNetworkLinks(editingBinding.rootCharacterId, next)
@@ -806,6 +816,8 @@ function IdentityEditPage({
           ? {
               ...x,
               relationYouToThem: editingBinding.relationYouToThem.trim(),
+              youCallThem: editingBinding.youCallThem.trim(),
+              theyCallYou: editingBinding.theyCallYou.trim(),
             }
           : x,
       ),
@@ -1486,6 +1498,13 @@ function IdentityEditPage({
                             <p className="mt-0.5 truncate text-[13px]" style={{ color: COLORS.sub }}>
                               {item.relationYouToThem || '点击编辑关系标签'}
                             </p>
+                            {(item.youCallThem || item.theyCallYou) ? (
+                              <p className="mt-0.5 truncate text-[12px]" style={{ color: COLORS.faint }}>
+                                {item.youCallThem ? `你称对方：${item.youCallThem}` : ''}
+                                {item.youCallThem && item.theyCallYou ? ' · ' : ''}
+                                {item.theyCallYou ? `对方称你：${item.theyCallYou}` : ''}
+                              </p>
+                            ) : null}
                           </div>
                           <button
                             type="button"
@@ -1496,6 +1515,8 @@ function IdentityEditPage({
                                 otherId: item.otherId,
                                 rootCharacterId: item.mainCharacterId || item.otherId,
                                 relationYouToThem: item.relationYouToThem,
+                                youCallThem: item.youCallThem,
+                                theyCallYou: item.theyCallYou,
                               })
                             }
                             aria-label="编辑看法态度"
@@ -1586,7 +1607,7 @@ function IdentityEditPage({
         <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-[420px] rounded-[16px] bg-white p-5">
             <p className="text-center text-[16px] font-semibold" style={{ color: COLORS.text }}>
-              编辑关系标签
+              编辑关系与称呼
             </p>
             <div className="mt-4 space-y-3">
               <label className="block">
@@ -1597,6 +1618,30 @@ function IdentityEditPage({
                   value={editingBinding.relationYouToThem}
                   onChange={(e) => setEditingBinding((prev) => (prev ? { ...prev, relationYouToThem: e.target.value } : prev))}
                   placeholder="例如：朋友 / 合作对象 / 需保持距离"
+                  className="mt-2 w-full rounded-[12px] border bg-white px-3 py-2 text-[14px] outline-none transition-all duration-200 ease-out"
+                  style={{ borderColor: COLORS.border, color: COLORS.text }}
+                />
+              </label>
+              <label className="block">
+                <p className="text-[13px]" style={{ color: COLORS.sub }}>
+                  你如何称呼对方（仅你填写）
+                </p>
+                <input
+                  value={editingBinding.youCallThem}
+                  onChange={(e) => setEditingBinding((prev) => (prev ? { ...prev, youCallThem: e.target.value } : prev))}
+                  placeholder="人脉 AI 不会生成此项"
+                  className="mt-2 w-full rounded-[12px] border bg-white px-3 py-2 text-[14px] outline-none transition-all duration-200 ease-out"
+                  style={{ borderColor: COLORS.border, color: COLORS.text }}
+                />
+              </label>
+              <label className="block">
+                <p className="text-[13px]" style={{ color: COLORS.sub }}>
+                  对方如何称呼你（可手动改；生成人脉时可预填）
+                </p>
+                <input
+                  value={editingBinding.theyCallYou}
+                  onChange={(e) => setEditingBinding((prev) => (prev ? { ...prev, theyCallYou: e.target.value } : prev))}
+                  placeholder="例如：老同学、姐"
                   className="mt-2 w-full rounded-[12px] border bg-white px-3 py-2 text-[14px] outline-none transition-all duration-200 ease-out"
                   style={{ borderColor: COLORS.border, color: COLORS.text }}
                 />

@@ -44,6 +44,17 @@ import {
   normalizeStoredMemoryEmotionNeedList,
   trimMemoryTriggerText,
 } from '../memory/memoryTriggerUtils'
+import { fetchEmbeddingVector, resolveEmbeddingApiCredentials } from '../memory/memoryEmbeddingApi'
+import {
+  backfillMemoryEmbeddingsBestEffort,
+  isMemoryVectorRecallEnabled,
+  MEMORY_VECTOR_MIN_SIM,
+  MEMORY_VECTOR_TOP_GROUP,
+  MEMORY_VECTOR_TOP_PRIVATE,
+  pickMemoriesByVectorSimilarity,
+  resolveMemoryEmbeddingModelId,
+  type MemoryVectorRecallOpts,
+} from '../memory/memoryVectorRecall'
 import { parseGroupRobotTriggerWordInput } from '../groupChatUtils'
 import { formatWeChatMessageListTimestamp as formatWeChatMessageListTimestampFn } from './chatMessageTimestampFormat'
 import { emptyWorldBackgroundSettings, formatTimelineEventDate } from './types'
@@ -449,6 +460,12 @@ function normalizeCharacter(input: unknown): Stored {
             content: typeof i.content === 'string' ? i.content : '',
             updatedAt: typeof i.updatedAt === 'number' ? i.updatedAt : now,
             collapsed: typeof i.collapsed === 'boolean' ? i.collapsed : false,
+            pronounGuide:
+              i.pronounGuide === 'user_as_i' || i.pronounGuide === 'third_person' || i.pronounGuide === 'default'
+                ? (i.pronounGuide as 'default' | 'user_as_i' | 'third_person')
+                : i.pronounGuide === 'mixed_explicit'
+                  ? 'default'
+                  : undefined,
           }
         })
       return {
@@ -1168,6 +1185,8 @@ function normalizePlayerLink(input: unknown, now: number): PlayerNetworkLink {
     relationThemToYou: typeof r.relationThemToYou === 'string' ? r.relationThemToYou : '',
     youSeeThem: typeof r.youSeeThem === 'string' ? r.youSeeThem : '',
     theySeeYou: typeof r.theySeeYou === 'string' ? r.theySeeYou : '',
+    youCallThem: typeof r.youCallThem === 'string' ? r.youCallThem : '',
+    theyCallYou: typeof r.theyCallYou === 'string' ? r.theyCallYou : '',
   }
 }
 
@@ -1222,6 +1241,20 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
       : '',
   )
   const emoSan = normalizeStoredMemoryEmotionNeedList((m as { memoryTriggerEmotionNeed?: unknown }).memoryTriggerEmotionNeed)
+  let memoryEmbedding: number[] | undefined
+  const embRaw = (m as { memoryEmbedding?: unknown }).memoryEmbedding
+  if (Array.isArray(embRaw) && embRaw.length) {
+    const arr: number[] = []
+    for (const x of embRaw.slice(0, 4096)) {
+      const n = typeof x === 'number' ? x : Number(x)
+      if (!Number.isFinite(n)) continue
+      arr.push(n)
+    }
+    if (arr.length >= 8) memoryEmbedding = arr
+  }
+  const memHashRaw = (m as { memoryEmbeddingHash?: unknown }).memoryEmbeddingHash
+  const memoryEmbeddingHash =
+    typeof memHashRaw === 'string' && memHashRaw.trim() ? memHashRaw.trim().slice(0, 128) : undefined
   return {
     id: m.id,
     characterId: m.characterId,
@@ -1237,6 +1270,8 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
     memoryTriggerPrecise: preSan,
     memoryTriggerEmotionNeed: emoSan,
     memoryKeywords,
+    memoryEmbedding,
+    memoryEmbeddingHash,
   }
 }
 
@@ -1277,11 +1312,27 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
   const modeRaw = (r as { autoSummaryDefaultMemoryTriggerMode?: unknown }).autoSummaryDefaultMemoryTriggerMode
   const autoSummaryDefaultMemoryTriggerMode: MemorySettingsRow['autoSummaryDefaultMemoryTriggerMode'] =
     modeRaw === 'always' || modeRaw === 'keyword' ? modeRaw : undefined
+  const memVecRaw = (r as { memoryVectorRecallEnabled?: unknown }).memoryVectorRecallEnabled
+  const memoryVectorRecallEnabled: MemorySettingsRow['memoryVectorRecallEnabled'] =
+    memVecRaw === false ? false : memVecRaw === true ? true : undefined
+  const memModelRaw = (r as { memoryEmbeddingModelId?: unknown }).memoryEmbeddingModelId
+  const memoryEmbeddingModelId: MemorySettingsRow['memoryEmbeddingModelId'] =
+    typeof memModelRaw === 'string' && memModelRaw.trim() ? memModelRaw.trim().slice(0, 120) : undefined
+  const memEmbedUrlRaw = (r as { memoryEmbeddingApiUrl?: unknown }).memoryEmbeddingApiUrl
+  const memoryEmbeddingApiUrl: MemorySettingsRow['memoryEmbeddingApiUrl'] =
+    typeof memEmbedUrlRaw === 'string' && memEmbedUrlRaw.trim() ? memEmbedUrlRaw.trim().slice(0, 512) : undefined
+  const memEmbedKeyRaw = (r as { memoryEmbeddingApiKey?: unknown }).memoryEmbeddingApiKey
+  const memoryEmbeddingApiKey: MemorySettingsRow['memoryEmbeddingApiKey'] =
+    typeof memEmbedKeyRaw === 'string' && memEmbedKeyRaw.trim() ? memEmbedKeyRaw.trim().slice(0, 2048) : undefined
   return {
     id: 'default',
     autoSummaryEnabled,
     autoSummaryInterval: n,
     autoSummaryDefaultMemoryTriggerMode,
+    memoryVectorRecallEnabled,
+    memoryEmbeddingModelId,
+    memoryEmbeddingApiUrl,
+    memoryEmbeddingApiKey,
     aiRoundCountByConversation:
       Object.keys(aiRoundCountByConversation).length > 0 ? aiRoundCountByConversation : undefined,
     summaryCursorTimestampByConversation:
@@ -1309,6 +1360,7 @@ function startOfLocalDayFromDateKey(dateKey: string): number | null {
 function normalizeRelationship(input: unknown): Relationship {
   const now = Date.now()
   const r = (input ?? {}) as Partial<Relationship>
+  const fromCallsToRaw = (r as { fromCallsTo?: unknown }).fromCallsTo
   return {
     id: typeof r.id === 'string' ? r.id : `rel-${now}-${Math.random().toString(36).slice(2, 8)}`,
     fromCharacterId: typeof r.fromCharacterId === 'string' ? r.fromCharacterId : '',
@@ -1316,6 +1368,7 @@ function normalizeRelationship(input: unknown): Relationship {
     relation: typeof r.relation === 'string' ? r.relation : '',
     fromPerspective: typeof r.fromPerspective === 'string' ? r.fromPerspective : '',
     toPerspective: typeof r.toPerspective === 'string' ? r.toPerspective : '',
+    fromCallsTo: typeof fromCallsToRaw === 'string' ? fromCallsToRaw : '',
     isPlayerIdentity: typeof (r as { isPlayerIdentity?: unknown }).isPlayerIdentity === 'boolean' ? r.isPlayerIdentity : false,
   }
 }
@@ -2121,6 +2174,7 @@ export class PersonaDb {
       relation: '联系人',
       fromPerspective: `${identityName}认识${characterName}，双方已建立联系。`,
       toPerspective: `${characterName}认识${identityName}，双方已建立联系。`,
+      fromCallsTo: '',
       isPlayerIdentity: true,
     }
     const b: Relationship = {
@@ -2130,6 +2184,7 @@ export class PersonaDb {
       relation: '联系人',
       fromPerspective: `${characterName}认识${identityName}，双方已建立联系。`,
       toPerspective: `${identityName}认识${characterName}，双方已建立联系。`,
+      fromCallsTo: '',
       isPlayerIdentity: true,
     }
     const db = await openDb()
@@ -3579,16 +3634,23 @@ export class PersonaDb {
   private static readonly MEMORY_PROMPT_LEGACY_UNTAGGED_MAX = 8
 
   /**
-   * 供 AI 注入用：仅纳入「关键词命中」的长期记忆 + 少量无关键词兜底条目，控制 token。
+   * 供 AI 注入用：纳入「关键词命中」+ 可选「向量语义召回」+ 少量无关键词兜底，控制 token。
    * `relevanceText` 建议由最近气泡、用户末条输入、线下摘录尾部等拼接（调用方可用 `buildMemoryRelevanceHaystack`）。
+   * 向量请求使用的 url/key：优先记忆设置里的「向量专用」项，缺省则回落到 `opts.apiConfig`（聊天 / chatCard）。
    */
-  async formatCharacterMemoriesForPromptByRelevance(characterId: string, relevanceText: string): Promise<string> {
+  async formatCharacterMemoriesForPromptByRelevance(
+    characterId: string,
+    relevanceText: string,
+    opts?: MemoryVectorRecallOpts | null,
+  ): Promise<string> {
     const cid = characterId.trim()
     if (!cid) return ''
     const hay = String(relevanceText || '')
       .replace(/\s+/g, ' ')
       .trim()
       .toLowerCase()
+
+    const memorySettings = await this.getMemorySettings()
 
     const privRaw = await this.listCharacterMemoriesForCharacter(cid)
     const privateList = privRaw.filter((m) => m.memoryScope !== 'group')
@@ -3609,6 +3671,55 @@ export class PersonaDb {
     const taggedPrivateHits = pickKeywordHits(privateList)
     const taggedGroupHits = pickKeywordHits(groupList)
 
+    let vecExtraPrivate: CharacterMemory[] = []
+    let vecExtraGroup: CharacterMemory[] = []
+    let vectorUsed = false
+    const embedCred = resolveEmbeddingApiCredentials(memorySettings, opts?.apiConfig ?? null)
+    if (opts && isMemoryVectorRecallEnabled(memorySettings, opts) && embedCred) {
+      const rawHay = String(relevanceText || '').trim()
+      if (rawHay.length >= 10) {
+        try {
+          const modelId = resolveMemoryEmbeddingModelId(memorySettings, opts)
+          const queryVec = await fetchEmbeddingVector(embedCred, rawHay, modelId)
+          if (queryVec.length) {
+            const union = [...privateList, ...groupList]
+            await backfillMemoryEmbeddingsBestEffort({
+              memories: union,
+              upsert: (m) => this.upsertCharacterMemory(m),
+              apiConfig: embedCred,
+              modelId,
+              queryDim: queryVec.length,
+            })
+            const privFresh = await this.listCharacterMemoriesForCharacter(cid)
+            const groupFresh = await this.listGroupMemoriesInvolvingCharacter(cid)
+            const privCandidates = privFresh.filter((m) => m.memoryScope !== 'group')
+
+            const exclP = new Set<string>([...alwaysPrivate, ...taggedPrivateHits].map((m) => m.id))
+            vecExtraPrivate = pickMemoriesByVectorSimilarity({
+              candidates: privCandidates,
+              queryVec,
+              topK: MEMORY_VECTOR_TOP_PRIVATE,
+              minSim: MEMORY_VECTOR_MIN_SIM,
+              excludeIds: exclP,
+            })
+            if (vecExtraPrivate.length) vectorUsed = true
+
+            const exclG = new Set<string>([...alwaysGroup, ...taggedGroupHits].map((m) => m.id))
+            vecExtraGroup = pickMemoriesByVectorSimilarity({
+              candidates: groupFresh,
+              queryVec,
+              topK: MEMORY_VECTOR_TOP_GROUP,
+              minSim: MEMORY_VECTOR_MIN_SIM,
+              excludeIds: exclG,
+            })
+            if (vecExtraGroup.length) vectorUsed = true
+          }
+        } catch {
+          /* 仅关键词 */
+        }
+      }
+    }
+
     const legacyPrivate = privateList
       .filter((m) => !isMemoryAlwaysTrigger(m) && !memoryHasTriggerDimensions(m))
       .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -3618,15 +3729,17 @@ export class PersonaDb {
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, PersonaDb.MEMORY_PROMPT_LEGACY_UNTAGGED_MAX)
 
+    const hasPrimaryPrivate = taggedPrivateHits.length || alwaysPrivate.length || vecExtraPrivate.length
     const privatePick = PersonaDb.mergeMemoriesForPromptPick(
-      [...alwaysPrivate, ...taggedPrivateHits],
-      taggedPrivateHits.length || alwaysPrivate.length ? legacyPrivate.slice(0, 3) : legacyPrivate,
+      [...alwaysPrivate, ...taggedPrivateHits, ...vecExtraPrivate],
+      hasPrimaryPrivate ? legacyPrivate.slice(0, 3) : legacyPrivate,
     )
     const groupTaggedUnion = new Map<string, CharacterMemory>()
-    for (const m of [...alwaysGroup, ...taggedGroupHits]) groupTaggedUnion.set(m.id, m)
+    for (const m of [...alwaysGroup, ...taggedGroupHits, ...vecExtraGroup]) groupTaggedUnion.set(m.id, m)
+    const hasPrimaryGroup = taggedGroupHits.length || alwaysGroup.length || vecExtraGroup.length
     const groupPick = PersonaDb.mergeMemoriesForPromptPick(
       [...groupTaggedUnion.values()],
-      taggedGroupHits.length || alwaysGroup.length ? legacyGroup.slice(0, 3) : legacyGroup,
+      hasPrimaryGroup ? legacyGroup.slice(0, 3) : legacyGroup,
     )
 
     const groupIds = [...new Set(groupPick.map((m) => m.groupId).filter((x): x is string => !!x?.trim()))]
@@ -3639,14 +3752,14 @@ export class PersonaDb {
     const chunks: string[] = []
     if (privatePick.length) {
       chunks.push(
-        `【与该角色的私聊长期记忆（关键词筛选 + 少量无标签兜底）】\n${privatePick
+        `【与该角色的私聊长期记忆（关键词与向量语义筛选 + 少量无标签兜底）】\n${privatePick
           .map((m, i) => `${i + 1}. ${m.content.trim()}`)
           .join('\n')}`,
       )
     }
     if (groupPick.length) {
       chunks.push(
-        `【你们共同参与过的群聊中被提炼的长期记忆（关键词筛选 + 少量无标签兜底）】\n${groupPick
+        `【你们共同参与过的群聊中被提炼的长期记忆（关键词与向量语义筛选 + 少量无标签兜底）】\n${groupPick
           .map((m, i) => {
             const gid = m.groupId?.trim()
             const gn = gid ? groupNameById.get(gid) ?? '群聊' : '群聊'
@@ -3657,7 +3770,10 @@ export class PersonaDb {
     }
     if (!chunks.length) return ''
     const body = chunks.join('\n\n')
-    return `${body}\n\n（以上含「始终触发」记忆、关键词命中项与少量无触发配置的旧数据兜底。请按情境自然使用，勿机械复读。）`
+    const tail = vectorUsed
+      ? '以上含「始终触发」、关键词命中、向量语义召回及无触发词兜底。请按情境自然使用，勿机械复读。'
+      : '以上含「始终触发」记忆、关键词命中项与少量无触发配置的旧数据兜底。请按情境自然使用，勿机械复读。'
+    return `${body}\n\n（${tail}）`
   }
 
   private static mergeMemoriesForPromptPick(matches: CharacterMemory[], legacy: CharacterMemory[]): CharacterMemory[] {
