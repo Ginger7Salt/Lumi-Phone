@@ -142,7 +142,7 @@ import { CheckPhoneFlow } from './checkPhone/CheckPhoneFlow'
 import { WeChatChatCameraScreen } from './WeChatChatCameraScreen'
 import { useWeChatConsole } from './WeChatConsoleContext'
 import { GroupPsycheModal } from './GroupPsycheModal'
-import { HeartWhisperModal } from './HeartWhisperModal'
+import { formatHeartWhisperGenerateError, HeartWhisperModal } from './HeartWhisperModal'
 import { RedPacketChatRow } from './redPacket/RedPacketChatRow'
 import { TransferChatRow } from './transfer/TransferChatRow'
 import { RedPacketModal } from './redPacket/RedPacketModal'
@@ -184,6 +184,8 @@ const ENTER_DOUBLE_TAP_WINDOW_MS = 220
 const ENTER_SINGLE_COMMIT_DELAY_MS = 80
 const CHAT_VISIBLE_MSG_INITIAL = 30
 const CHAT_VISIBLE_MSG_STEP = 30
+/** IndexedDB phoneKv：按会话持久化弹幕浮层，避免离开/刷新后丢失 */
+const WECHAT_DM_BULLETS_KV_PREFIX = 'wechat-dm-bullets-v1'
 /** 群聊：每名角色单次「出场」最多落几条气泡再交给下一名，避免一人连刷一长串 */
 const hasSpeechRecognitionApi = true
 const VOICE_HOLD_START_MS = 180
@@ -1274,6 +1276,74 @@ type DmBullet = {
   topPct?: number
 }
 
+function normalizeDmBulletRow(x: unknown): DmBullet | null {
+  if (!x || typeof x !== 'object') return null
+  const r = x as Record<string, unknown>
+  const id = typeof r.id === 'string' ? r.id.trim() : ''
+  const text = typeof r.text === 'string' ? r.text : ''
+  if (!id || !text.trim()) return null
+  const track = typeof r.track === 'number' && Number.isFinite(r.track) ? Math.max(0, Math.floor(r.track)) : 0
+  const durationSec =
+    typeof r.durationSec === 'number' && Number.isFinite(r.durationSec) ? Math.max(3, r.durationSec) : 8
+  const startDelaySec =
+    typeof r.startDelaySec === 'number' && Number.isFinite(r.startDelaySec) ? Math.max(0, r.startDelaySec) : undefined
+  const fontPx = typeof r.fontPx === 'number' && Number.isFinite(r.fontPx) ? Math.max(10, Math.min(36, r.fontPx)) : 14
+  const colorRgba = typeof r.colorRgba === 'string' && r.colorRgba.trim() ? r.colorRgba.trim() : 'rgba(0,0,0,0.85)'
+  const st = r.style
+  const style: DmBullet['style'] =
+    st === 'gray' || st === 'white' || st === 'none' ? st : 'none'
+  const pm = r.positionMode
+  const positionMode: DmBullet['positionMode'] =
+    pm === 'top' || pm === 'middle' || pm === 'bottom' || pm === 'random' ? pm : 'top'
+  let topPct: number | undefined
+  if (typeof r.topPct === 'number' && Number.isFinite(r.topPct)) {
+    topPct = Math.min(100, Math.max(0, r.topPct))
+  }
+  return {
+    id,
+    text,
+    track,
+    durationSec,
+    startDelaySec,
+    fontPx,
+    colorRgba,
+    style,
+    positionMode,
+    topPct,
+  }
+}
+
+function parseStoredDmBullets(raw: unknown): DmBullet[] {
+  let arr: unknown[] = []
+  if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>
+    if (Array.isArray(o.bullets)) arr = o.bullets
+  }
+  const out: DmBullet[] = []
+  for (const x of arr) {
+    const b = normalizeDmBulletRow(x)
+    if (b) out.push(b)
+  }
+  return out
+}
+
+/**
+ * 从 KV 恢复时未经过 `dmLaneBusyUntilRef` 调度，多条可能落在同一 track 且仅有较小 startDelay 抖动；按列表顺序为每条轨道维护「下一发最早可开」时间，与同轨 `safeGapMs`（≈0.92×时长，下限约 1.4s）一致，避免同一条水平线上叠字。
+ */
+function staggerDmBulletsAfterRestore(bullets: DmBullet[], trackCount: number): DmBullet[] {
+  const tc = Math.max(1, trackCount)
+  const nextEarliestSec = new Map<number, number>()
+  return bullets.map((b) => {
+    const track = Math.min(Math.max(0, b.track), tc - 1)
+    const gapSec = Math.max(1.4, b.durationSec * 0.92)
+    const wanted = b.startDelaySec ?? 0
+    const minStart = nextEarliestSec.get(track) ?? 0
+    const startDelaySec = Math.max(wanted, minStart)
+    nextEarliestSec.set(track, startDelaySec + gapSec)
+    return { ...b, track, startDelaySec }
+  })
+}
+
 export function ChatRoom({
   onBack: _onBack,
   onOtherTypingChange,
@@ -1398,6 +1468,68 @@ export function ChatRoom({
   const [peerBusyRow, setPeerBusyRow] = useState<CharacterBusySettingsRow | null>(null)
   const [globalModeBusyEnabled, setGlobalModeBusyEnabled] = useState(true)
   const [dmBullets, setDmBullets] = useState<DmBullet[]>([])
+  const dmBulletsRef = useRef<DmBullet[]>([])
+  dmBulletsRef.current = dmBullets
+
+  /** 从 KV 恢复当前会话弹幕；切换会话时先清空避免串台 */
+  useEffect(() => {
+    setDmBullets([])
+    let cancelled = false
+    void (async () => {
+      try {
+        const raw = await personaDb.getPhoneKv(`${WECHAT_DM_BULLETS_KV_PREFIX}:${conversationKey}`)
+        if (cancelled) return
+        let parsed = parseStoredDmBullets(raw).slice(-180)
+        try {
+          const g = await personaDb.getGlobalSettings()
+          const pid = (personaCharacterId?.trim() || conversationCharacterId.trim()) || ''
+          const row = pid ? await personaDb.getCharacterDanmakuSettings(pid) : null
+          const eff = resolveEffectiveDanmakuVisuals(g, pid, row)
+          if (eff && !eff.skipCharacter) {
+            parsed = staggerDmBulletsAfterRestore(parsed, densityToTrackCount(eff.density))
+          }
+        } catch {
+          /* 设置读失败时仍使用未错开的列表 */
+        }
+        if (cancelled) return
+        setDmBullets(parsed)
+      } catch {
+        if (!cancelled) setDmBullets([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [conversationKey, personaCharacterId, conversationCharacterId])
+
+  /** 弹幕列表变更后 debounce 落库。**禁止写入空数组**，避免加载间隙、切换瞬间把 KV 里已有弹幕覆盖掉 */
+  useEffect(() => {
+    if (!danmakuEnabled) return
+    if (dmBulletsRef.current.length === 0) return
+    const t = window.setTimeout(() => {
+      const snap = dmBulletsRef.current.slice(-180)
+      if (snap.length === 0) return
+      void personaDb.setPhoneKv(`${WECHAT_DM_BULLETS_KV_PREFIX}:${conversationKey}`, {
+        v: 1,
+        bullets: snap,
+      })
+    }, 320)
+    return () => window.clearTimeout(t)
+  }, [dmBullets, conversationKey, danmakuEnabled])
+
+  /** 离开本会话时立刻保存；空列表不写回，避免卸载/切换瞬间误清空 KV */
+  useEffect(() => {
+    const key = conversationKey
+    return () => {
+      const snap = dmBulletsRef.current.slice(-180)
+      if (snap.length === 0) return
+      void personaDb.setPhoneKv(`${WECHAT_DM_BULLETS_KV_PREFIX}:${key}`, {
+        v: 1,
+        bullets: snap,
+      })
+    }
+  }, [conversationKey])
+
   const dmLaneBusyUntilRef = useRef<number[]>([])
 
   useEffect(() => {
@@ -1920,6 +2052,32 @@ export function ChatRoom({
         mapped = filterGroupChatItemsHideModeratorOnlyBubbles(mapped, roomType, gSnap)
       }
       if (!stillThisRun()) return
+      /** 让本轮乐观 append 的 setState 先提交到 itemsRef，再读合并（缓解首条气泡偶发被 hydrate 覆盖） */
+      await Promise.resolve()
+      await new Promise<void>((r) => requestAnimationFrame(() => r()))
+      if (!stillThisRun()) return
+      /**
+       * 从 DB 拉取的列表可能比界面上的 items 少一拍（append 已 `setItems` 但存储事件触发的 hydrate 仍读到旧快照）。
+       * 若不合并，会把乐观更新的气泡「盖没」，直至退出再进才重新 hydrate 到。
+       */
+      {
+        const dbMsgs = extractMessages(mapped)
+        const dbIds = new Set(dbMsgs.map((m) => m.id))
+        const pending = extractMessages(itemsRef.current).filter((m) => !dbIds.has(m.id))
+        if (pending.length) {
+          const mergedMsgs = [...dbMsgs, ...pending].sort((a, b) => a.timestamp - b.timestamp)
+          let mergedItems = rebuildWithCurrentTime(mergedMsgs)
+          if (roomType === 'group' && groupId?.trim()) {
+            mergedItems = filterGroupChatItemsHideModeratorOnlyBubbles(
+              mergedItems,
+              roomType,
+              groupDocRef.current,
+            )
+          }
+          mapped = mergedItems
+        }
+      }
+      if (!stillThisRun()) return
       const prevOtherIds = new Set(
         itemsRef.current
           .filter((it): it is ChatMsg => it.kind === 'msg' && it.from === 'other')
@@ -1990,6 +2148,7 @@ export function ChatRoom({
       conversationKey,
       getCurrentTimeMs,
       rebuildWithCurrentTime,
+      extractMessages,
       useLumiProjectAssistantPrompt,
       personaCharacterId,
       conversationCharacterId,
@@ -2263,6 +2422,8 @@ export function ChatRoom({
   const [redPacketModalId, setRedPacketModalId] = useState<string | null>(null)
   const [heartWhisperLoading, setHeartWhisperLoading] = useState(false)
   const [heartWhisperData, setHeartWhisperData] = useState<HeartWhisper | null>(null)
+  const [heartWhisperGenerateError, setHeartWhisperGenerateError] = useState<string | null>(null)
+  const [groupPsycheGenerateError, setGroupPsycheGenerateError] = useState<string | null>(null)
   const [groupPsycheArchive, setGroupPsycheArchive] = useState<GroupPsycheArchive | null>(null)
   const retryReplyBiasRef = useRef('')
   const { openConsole } = useWeChatConsole()
@@ -3057,8 +3218,12 @@ export function ChatRoom({
       dmLaneBusyUntilRef.current = Array.from({ length: trackCount }, () => 0)
     }
 
+    /** 同一批入队：错峰入场，避免首轮多条同时从右侧涌出（累积延迟：首条略晚，其后每条再等一轮随机间隔） */
+    let waveAccumMs = 0
     lines.forEach((line, i) => {
-      const scheduleDelay = Math.max(0, i * randomBetween(80, 260) + randomBetween(0, 900))
+      const stepMs = i === 0 ? randomBetween(140, 520) : randomBetween(400, 980)
+      waveAccumMs += stepMs
+      const scheduleDelay = waveAccumMs
       window.setTimeout(() => {
         const pickTrackWithGap = () => {
           const now = Date.now()
@@ -3084,7 +3249,8 @@ export function ChatRoom({
           const id = `dm-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`
           const durationJitter = (Math.random() - 0.5) * 2.2
           const realDuration = Math.max(3, durationSec + durationJitter)
-          const safeGapMs = Math.max(1100, realDuration * 1000 * 0.62)
+          /* 同轨下一发须等上一条大致离开可视区，避免水平叠字（原 0.62 易重叠） */
+          const safeGapMs = Math.max(1400, realDuration * 1000 * 0.92)
           dmLaneBusyUntilRef.current[track] = Date.now() + safeGapMs
           const topPct =
             eff.position === 'random'
@@ -3098,7 +3264,7 @@ export function ChatRoom({
                 text: line,
                 track,
                 durationSec: realDuration,
-                startDelaySec: Math.random() * 0.65,
+                startDelaySec: Math.random() * 0.35 + Math.min(i * 0.1, 1.8),
                 fontPx,
                 colorRgba,
                 style: eff.style,
@@ -3119,14 +3285,15 @@ export function ChatRoom({
     if (heartWhisperLoading || roomType !== 'group') return
     const g = groupLive ?? groupDocRef.current
     if (!g) {
-      showComposerToast('群资料未就绪')
+      setGroupPsycheGenerateError('群资料未就绪，请稍后再试')
       return
     }
     const npcs = filterGroupNpcMembersExcludingUserAndBot(g.members)
     if (!npcs.length) {
-      showComposerToast('群内暂无 NPC 成员')
+      setGroupPsycheGenerateError('群内暂无 NPC 成员，无法生成群聊心语')
       return
     }
+    setGroupPsycheGenerateError(null)
     setHeartWhisperLoading(true)
     try {
       let playerIdentity: PlayerIdentity | null = null
@@ -3163,6 +3330,7 @@ export function ChatRoom({
             .filter((s) => s.length >= 2),
         ),
       ]
+      const wbGroupPsycheIds = [...new Set(roster.map((r) => r.charId.trim()))]
       const archive = await requestWeChatGroupPsyche({
         apiConfig,
         playerIdentity,
@@ -3176,13 +3344,14 @@ export function ChatRoom({
         recentGroupChatsReference: groupRef || undefined,
         unsummarizedPrivateNotes: memPack.unsPrivate || undefined,
         unsummarizedGroupNotes: memPack.unsGroup || undefined,
+        chatMemberIds: wbGroupPsycheIds,
       })
       await personaDb.putGroupPsyche(conversationCharacterId, archive)
       setGroupPsycheArchive(archive)
+      setGroupPsycheGenerateError(null)
       showComposerToast('心语已更新')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '生成失败'
-      showComposerToast(`心语生成失败：${msg}`)
+      setGroupPsycheGenerateError(formatHeartWhisperGenerateError(err))
     } finally {
       setHeartWhisperLoading(false)
     }
@@ -3203,6 +3372,7 @@ export function ChatRoom({
 
   const generateHeartWhisper = useCallback(async () => {
     if (heartWhisperLoading) return
+    setHeartWhisperGenerateError(null)
     setHeartWhisperLoading(true)
     try {
       let character: Character | null = null
@@ -3231,6 +3401,7 @@ export function ChatRoom({
       const groupRef = await loadPrivateGroupChatsRecentReference()
       const tx = itemsToTranscript(itemsRef.current)
       const memPack = await buildPrivateMemoryInjectionForAi(tx, '')
+      const wbHeartIds = [...new Set([pcid?.trim()].filter((x) => !!x && x !== '__none__'))]
       const whisper = await requestWeChatHeartWhisper({
         apiConfig,
         character,
@@ -3245,13 +3416,15 @@ export function ChatRoom({
         recentGroupChatsReference: groupRef || undefined,
         unsummarizedPrivateNotes: memPack.unsPrivate || undefined,
         unsummarizedGroupNotes: memPack.unsGroup || undefined,
+        chatMemberIds: wbHeartIds,
+        globalWechatPlate: 'private_chat',
       })
       await personaDb.putHeartWhisper(conversationCharacterId, whisper)
       setHeartWhisperData(whisper)
+      setHeartWhisperGenerateError(null)
       showComposerToast('心语已更新')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '生成失败'
-      showComposerToast(`心语生成失败：${msg}`)
+      setHeartWhisperGenerateError(formatHeartWhisperGenerateError(err))
     } finally {
       setHeartWhisperLoading(false)
     }
@@ -3422,6 +3595,11 @@ export function ChatRoom({
         }
 
         const pm = lumiAssistantChat ? 'lumi-assistant' : 'persona'
+        /** 档案室法则仅匹配 NPC，不包含玩家身份 */
+        const privateWorldbookMemberIds: string[] = [
+          ...new Set([personaCharacterId?.trim()].filter((x) => !!x && x !== '__none__')),
+        ]
+        let loreSceneMemberIds: string[] = privateWorldbookMemberIds
         const offlineDatingPlotsContext =
           pm === 'persona' && cid
             ? await loadOfflineDatingPlotsPromptBlock(cid, character?.name ?? null)
@@ -3604,6 +3782,7 @@ export function ChatRoom({
               danmakuSubApiEnabled &&
               !isSameApiConfigShape(danmakuApiConfig, apiConfig)
             const shouldSplitDanmakuCall = !!danmakuConfig && hasDanmakuSubApi
+            const globalWechatPlate = roomType === 'group' ? ('group_chat' as const) : ('private_chat' as const)
             logger.log(
               'ai',
               `flushAiReplies: promptMode=${pm} personaCharacterId=${cid || 'none'} offlinePlotsChars=${offlineDatingPlotsContext.length} lastSelf=${lastSelf?.id ?? 'none'} lastOther=${lastOther?.id ?? 'none'} pickedImageFrom=${lastSelfWithImage?.id ?? 'none'} hasImage=${Boolean(img?.base64?.trim())} imgLen=${img?.base64?.trim()?.length ?? 0}`,
@@ -3840,6 +4019,9 @@ export function ChatRoom({
                 transcript,
               })
               const groupShieldedModeratorAnnex = buildGroupShieldedModeratorAnnex(itemsRef.current)
+              /** 群内仅 NPC characterId 参与档案室匹配 */
+              const wbGroupIds = new Set<string>(allowedCharIds)
+              loreSceneMemberIds = [...wbGroupIds]
               const systemContent = buildWeChatGroupMultiSpeakerSystem({
                 groupName: gChat?.name?.trim() || '群聊',
                 groupId: groupId.trim(),
@@ -3855,6 +4037,7 @@ export function ChatRoom({
                 currentTimeMs: getCurrentTimeMs(),
                 promptMode: pm,
                 danmakuInstruction: shouldSplitDanmakuCall ? undefined : danmakuInstruction || undefined,
+                chatMemberIds: [...wbGroupIds],
               })
               const userImageIsSticker = Boolean(lastSelfWithImage?.text?.trim().startsWith('[表情包]'))
               const gm =
@@ -3905,6 +4088,8 @@ export function ChatRoom({
                   currentTimeMs: getCurrentTimeMs(),
                   danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
                   groupChatTranscript: false,
+                  chatMemberIds: loreSceneMemberIds,
+                  globalWechatPlate,
                 })
               } else {
                 aiReply = await requestWeChatPeerReplyBubblesWithImage({
@@ -3929,6 +4114,8 @@ export function ChatRoom({
                   currentTimeMs: getCurrentTimeMs(),
                   danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
                   groupChatTranscript: false,
+                  chatMemberIds: loreSceneMemberIds,
+                  globalWechatPlate,
                 })
               }
             } else {
@@ -3951,6 +4138,8 @@ export function ChatRoom({
                 currentTimeMs: getCurrentTimeMs(),
                 danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
                 groupChatTranscript: false,
+                chatMemberIds: loreSceneMemberIds,
+                globalWechatPlate,
               })
             }
             if (shouldSplitDanmakuCall && danmakuApiConfig && danmakuConfig) {
@@ -3971,6 +4160,8 @@ export function ChatRoom({
                   recentGroupChatsReference: recentGroupChatsReference || undefined,
                   unsummarizedPrivateNotes: unsPrivateRound.trim() || undefined,
                   unsummarizedGroupNotes: unsGroupRound.trim() || undefined,
+                  chatMemberIds: loreSceneMemberIds,
+                  globalWechatPlate,
                 })
                 logger.log('ai', `[DMDBG] split-call enabled lines=${splitLines.length}`)
                 if (splitLines.length > 0) queueMicrotask(() => enqueueDanmakuLines(splitLines))
@@ -7831,6 +8022,7 @@ export function ChatRoom({
             unsummarizedPrivateNotes: vMem.unsPrivate || undefined,
             unsummarizedGroupNotes: vMem.unsGroup || undefined,
             currentTimeMs: getCurrentTimeMs(),
+            globalWechatPlate: roomType === 'group' ? 'group_chat' : 'private_chat',
           })
           if (res.decision === 'ACCEPT') {
             const opening = String(res.opening ?? '').trim()
@@ -7945,6 +8137,7 @@ export function ChatRoom({
             unsummarizedPrivateNotes: vMem.unsPrivate || undefined,
             unsummarizedGroupNotes: vMem.unsGroup || undefined,
             currentTimeMs: getCurrentTimeMs(),
+            globalWechatPlate: roomType === 'group' ? 'group_chat' : 'private_chat',
           })
         }}
         onTranscribeAudio={async (audioBlob) => {
@@ -7964,7 +8157,12 @@ export function ChatRoom({
           open={heartWhisperOpen}
           loading={heartWhisperLoading}
           archive={groupPsycheArchive}
-          onClose={() => setHeartWhisperOpen(false)}
+          generateError={groupPsycheGenerateError}
+          onDismissGenerateError={() => setGroupPsycheGenerateError(null)}
+          onClose={() => {
+            setHeartWhisperOpen(false)
+            setGroupPsycheGenerateError(null)
+          }}
           onGenerate={() => void generateGroupPsyche()}
         />
       ) : (
@@ -7972,7 +8170,12 @@ export function ChatRoom({
           open={heartWhisperOpen}
           loading={heartWhisperLoading}
           data={heartWhisperData}
-          onClose={() => setHeartWhisperOpen(false)}
+          generateError={heartWhisperGenerateError}
+          onDismissGenerateError={() => setHeartWhisperGenerateError(null)}
+          onClose={() => {
+            setHeartWhisperOpen(false)
+            setHeartWhisperGenerateError(null)
+          }}
           onGenerate={() => void generateHeartWhisper()}
         />
       )}

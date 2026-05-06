@@ -51,14 +51,32 @@ function stripFirstCoTBlock(src: string): { inner: string; rest: string } | null
   return null
 }
 
-/** 接口截断或模型漏写闭合标签时，整段无法被非贪婪正则匹配 */
+/**
+ * 接口截断或模型漏写闭合标签时，非贪婪正则匹配不到，`stripFirstCoTBlock` 会跳过。
+ * 旧逻辑：把 `<thinking>` 之后**整段**当思维链 → 正文恒为空，界面变成「剧情进思维链、字数 0」。
+ * 现改为：仅在与「典型分册思维链」体量一致时才吞掉；过长或不像分册结构则放弃本条路径，避免误吞正文。
+ */
 function stripUnclosedThinkingBlock(src: string): { inner: string; rest: string } | null {
   if (/<\/thinking>/i.test(src)) return null
   const open = /<thinking\b[^>]*>/i.exec(src)
   if (!open || open.index === undefined) return null
   const after = src.slice(open.index + open[0].length).trim()
   if (!after) return null
+  if (after.length > 4200) return null
+  const bracketChunks = after.match(/【[^】]+】/g) || []
+  if (after.length > 700 && bracketChunks.length < 2) return null
   return { inner: after, rest: '' }
+}
+
+/** 是否像 Lumi 分册式思维链（用于区分「真思维链」与误塞进 thinking 的正文） */
+function looksLikeStructuredCoT(s: string): boolean {
+  const t = String(s || '').trim()
+  if (!t) return false
+  if (t.length < 160) return true
+  const brackets = (t.match(/【[^】]{2,120}】/g) || []).length
+  if (brackets >= 4) return true
+  if (/【\s*Lumi终检单\s*】|终检单】|【\s*篇幅/.test(t)) return true
+  return false
 }
 
 function stripLeadingMarkdownCoT(src: string): { inner: string; rest: string } | null {
@@ -110,8 +128,18 @@ export function splitDatingAssistantOutput(raw: string): {
   } else {
     content = text
   }
-  const bodyTrim = stripEllipsisOnlyOsSpans(stripHtmlComments(content))
+  let bodyTrim = stripEllipsisOnlyOsSpans(stripHtmlComments(content))
   const original = String(raw || '').trim()
-  const finalContent = bodyTrim || (logicPass || planSummary ? '' : original)
+  let finalContent = bodyTrim || (logicPass || planSummary ? '' : original)
+
+  // 正文被剥空但 logicPass 很长且不像分册思维链：多为模型把剧情写在 thinking 内或未闭合误匹配 —— 回落为正文展示，避免 0 字与「全文只在折叠里」。
+  if (!finalContent.trim() && logicPass.trim()) {
+    const lp = logicPass.trim()
+    if (!looksLikeStructuredCoT(lp) && lp.length > 35) {
+      finalContent = stripEllipsisOnlyOsSpans(stripHtmlComments(lp))
+      logicPass = ''
+    }
+  }
+
   return { logicPass, planSummary, content: finalContent }
 }

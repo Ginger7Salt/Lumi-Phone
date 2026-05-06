@@ -168,6 +168,7 @@ export async function syncPrivateMemosWithAi(params: {
   const offlineDatingPlotsContext =
     promptMode === 'persona' && cid ? await loadOfflineDatingPlotsPromptBlock(cid, character?.name ?? null) : ''
 
+  const wbNotesIds = [cid].map((x) => String(x ?? '').trim()).filter((x) => x && x !== '__none__')
   const baseSystem = buildSystemContent({
     character,
     playerIdentity,
@@ -176,6 +177,7 @@ export async function syncPrivateMemosWithAi(params: {
     longTermMemoryNotes: memoryNotes,
     worldBackgroundPrompt,
     offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+    chatMemberIds: wbNotesIds,
   })
 
   const recentChatRows = cid ? await personaDb.listWeChatChatMessagesRecentByCharacter({ characterId: cid, limit: 60 }) : []

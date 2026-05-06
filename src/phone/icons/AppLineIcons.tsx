@@ -94,6 +94,17 @@ export function IconDataArchive(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+/** 档案室：层叠书页 + 细脊线 */
+export function IconLoreArchive(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M7 5.5h7.5a3.5 3.5 0 0 1 3.5 3.5v9a1.5 1.5 0 0 1-1.5 1.5H7a2.5 2.5 0 0 1-2.5-2.5v-9A3.5 3.5 0 0 1 7 5.5z" />
+      <path d="M8.5 7.25h6.2M8.5 10.1h6.2M8.5 12.95h4.3" opacity="0.35" />
+      <path d="M9.2 5.35L8.2 4.1a1.2 1.2 0 0 1 .2-1.85h6.1a3.1 3.1 0 0 1 3.1 3.1v1.1" opacity="0.45" />
+    </svg>
+  )
+}
+
 const map = {
   wechat: IconWeChat,
   takeout: IconTakeout,
@@ -101,6 +112,7 @@ const map = {
   api: IconApi,
   voiceprint: IconVoiceprint,
   dataArchive: IconDataArchive,
+  loreArchive: IconLoreArchive,
   appearance: IconAppearance,
 } as const
 

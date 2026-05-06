@@ -392,6 +392,7 @@ function normalizeAppPageStyles(parsed: unknown): CustomizationState['appPageSty
     api: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...record.api }),
     voiceprint: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...record.voiceprint }),
     dataArchive: migrateAppPage({ ...def.dataArchive, ...record.dataArchive }),
+    loreArchive: migrateAppPage({ ...def.loreArchive, ...record.loreArchive }),
     appearance: migrateAppPage(appearanceMerged),
   }
 }

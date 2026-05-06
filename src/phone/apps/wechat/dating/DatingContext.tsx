@@ -38,6 +38,11 @@ import { buildVnBgmPromptBlock } from './vnBgmCatalog'
 import type { Character, PlayerIdentity } from '../newFriendsPersona/types'
 import { formatWorldBackgroundForPrompt } from '../newFriendsPersona/worldBackgroundFormat'
 import { buildCharacterCard, buildPhysiquePromptSectionForCharacter, buildWorldBookText } from '../wechatChatAi'
+import { buildWorldbookContext } from '../../../worldbook/buildWorldbookContext'
+import { getWorldbookLoreEntriesSnapshot } from '../../../worldbook/worldbookLoreStore'
+import { resolveEffectiveDanmakuVisuals } from '../danmakuResolve'
+import { requestWeChatDanmakuVarietyShow, type ChatTranscriptTurn } from '../wechatChatAi'
+import { emitDatingOfflineDanmakuLines } from './datingOfflineDanmakuBridge'
 
 const STORAGE_KEY = 'wechat-dating-archives-v1'
 const CHARACTERS_KEY = 'wechat-dating-characters-v1'
@@ -89,6 +94,15 @@ function formatSceneHintsFromPlots(history: PlotItem[], maxTotalChars: number): 
   const marker = '…【以下保留末尾场景线索】\n'
   return marker + joined.slice(-(maxTotalChars - marker.length))
 }
+
+function plotsToDanmakuTranscript(plots: PlotItem[], characterRealName: string): ChatTranscriptTurn[] {
+  return plots.map((p) => ({
+    id: p.id,
+    from: p.type === 'player' ? 'self' : 'other',
+    text: stripPlotBodyForPrompt(p).slice(0, 8000),
+    speakerLabel: p.type === 'player' ? undefined : characterRealName,
+  }))
+}
 const FICTIONAL_COT_APPENDIX = `
 ---
 【Fictional Immersion CoT】
@@ -116,6 +130,8 @@ type Ctx = {
   setVnVoiceDisabled: (disabled: boolean) => void
   /** VN 自定义输入：转述模式（输入仅为引导，非既成事实） */
   setVnCustomInputParaphrase: (v: boolean) => void
+  /** 线下普通模式：每轮 AI 后是否拉取弹幕 */
+  setOfflineDanmakuEnabled: (enabled: boolean) => void
   /** @returns 是否已成功写入 AI 剧情（失败时为 false，便于界面保留输入并重试） */
   sendPlayerInput: (text: string, perspective?: NarrativePerspective, genOptions?: NarrativeGenOptions) => Promise<boolean>
   /** 选中分支卡片：写入续写执导，由页面把 card 注入输入框 */
@@ -371,6 +387,10 @@ function mergeArchives(chars: CharacterInfo[], parsed: unknown | null): Archives
           typeof (saved as any).vnCustomInputParaphrase === 'boolean'
             ? ((saved as any).vnCustomInputParaphrase as boolean)
             : merged[c.id].vnCustomInputParaphrase,
+        offlineDanmakuEnabled:
+          typeof (saved as any).offlineDanmakuEnabled === 'boolean'
+            ? (saved as any).offlineDanmakuEnabled
+            : merged[c.id].offlineDanmakuEnabled,
         branchContinuationHint:
           typeof saved.branchContinuationHint === 'string' && saved.branchContinuationHint.trim()
             ? saved.branchContinuationHint.trim()
@@ -403,6 +423,7 @@ function createDefaultArchive(character: CharacterInfo): CharacterArchive {
     modePreference: 'normal',
     godPerspective: false,
     branchEnabled: false,
+    offlineDanmakuEnabled: false,
     vnVoiceDisabled: false,
     vnCustomInputParaphrase: false,
     lastDateAt: null,
@@ -792,8 +813,16 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
     ? `${datingPhysiqueLines.join('\n')}\n` +
       `【体态描写原则】上列为档案数值及 BMI（推算）事实锚点；**不必**每轮描写身材。凡对视高度、并肩、俯身、环抱等与身高相关的空间关系须与档案自洽，**禁止**明显颠倒高矮。若仅一侧填写身高、另一侧未填，勿编造对方具体厘米。\n\n`
     : ''
+  const datingWbIds = [character.id].map((x) => String(x ?? '').trim()).filter(Boolean)
+  const datingArchivePlate = isVnMode ? ('vn' as const) : ('offline_plot' as const)
+  const datingArchiveBlock = datingWbIds.length
+    ? buildWorldbookContext(datingWbIds, getWorldbookLoreEntriesSnapshot(), datingArchivePlate).trim()
+    : ''
   const messages = [
-    { role: 'system' as const, content: `${DATING_STYLE_SYSTEM_PROMPT}${styleAppend}\n\n${FICTIONAL_COT_APPENDIX}` },
+    {
+      role: 'system' as const,
+      content: `${DATING_STYLE_SYSTEM_PROMPT}${styleAppend}${datingArchiveBlock ? `\n\n${datingArchiveBlock}\n` : '\n'}\n${FICTIONAL_COT_APPENDIX}`,
+    },
     {
       role: 'user' as const,
       content:
@@ -849,6 +878,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
 export function DatingProvider({ children }: { children: ReactNode }) {
   const { state } = useCustomization()
   const apiConfig = useCurrentApiConfig('chatCard')
+  const danmakuApiConfig = useCurrentApiConfig('danmaku')
   const [characters, setCharacters] = useState<CharacterInfo[]>(() => EMPTY_CHARACTERS)
   const [allArchives, setAllArchives] = useState<ArchivesStore>(() => buildDefaultStore(EMPTY_CHARACTERS))
   const [currentCharacterId, setCurrentCharacterId] = useState<string>('')
@@ -1113,6 +1143,71 @@ export function DatingProvider({ children }: { children: ReactNode }) {
     [currentCharacter.id, patchArchive],
   )
 
+  const setOfflineDanmakuEnabled = useCallback(
+    (enabled: boolean) => {
+      const charId = currentCharacter.id
+      if (!charId) return
+      patchArchive(charId, (p) => ({ ...p, offlineDanmakuEnabled: !!enabled }))
+    },
+    [currentCharacter.id, patchArchive],
+  )
+
+  const runOfflineDanmakuAfterAi = useCallback(
+    async (char: CharacterInfo, arch: CharacterArchive) => {
+      if (arch.modePreference === 'vn' || !arch.offlineDanmakuEnabled) return
+      try {
+        const g = await personaDb.getGlobalSettings()
+        const pid = char.id.trim()
+        if (!pid) return
+        const dmRow = await personaDb.getCharacterDanmakuSettings(pid)
+        const eff = resolveEffectiveDanmakuVisuals(g, pid, dmRow)
+        if (eff.skipCharacter) return
+        const chRow = await personaDb.getCharacter(pid)
+        const playerIdentity = await loadPlayerIdentityForDating(pid)
+        const playerDisplayName = playerIdentity?.name?.trim() || '用户'
+        let worldBackgroundPrompt = ''
+        if (chRow?.worldBackgroundEnabled !== false && chRow?.worldBackgroundId?.trim()) {
+          try {
+            const wbg = await personaDb.getWorldBackground(chRow.worldBackgroundId.trim())
+            worldBackgroundPrompt = formatWorldBackgroundForPrompt(wbg).trim()
+          } catch {
+            /* ignore */
+          }
+        }
+        const lastPlayer = [...arch.plots].reverse().find((p) => p.type === 'player')
+        const plotTail = formatRecentPlotsForPrompt(arch.plots, char.realName, 1600)
+        const onlineCtx = await getOnlineMemoryContext(pid, {
+          userText: lastPlayer?.content,
+          plotTail,
+        })
+        const offlineDatingPlotsContext = formatRecentPlotsForPrompt(arch.plots, char.realName, 5600)
+        const transcript = plotsToDanmakuTranscript(arch.plots, char.realName)
+        const lines = await requestWeChatDanmakuVarietyShow({
+          apiConfig: danmakuApiConfig,
+          character: chRow,
+          playerIdentity,
+          playerDisplayName,
+          transcript,
+          promptMode: 'persona',
+          useMemory: eff.useMemory,
+          generateCount: eff.generateCount,
+          customRulesPrompt: eff.customPrompt.trim() || undefined,
+          longTermMemoryNotes: onlineCtx.longTermMemory,
+          worldBackgroundPrompt: worldBackgroundPrompt || undefined,
+          offlineDatingPlotsContext,
+          unsummarizedPrivateNotes: onlineCtx.unsummarizedPrivateBlock,
+          unsummarizedGroupNotes: onlineCtx.unsummarizedGroupBlock,
+          chatMemberIds: [pid],
+          globalWechatPlate: 'offline_plot',
+        })
+        emitDatingOfflineDanmakuLines(lines)
+      } catch {
+        /* ignore */
+      }
+    },
+    [danmakuApiConfig, getOnlineMemoryContext],
+  )
+
   const sendPlayerInput = useCallback(
     async (text: string, perspective: NarrativePerspective = 'second', genOptions?: NarrativeGenOptions) => {
       const msg = text.trim()
@@ -1186,6 +1281,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         if (currentArchive.branchEnabled) {
           await runGeneratePendingBranches(charId, char, archAfter)
         }
+        void runOfflineDanmakuAfterAi(char, archAfter)
         scheduleDatingMemoryAutoSummary(char.id, char.realName, apiConfig, plotItemsToSnapshots(plotsWithAi))
         return true
       } catch (e) {
@@ -1212,6 +1308,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       loading,
       patchArchive,
       runGeneratePendingBranches,
+      runOfflineDanmakuAfterAi,
     ],
   )
 
@@ -1271,6 +1368,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         if (currentArchive.branchEnabled) {
           await runGeneratePendingBranches(char.id, char, archAfter)
         }
+        void runOfflineDanmakuAfterAi(char, archAfter)
         scheduleDatingMemoryAutoSummary(char.id, char.realName, apiConfig, plotItemsToSnapshots([aiPlot]))
       } catch (e) {
         window.alert(e instanceof Error ? e.message : '剧情生成失败')
@@ -1288,6 +1386,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       loading,
       patchArchive,
       runGeneratePendingBranches,
+      runOfflineDanmakuAfterAi,
     ],
   )
 
@@ -1466,13 +1565,24 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         if (archive.branchEnabled) {
           await runGeneratePendingBranches(charId, char, archAfter)
         }
+        void runOfflineDanmakuAfterAi(char, archAfter)
       } catch (e) {
         window.alert(e instanceof Error ? e.message : '重新生成失败')
       } finally {
         setRegeneratingPlotId(null)
       }
     },
-    [allArchives, apiConfig, currentCharacter, getOnlineMemoryContext, loading, patchArchive, regeneratingPlotId, runGeneratePendingBranches],
+    [
+      allArchives,
+      apiConfig,
+      currentCharacter,
+      getOnlineMemoryContext,
+      loading,
+      patchArchive,
+      regeneratingPlotId,
+      runGeneratePendingBranches,
+      runOfflineDanmakuAfterAi,
+    ],
   )
 
   const value: Ctx = {
@@ -1488,6 +1598,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
     setGodPerspective,
     setVnVoiceDisabled,
     setVnCustomInputParaphrase,
+    setOfflineDanmakuEnabled,
     sendPlayerInput,
     stageBranchChoice,
     branchesLoading,

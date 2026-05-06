@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Pressable } from './Pressable'
 import { useCustomization } from '../CustomizationContext'
 import type { MusicPlayMode } from '../types'
@@ -223,6 +224,14 @@ export function MusicWidget({ isEditMode = false }: Props) {
     const timer = window.setTimeout(() => setError(''), 5000)
     return () => window.clearTimeout(timer)
   }, [error])
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [open])
   useEffect(() => {
     resultsRef.current = results
   }, [results])
@@ -882,15 +891,10 @@ export function MusicWidget({ isEditMode = false }: Props) {
   return (
     <div
       data-desktop-static="true"
-      className="flex h-full w-full min-h-0 flex-col overflow-hidden p-2.5 shadow-[var(--phone-shadow)]"
-      style={{
-        background: theme.surface,
-        borderRadius: 'var(--phone-radius-md)',
-        border: `1px solid ${theme.border}`,
-      }}
+      className="flex h-full w-full min-h-0 items-center justify-center overflow-visible"
     >
       <Pressable
-        className="flex h-full w-full min-h-0 flex-col"
+        className="flex h-full w-full min-h-0 flex-col items-center justify-center"
         onClick={() => {
           if (isEditMode) return
           setPanel('menu')
@@ -898,9 +902,8 @@ export function MusicWidget({ isEditMode = false }: Props) {
         }}
         aria-label="打开音乐搜索"
       >
-        <div className="flex min-h-0 flex-1 flex-col gap-1">
-          <div className="flex min-h-0 flex-1 items-center justify-center py-0.5">
-            <div className="relative flex w-full items-center justify-center">
+        <div className="flex w-full min-h-0 flex-1 flex-col items-center justify-center gap-1 py-0.5">
+          <div className="relative flex w-[min(88%,168px)] max-w-[168px] shrink-0 items-center justify-center">
               {/* 唱片指针 */}
               <div
                 className="pointer-events-none absolute -top-1 left-1/2 z-20 h-10 w-1.5 -translate-x-1/2 rounded-full"
@@ -920,7 +923,7 @@ export function MusicWidget({ isEditMode = false }: Props) {
 
               {/* 黑胶唱片：圆形 + 播放时顺时针旋转 */}
               <div
-                className="relative aspect-square w-full max-w-[132px] shrink-0 overflow-hidden rounded-full border"
+                className="relative aspect-square w-full overflow-hidden rounded-full border shadow-[0_12px_28px_rgba(15,23,42,0.14)]"
                 style={{
                   borderColor: theme.border,
                   background: `linear-gradient(145deg, ${music.coverTint}, ${theme.surfaceMuted})`,
@@ -970,71 +973,90 @@ export function MusicWidget({ isEditMode = false }: Props) {
                   className="absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border"
                   style={{ borderColor: theme.border, background: `${theme.surface}dd` }}
                 />
+
+                {/* 半透明浮层：切歌 / 播放（不打开面板） */}
+                <div className="pointer-events-none absolute inset-x-1 bottom-2 z-30 flex items-center justify-center gap-1">
+                  <Pressable
+                    aria-label="上一首"
+                    type="button"
+                    disabled={isEditMode}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      playOffset(-1)
+                    }}
+                    className="pointer-events-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/25 bg-black/38 backdrop-blur-[10px]"
+                    style={{ color: theme.surface }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round">
+                      <path d="M5 5v14" />
+                      <path d="M19 5v14L9 12l10-7Z" />
+                    </svg>
+                  </Pressable>
+                  <Pressable
+                    aria-label="播放暂停"
+                    type="button"
+                    disabled={isEditMode}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      togglePlayPause()
+                    }}
+                    className="pointer-events-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/28 bg-black/45 backdrop-blur-[10px]"
+                    style={{ color: theme.surface }}
+                  >
+                    {isPlaying ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 5h3v14H7zM14 5h3v14h-3z" />
+                      </svg>
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M8 5v14l11-7-11-7Z" />
+                      </svg>
+                    )}
+                  </Pressable>
+                  <Pressable
+                    aria-label="下一首"
+                    type="button"
+                    disabled={isEditMode}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      playOffset(1)
+                    }}
+                    className="pointer-events-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/25 bg-black/38 backdrop-blur-[10px]"
+                    style={{ color: theme.surface }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round">
+                      <path d="M19 5v14" />
+                      <path d="M5 5v14l10-7L5 5Z" />
+                    </svg>
+                  </Pressable>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center justify-center gap-5 px-0.5 pt-1.5">
-          <Pressable
-            aria-label="上一首"
-            onClick={(e) => {
-              e.stopPropagation()
-              playOffset(-1)
-            }}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-            style={{ color: theme.textMuted }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round">
-              <path d="M5 5v14" />
-              <path d="M19 5v14L9 12l10-7Z" />
-            </svg>
-          </Pressable>
-          <Pressable
-            aria-label="播放暂停"
-            onClick={(e) => {
-              e.stopPropagation()
-              togglePlayPause()
-            }}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
-            style={{ background: theme.text, color: theme.surface }}
-          >
-            {isPlaying ? (
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M7 5h3v14H7zM14 5h3v14h-3z" />
-              </svg>
-            ) : (
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8 5v14l11-7-11-7Z" />
-              </svg>
-            )}
-          </Pressable>
-          <Pressable
-            aria-label="下一首"
-            onClick={(e) => {
-              e.stopPropagation()
-              playOffset(1)
-            }}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-            style={{ color: theme.textMuted }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round">
-              <path d="M19 5v14" />
-              <path d="M5 5v14l10-7L5 5Z" />
-            </svg>
-          </Pressable>
         </div>
       </Pressable>
 
-      {open ? (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/35 p-4"
-          onClick={() => setOpen(false)}
-        >
-          <div
-            className="flex max-h-[78vh] w-full max-w-[360px] flex-col rounded-[16px] border p-3"
-            style={{ borderColor: theme.border, background: theme.surface }}
-            onClick={(e) => e.stopPropagation()}
-          >
+      {open && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/35 px-3"
+              style={{
+                paddingTop: 'max(12px, env(safe-area-inset-top, 0px))',
+                paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))',
+              }}
+              role="presentation"
+              onClick={() => setOpen(false)}
+            >
+              <div
+                className="flex min-h-0 w-full max-w-[400px] max-h-[90dvh] flex-col overflow-hidden rounded-[16px] border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                style={{
+                  borderColor: theme.border,
+                  background: theme.surface,
+                }}
+                role="dialog"
+                aria-modal="true"
+                aria-label="音乐面板"
+                onClick={(e) => e.stopPropagation()}
+              >
             <div className="flex items-center gap-2">
               <p className="text-[12px] font-medium" style={{ color: theme.text }}>
                 音乐面板
@@ -1388,9 +1410,11 @@ export function MusicWidget({ isEditMode = false }: Props) {
                 </Pressable>
               ))}
             </div>
-          </div>
-        </div>
-      ) : null}
+            </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

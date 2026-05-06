@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AppSlot } from '../types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DESKTOP_LAYOUT_SLOT_COUNT, type AppSlot } from '../types'
 import { personaDb } from '../apps/wechat/newFriendsPersona/idb'
 import { WECHAT_LUMI_PEER_CHARACTER_ID, wechatConversationKey } from '../apps/wechat/wechatConversationKey'
 import { DesktopAppTile } from './DesktopAppTile'
@@ -53,7 +53,13 @@ function useWeChatHomeUnreadBadge(): number {
 const HOME_WIDGET_LAYOUT_STORAGE_KEY = 'lumi-home-widget-layout-v1'
 const RESET_HOME_WIDGET_LAYOUT_EVENT = 'lumi-reset-home-widget-layout'
 type ProfileAnchor = 'top' | 'bottom'
+/** 仅用于读取旧版 localStorage 迁移 */
 type MusicSide = 'left' | 'right'
+type DesktopWidgetBand = 'upper' | 'lower'
+
+const FREE_HOME_LAYOUT_VERSION = 2
+/** 2×2 左上角（与现有 grid 行列线一致） */
+type GridPoint = { col: number; row: number }
 
 type GridArea = {
   colStart: number
@@ -69,34 +75,99 @@ type HomeWidgetLayout = {
   desktopSlots: Array<{ col: number; row: number }>
 }
 
-function getHomeWidgetLayout(profileAnchor: ProfileAnchor, musicSide: MusicSide): HomeWidgetLayout {
+function legacyGetHomeWidgetLayout(
+  profileAnchor: ProfileAnchor,
+  musicSide: MusicSide,
+  widgetBand: DesktopWidgetBand,
+): HomeWidgetLayout {
   if (profileAnchor === 'bottom') {
-    if (musicSide === 'left') {
+    if (widgetBand === 'upper') {
+      if (musicSide === 'left') {
+        return {
+          profile: { colStart: 1, colEnd: 5, rowStart: 5, rowEnd: 9 },
+          music: { colStart: 1, colEnd: 3, rowStart: 1, rowEnd: 3 },
+          wheel: { colStart: 3, colEnd: 5, rowStart: 1, rowEnd: 3 },
+          desktopSlots: [
+            { col: 1, row: 3 },
+            { col: 2, row: 3 },
+            { col: 3, row: 3 },
+            { col: 4, row: 3 },
+            { col: 1, row: 4 },
+            { col: 2, row: 4 },
+          ],
+        }
+      }
       return {
         profile: { colStart: 1, colEnd: 5, rowStart: 5, rowEnd: 9 },
-        music: { colStart: 1, colEnd: 3, rowStart: 1, rowEnd: 4 },
-        wheel: { colStart: 3, colEnd: 5, rowStart: 1, rowEnd: 3 },
+        music: { colStart: 3, colEnd: 5, rowStart: 1, rowEnd: 3 },
+        wheel: { colStart: 1, colEnd: 3, rowStart: 1, rowEnd: 3 },
         desktopSlots: [
+          { col: 1, row: 3 },
+          { col: 2, row: 3 },
           { col: 3, row: 3 },
           { col: 4, row: 3 },
-          { col: 1, row: 4 },
-          { col: 2, row: 4 },
           { col: 3, row: 4 },
           { col: 4, row: 4 },
         ],
       }
     }
+    if (musicSide === 'left') {
+      return {
+        profile: { colStart: 1, colEnd: 5, rowStart: 5, rowEnd: 9 },
+        desktopSlots: [
+          { col: 1, row: 1 },
+          { col: 2, row: 1 },
+          { col: 3, row: 1 },
+          { col: 4, row: 1 },
+          { col: 1, row: 2 },
+          { col: 2, row: 2 },
+        ],
+        music: { colStart: 1, colEnd: 3, rowStart: 3, rowEnd: 5 },
+        wheel: { colStart: 3, colEnd: 5, rowStart: 3, rowEnd: 5 },
+      }
+    }
     return {
       profile: { colStart: 1, colEnd: 5, rowStart: 5, rowEnd: 9 },
-      music: { colStart: 3, colEnd: 5, rowStart: 1, rowEnd: 4 },
-      wheel: { colStart: 1, colEnd: 3, rowStart: 1, rowEnd: 3 },
       desktopSlots: [
-        { col: 1, row: 3 },
-        { col: 2, row: 3 },
-        { col: 1, row: 4 },
-        { col: 2, row: 4 },
-        { col: 3, row: 4 },
-        { col: 4, row: 4 },
+        { col: 1, row: 1 },
+        { col: 2, row: 1 },
+        { col: 3, row: 1 },
+        { col: 4, row: 1 },
+        { col: 3, row: 2 },
+        { col: 4, row: 2 },
+      ],
+      music: { colStart: 3, colEnd: 5, rowStart: 3, rowEnd: 5 },
+      wheel: { colStart: 1, colEnd: 3, rowStart: 3, rowEnd: 5 },
+    }
+  }
+
+  if (widgetBand === 'upper') {
+    if (musicSide === 'right') {
+      return {
+        profile: { colStart: 1, colEnd: 5, rowStart: 1, rowEnd: 5 },
+        music: { colStart: 3, colEnd: 5, rowStart: 5, rowEnd: 7 },
+        wheel: { colStart: 1, colEnd: 3, rowStart: 5, rowEnd: 7 },
+        desktopSlots: [
+          { col: 1, row: 7 },
+          { col: 2, row: 7 },
+          { col: 3, row: 7 },
+          { col: 4, row: 7 },
+          { col: 1, row: 8 },
+          { col: 2, row: 8 },
+        ],
+      }
+    }
+    return {
+      profile: { colStart: 1, colEnd: 5, rowStart: 1, rowEnd: 5 },
+      music: { colStart: 1, colEnd: 3, rowStart: 5, rowEnd: 7 },
+      wheel: { colStart: 3, colEnd: 5, rowStart: 5, rowEnd: 7 },
+      desktopSlots: [
+        { col: 1, row: 7 },
+        { col: 2, row: 7 },
+        { col: 3, row: 7 },
+        { col: 4, row: 7 },
+        { col: 1, row: 8 },
+        { col: 2, row: 8 },
       ],
     }
   }
@@ -104,31 +175,294 @@ function getHomeWidgetLayout(profileAnchor: ProfileAnchor, musicSide: MusicSide)
   if (musicSide === 'right') {
     return {
       profile: { colStart: 1, colEnd: 5, rowStart: 1, rowEnd: 5 },
-      music: { colStart: 3, colEnd: 5, rowStart: 5, rowEnd: 8 },
-      wheel: { colStart: 1, colEnd: 3, rowStart: 7, rowEnd: 9 },
       desktopSlots: [
         { col: 1, row: 5 },
         { col: 2, row: 5 },
-        { col: 1, row: 6 },
-        { col: 2, row: 6 },
-        { col: 3, row: 8 },
-        { col: 4, row: 8 },
+        { col: 3, row: 5 },
+        { col: 4, row: 5 },
+        { col: 3, row: 6 },
+        { col: 4, row: 6 },
       ],
+      music: { colStart: 3, colEnd: 5, rowStart: 7, rowEnd: 9 },
+      wheel: { colStart: 1, colEnd: 3, rowStart: 7, rowEnd: 9 },
+    }
+  }
+  return {
+    profile: { colStart: 1, colEnd: 5, rowStart: 1, rowEnd: 5 },
+    desktopSlots: [
+      { col: 1, row: 5 },
+      { col: 2, row: 5 },
+      { col: 3, row: 5 },
+      { col: 4, row: 5 },
+      { col: 1, row: 6 },
+      { col: 2, row: 6 },
+    ],
+    music: { colStart: 1, colEnd: 3, rowStart: 7, rowEnd: 9 },
+    wheel: { colStart: 3, colEnd: 5, rowStart: 7, rowEnd: 9 },
+  }
+}
+
+/** 名片以外的 4×4 桌面区（绝对网格行） */
+function getDesktopFourByFourArea(profileAnchor: ProfileAnchor): GridArea {
+  if (profileAnchor === 'bottom') {
+    return { colStart: 1, colEnd: 5, rowStart: 1, rowEnd: 5 }
+  }
+  return { colStart: 1, colEnd: 5, rowStart: 5, rowEnd: 9 }
+}
+
+function getProfileGridArea(profileAnchor: ProfileAnchor): GridArea {
+  if (profileAnchor === 'bottom') return { colStart: 1, colEnd: 5, rowStart: 5, rowEnd: 9 }
+  return { colStart: 1, colEnd: 5, rowStart: 1, rowEnd: 5 }
+}
+
+function originTo2x2(o: GridPoint): GridArea {
+  return { colStart: o.col, colEnd: o.col + 2, rowStart: o.row, rowEnd: o.row + 2 }
+}
+
+function gridAreasOverlap(a: GridArea, b: GridArea): boolean {
+  return a.colStart < b.colEnd && b.colStart < a.colEnd && a.rowStart < b.rowEnd && b.rowStart < a.rowEnd
+}
+
+function cellKey(c: GridPoint): string {
+  return `${c.col},${c.row}`
+}
+
+function cellsOfArea(a: GridArea): GridPoint[] {
+  const out: GridPoint[] = []
+  for (let r = a.rowStart; r < a.rowEnd; r += 1) {
+    for (let col = a.colStart; col < a.colEnd; col += 1) {
+      out.push({ col, row: r })
+    }
+  }
+  return out
+}
+
+/** 名片外的 4×4 桌面每一格 */
+function listAllDesktopCells(profileAnchor: ProfileAnchor): GridPoint[] {
+  return cellsOfArea(getDesktopFourByFourArea(profileAnchor))
+}
+
+/**
+ * 是否「明确要把音乐/罗盘与对方换位」：必须比离自己原点更近地靠近对方中心，且落在对方 2×2 区域内（避免误触 + 与吸附抢判）。
+ */
+function shouldSwapMusicWheelAtDrop(
+  pt: { x: number; y: number },
+  which: 'music' | 'wheel',
+  layoutAtDragStart: { music: GridPoint; wheel: GridPoint },
+  getAreaCenter: (area: GridArea) => { x: number; y: number } | null,
+  getGridAreaClientBounds: (area: GridArea) => { left: number; top: number; right: number; bottom: number } | null,
+): boolean {
+  const self = which === 'music' ? layoutAtDragStart.music : layoutAtDragStart.wheel
+  const other = which === 'music' ? layoutAtDragStart.wheel : layoutAtDragStart.music
+  const selfC = getAreaCenter(originTo2x2(self))
+  const otherC = getAreaCenter(originTo2x2(other))
+  if (!selfC || !otherC) return false
+  const dSelf = Math.hypot(pt.x - selfC.x, pt.y - selfC.y)
+  const dOther = Math.hypot(pt.x - otherC.x, pt.y - otherC.y)
+  if (dOther >= dSelf * 0.88) return false
+  const b = getGridAreaClientBounds(originTo2x2(other))
+  if (!b) return false
+  const pad = 10
+  return (
+    pt.x >= b.left - pad &&
+    pt.x <= b.right + pad &&
+    pt.y >= b.top - pad &&
+    pt.y <= b.bottom + pad
+  )
+}
+
+/**
+ * 仅把「压在组件 2×2 下 / 出桌面 / 重复格」的图标槽挪到空位；其余槽坐标不动。
+ * 挪移时优先选离该槽**原坐标**最近的空位，避免行优先扫描导致每次微调都整排乱飘。
+ */
+function relocateIconSlotsAfterWidgets(
+  profileAnchor: ProfileAnchor,
+  music: GridPoint,
+  wheel: GridPoint,
+  slots: GridPoint[],
+): GridPoint[] {
+  const n = DESKTOP_LAYOUT_SLOT_COUNT
+  const widgetCellSet = new Set(
+    [...cellsOfArea(originTo2x2(music)), ...cellsOfArea(originTo2x2(wheel))].map(cellKey),
+  )
+  const allCells = listAllDesktopCells(profileAnchor)
+  const desktopKeySet = new Set(allCells.map(cellKey))
+
+  const out = slots.slice(0, n).map((s) => ({ col: s.col, row: s.row }))
+  while (out.length < n) {
+    out.push({ col: 1, row: 1 })
+  }
+  /** 持久化里的「原位」，用于就近落点，避免反复换边 */
+  const initialPos = out.map((s) => ({ col: s.col, row: s.row }))
+
+  const occ = new Set<string>()
+  const needReassign: number[] = []
+
+  for (let i = 0; i < n; i += 1) {
+    const s = out[i]!
+    const k = cellKey(s)
+    const onDesktop = desktopKeySet.has(k)
+    const underWidget = widgetCellSet.has(k)
+    const dup = occ.has(k)
+    if (onDesktop && !underWidget && !dup) {
+      occ.add(k)
+    } else {
+      needReassign.push(i)
     }
   }
 
+  if (needReassign.length === 0) {
+    return out
+  }
+
+  needReassign.sort((ia, ib) => {
+    const a = initialPos[ia]!
+    const b = initialPos[ib]!
+    if (a.row !== b.row) return a.row - b.row
+    return a.col - b.col
+  })
+
+  for (const i of needReassign) {
+    const orig = initialPos[i]!
+    const candidates = allCells.filter((c) => {
+      const ck = cellKey(c)
+      return !widgetCellSet.has(ck) && !occ.has(ck)
+    })
+    if (!candidates.length) break
+    candidates.sort((a, b) => {
+      const da = Math.abs(a.col - orig.col) + Math.abs(a.row - orig.row)
+      const db = Math.abs(b.col - orig.col) + Math.abs(b.row - orig.row)
+      if (da !== db) return da - db
+      if (a.row !== b.row) return a.row - b.row
+      return a.col - b.col
+    })
+    const picked = candidates[0]!
+    out[i] = picked
+    occ.add(cellKey(picked))
+  }
+
+  return out
+}
+
+function listTwoByTwoTopLefts(profileAnchor: ProfileAnchor): GridPoint[] {
+  const rows = profileAnchor === 'bottom' ? [1, 2, 3] : [5, 6, 7]
+  const cols = [1, 2, 3] as const
+  const out: GridPoint[] = []
+  for (const row of rows) {
+    for (const col of cols) {
+      out.push({ col, row })
+    }
+  }
+  return out
+}
+
+function defaultSlotOrigins(profileAnchor: ProfileAnchor): GridPoint[] {
+  if (profileAnchor === 'bottom') {
+    return [
+      { col: 1, row: 3 },
+      { col: 2, row: 3 },
+      { col: 3, row: 3 },
+      { col: 4, row: 3 },
+      { col: 1, row: 4 },
+      { col: 2, row: 4 },
+      { col: 3, row: 4 },
+      { col: 4, row: 4 },
+    ]
+  }
+  return [
+    { col: 1, row: 7 },
+    { col: 2, row: 7 },
+    { col: 3, row: 7 },
+    { col: 4, row: 7 },
+    { col: 1, row: 8 },
+    { col: 2, row: 8 },
+    { col: 3, row: 8 },
+    { col: 4, row: 8 },
+  ]
+}
+
+function padIconSlotOrigins(profileAnchor: ProfileAnchor, slots: GridPoint[] | undefined): GridPoint[] {
+  const full = defaultSlotOrigins(profileAnchor)
+  if (!Array.isArray(slots) || slots.length === 0) return full
+  const out = slots.slice(0, DESKTOP_LAYOUT_SLOT_COUNT).map((s, i) =>
+    s && typeof s.col === 'number' && typeof s.row === 'number' ? { col: s.col, row: s.row } : full[i]!,
+  )
+  while (out.length < DESKTOP_LAYOUT_SLOT_COUNT) {
+    out.push(full[out.length]!)
+  }
+  return out
+}
+
+function defaultMusicWheelOrigins(profileAnchor: ProfileAnchor): { music: GridPoint; wheel: GridPoint } {
+  if (profileAnchor === 'bottom') return { music: { col: 1, row: 1 }, wheel: { col: 3, row: 1 } }
+  return { music: { col: 1, row: 5 }, wheel: { col: 3, row: 5 } }
+}
+
+function buildLiveHomeLayout(
+  profileAnchor: ProfileAnchor,
+  music: GridPoint,
+  wheel: GridPoint,
+  slots: GridPoint[],
+): HomeWidgetLayout {
   return {
-    profile: { colStart: 1, colEnd: 5, rowStart: 1, rowEnd: 5 },
-    music: { colStart: 1, colEnd: 3, rowStart: 5, rowEnd: 8 },
-    wheel: { colStart: 3, colEnd: 5, rowStart: 7, rowEnd: 9 },
-    desktopSlots: [
-      { col: 3, row: 5 },
-      { col: 4, row: 5 },
-      { col: 3, row: 6 },
-      { col: 4, row: 6 },
-      { col: 1, row: 8 },
-      { col: 2, row: 8 },
-    ],
+    profile: getProfileGridArea(profileAnchor),
+    music: originTo2x2(music),
+    wheel: originTo2x2(wheel),
+    desktopSlots: slots.slice(0, DESKTOP_LAYOUT_SLOT_COUNT),
+  }
+}
+
+function migrateStorageToFreeHome(): {
+  profileAnchor: ProfileAnchor
+  music: GridPoint
+  wheel: GridPoint
+  slots: GridPoint[]
+} {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(HOME_WIDGET_LAYOUT_STORAGE_KEY) || '{}') as {
+      v?: number
+      profileAnchor?: ProfileAnchor
+      music?: GridPoint
+      wheel?: GridPoint
+      slots?: GridPoint[]
+      musicSide?: MusicSide
+      widgetBand?: DesktopWidgetBand
+    }
+    if (raw.v === FREE_HOME_LAYOUT_VERSION && raw.music && raw.wheel && Array.isArray(raw.slots)) {
+      const anchor = raw.profileAnchor === 'bottom' || raw.profileAnchor === 'top' ? raw.profileAnchor : 'top'
+      const music = raw.music
+      const wheel = raw.wheel
+      const slots = padIconSlotOrigins(anchor, raw.slots as GridPoint[])
+      return {
+        profileAnchor: anchor,
+        music,
+        wheel,
+        slots: relocateIconSlotsAfterWidgets(anchor, music, wheel, slots),
+      }
+    }
+    const anchor = raw.profileAnchor === 'bottom' || raw.profileAnchor === 'top' ? raw.profileAnchor : 'top'
+    const musicSide = raw.musicSide === 'right' || raw.musicSide === 'left' ? raw.musicSide : 'left'
+    const band = raw.widgetBand === 'lower' || raw.widgetBand === 'upper' ? raw.widgetBand : 'upper'
+    const L = legacyGetHomeWidgetLayout(anchor, musicSide, band)
+    const music = { col: L.music.colStart, row: L.music.rowStart }
+    const wheel = { col: L.wheel.colStart, row: L.wheel.rowStart }
+    const slotsRaw = L.desktopSlots.map((s) => ({ col: s.col, row: s.row }))
+    const slots = padIconSlotOrigins(anchor, slotsRaw)
+    return {
+      profileAnchor: anchor,
+      music,
+      wheel,
+      slots: relocateIconSlotsAfterWidgets(anchor, music, wheel, slots),
+    }
+  } catch {
+    const anchor: ProfileAnchor = 'top'
+    const { music, wheel } = defaultMusicWheelOrigins(anchor)
+    return {
+      profileAnchor: anchor,
+      music,
+      wheel,
+      slots: relocateIconSlotsAfterWidgets(anchor, music, wheel, defaultSlotOrigins(anchor)),
+    }
   }
 }
 
@@ -140,9 +474,20 @@ const FLOAT_TRANSITION = {
 }
 const DOCK_COUNT = 4
 const DESKTOP_GRID_COLUMNS = 4
+/** 整张桌面网格行数：名片占 4 行 + 下方图标区 4 行 = 8（图标区为 4×4） */
 const DESKTOP_GRID_ROWS = 8
 const DESKTOP_GRID_GAP_PX = 10
 const DOCK_GAP_PX = 8
+
+/** 拖拽幽灵位置：不落弹簧动画，避免图标跟不上手指 */
+const DRAG_GHOST_TRANSITION = {
+  left: { duration: 0 },
+  top: { duration: 0 },
+  width: { duration: 0 },
+  height: { duration: 0 },
+  opacity: { duration: 0.1 },
+  scale: { duration: 0.12 },
+} as const
 
 type DropTarget =
   | { zone: 'desktop'; index: number }
@@ -268,11 +613,11 @@ function SortableDesktopTile({
   return (
     <motion.div
       ref={(node) => registerNode(app.id, node)}
-      layout
+      layout={false}
       style={{
         gridColumn: `${slot.col} / ${slot.col + 1}`,
         gridRow: `${slot.row} / ${slot.row + 1}`,
-        zIndex: isActiveDrag ? 40 : 1,
+        zIndex: isActiveDrag ? 55 : isEditMode ? 30 : 14,
       }}
       animate={
         isEditMode && !isActiveDrag
@@ -323,7 +668,7 @@ type ActiveDragState = {
 }
 
 type ActiveWidgetDragState = {
-  widget: 'profile' | 'music'
+  widget: 'profile' | 'music' | 'wheel'
   pointerId: number
   width: number
   height: number
@@ -333,43 +678,40 @@ type ActiveWidgetDragState = {
   y: number
 }
 
+function readInitialFreeHomeLayout(): {
+  profileAnchor: ProfileAnchor
+  music: GridPoint
+  wheel: GridPoint
+  slots: GridPoint[]
+} {
+  if (typeof window === 'undefined') {
+    return {
+      profileAnchor: 'top',
+      ...defaultMusicWheelOrigins('top'),
+      slots: defaultSlotOrigins('top'),
+    }
+  }
+  return migrateStorageToFreeHome()
+}
+
 export function HomeScreen({ onOpenApp }: Props) {
   const { state, reorderApps, setDesktopLayout } = useCustomization()
   const { apps, ui, theme } = state
   const wechatUnread = useWeChatHomeUnreadBadge()
   const appMap = new Map(apps.map((app) => [app.id, app] as const))
-  const [profileAnchorState, setProfileAnchorState] = useState<ProfileAnchor>(() => {
-    if (typeof window === 'undefined') return 'bottom'
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(HOME_WIDGET_LAYOUT_STORAGE_KEY) || '{}') as {
-        profileAnchor?: ProfileAnchor
-      }
-      return saved.profileAnchor === 'bottom' || saved.profileAnchor === 'top' ? saved.profileAnchor : 'top'
-    } catch {
-      return 'top'
-    }
-  })
-  const [musicSideState, setMusicSideState] = useState<MusicSide>(() => {
-    if (typeof window === 'undefined') return 'left'
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(HOME_WIDGET_LAYOUT_STORAGE_KEY) || '{}') as {
-        musicSide?: MusicSide
-      }
-      return saved.musicSide === 'right' || saved.musicSide === 'left' ? saved.musicSide : 'left'
-    } catch {
-      return 'left'
-    }
-  })
+  const initialFree = readInitialFreeHomeLayout()
+  const [profileAnchorState, setProfileAnchorState] = useState<ProfileAnchor>(initialFree.profileAnchor)
+  const [musicOriginState, setMusicOriginState] = useState<GridPoint>(initialFree.music)
+  const [wheelOriginState, setWheelOriginState] = useState<GridPoint>(initialFree.wheel)
+  const [slotOriginsState, setSlotOriginsState] = useState<GridPoint[]>(initialFree.slots)
   const [isEditMode, setIsEditMode] = useState(false)
   const [activeDrag, setActiveDrag] = useState<ActiveDragState | null>(null)
   const [activeWidgetDrag, setActiveWidgetDrag] = useState<ActiveWidgetDragState | null>(null)
   const [isWheelModalOpen, setIsWheelModalOpen] = useState(false)
   const [hoverSlotIndex, setHoverSlotIndex] = useState<number | null>(null)
   const [hoverDockIndex, setHoverDockIndex] = useState<number | null>(null)
-  const [hoverProfileAnchor, setHoverProfileAnchor] = useState<ProfileAnchor | null>(null)
-  const [hoverMusicSide, setHoverMusicSide] = useState<MusicSide | null>(null)
   const [primedAppId, setPrimedAppId] = useState<AppSlot['id'] | null>(null)
-  const [primedStaticWidget, setPrimedStaticWidget] = useState<'profile' | 'music' | null>(null)
+  const [primedStaticWidget, setPrimedStaticWidget] = useState<'profile' | 'music' | 'wheel' | null>(null)
   const [dockIdsState, setDockIdsState] = useState<AppSlot['id'][]>(() => apps.slice(0, DOCK_COUNT).map((app) => app.id))
   const [desktopLayoutState, setDesktopLayoutState] = useState<Array<AppSlot['id'] | null>>(() => state.desktopLayout)
   const dockIdsRef = useRef<AppSlot['id'][]>(apps.slice(0, DOCK_COUNT).map((app) => app.id))
@@ -377,14 +719,37 @@ export function HomeScreen({ onOpenApp }: Props) {
   const tileNodeMapRef = useRef(new Map<AppSlot['id'], HTMLDivElement | null>())
   const profileNodeRef = useRef<HTMLDivElement | null>(null)
   const musicNodeRef = useRef<HTMLDivElement | null>(null)
+  const wheelNodeRef = useRef<HTMLDivElement | null>(null)
   const gridRef = useRef<HTMLDivElement | null>(null)
   const dockNavRef = useRef<HTMLElement | null>(null)
   const dragBaseRef = useRef<{ dockIds: AppSlot['id'][]; desktopLayout: Array<AppSlot['id'] | null> } | null>(null)
+  /** 静态组件拖拽开始时的布局快照（名片松手时用，避免与 ref 帧不同步） */
+  const staticWidgetDragStartRef = useRef<{
+    profileAnchor: ProfileAnchor
+    music: GridPoint
+    wheel: GridPoint
+    slots: GridPoint[]
+  } | null>(null)
   const compactDesktop = !ui.fullScreen || ui.showDeviceFrame
   const hasWallpaper = !!theme.wallpaperUrl?.trim()
   const contentSafeTop = ui.fullScreen && !ui.showStatusBar ? 'env(safe-area-inset-top, 0px)' : '0px'
-  const widgetLayout = getHomeWidgetLayout(profileAnchorState, musicSideState)
+  const widgetLayout = useMemo(
+    () => buildLiveHomeLayout(profileAnchorState, musicOriginState, wheelOriginState, slotOriginsState),
+    [profileAnchorState, musicOriginState, wheelOriginState, slotOriginsState],
+  )
   const desktopSlots = widgetLayout.desktopSlots
+  const homeLayoutRef = useRef({
+    profileAnchor: profileAnchorState,
+    music: musicOriginState,
+    wheel: wheelOriginState,
+    slots: slotOriginsState,
+  })
+  homeLayoutRef.current = {
+    profileAnchor: profileAnchorState,
+    music: musicOriginState,
+    wheel: wheelOriginState,
+    slots: slotOriginsState,
+  }
 
   useEffect(() => {
     if (activeDrag || activeWidgetDrag) return
@@ -416,27 +781,45 @@ export function HomeScreen({ onOpenApp }: Props) {
     setActiveWidgetDrag(null)
     setHoverSlotIndex(null)
     setHoverDockIndex(null)
-    setHoverProfileAnchor(null)
-    setHoverMusicSide(null)
     window.setTimeout(() => {
       setPrimedAppId((current) => (current === id ? null : current))
     }, 280)
   }, [])
 
-  const persistWidgetLayout = useCallback((nextProfileAnchor: ProfileAnchor, nextMusicSide: MusicSide) => {
-    setProfileAnchorState(nextProfileAnchor)
-    setMusicSideState(nextMusicSide)
-    try {
-      window.localStorage.setItem(
-        HOME_WIDGET_LAYOUT_STORAGE_KEY,
-        JSON.stringify({ profileAnchor: nextProfileAnchor, musicSide: nextMusicSide }),
-      )
-    } catch {
-      // ignore storage failures
-    }
-  }, [])
+  const persistFreeHomeLayout = useCallback(
+    (next: { profileAnchor: ProfileAnchor; music: GridPoint; wheel: GridPoint; slots: GridPoint[] }) => {
+      const slots = relocateIconSlotsAfterWidgets(next.profileAnchor, next.music, next.wheel, next.slots)
+      setProfileAnchorState(next.profileAnchor)
+      setMusicOriginState(next.music)
+      setWheelOriginState(next.wheel)
+      setSlotOriginsState((prev) => {
+        if (
+          prev.length === slots.length &&
+          slots.every((s, i) => prev[i]?.col === s.col && prev[i]?.row === s.row)
+        ) {
+          return prev
+        }
+        return slots
+      })
+      try {
+        window.localStorage.setItem(
+          HOME_WIDGET_LAYOUT_STORAGE_KEY,
+          JSON.stringify({
+            v: FREE_HOME_LAYOUT_VERSION,
+            profileAnchor: next.profileAnchor,
+            music: next.music,
+            wheel: next.wheel,
+            slots,
+          }),
+        )
+      } catch {
+        // ignore storage failures
+      }
+    },
+    [],
+  )
 
-  const handleEnterStaticWidgetEditMode = useCallback((widget: 'profile' | 'music') => {
+  const handleEnterStaticWidgetEditMode = useCallback((widget: 'profile' | 'music' | 'wheel') => {
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       navigator.vibrate(12)
     }
@@ -446,22 +829,32 @@ export function HomeScreen({ onOpenApp }: Props) {
     setActiveWidgetDrag(null)
     setHoverSlotIndex(null)
     setHoverDockIndex(null)
-    setHoverProfileAnchor(null)
-    setHoverMusicSide(null)
     window.setTimeout(() => {
       setPrimedStaticWidget((current) => (current === widget ? null : current))
     }, 280)
   }, [])
 
   const resetWidgetLayout = useCallback(() => {
-    setProfileAnchorState('top')
-    setMusicSideState('left')
+    const anchor: ProfileAnchor = 'top'
+    const { music, wheel } = defaultMusicWheelOrigins(anchor)
+    const slots = relocateIconSlotsAfterWidgets(anchor, music, wheel, defaultSlotOrigins(anchor))
+    setProfileAnchorState(anchor)
+    setMusicOriginState(music)
+    setWheelOriginState(wheel)
+    setSlotOriginsState(slots)
     setActiveWidgetDrag(null)
-    setHoverProfileAnchor(null)
-    setHoverMusicSide(null)
     setPrimedStaticWidget(null)
     try {
-      window.localStorage.removeItem(HOME_WIDGET_LAYOUT_STORAGE_KEY)
+      window.localStorage.setItem(
+        HOME_WIDGET_LAYOUT_STORAGE_KEY,
+        JSON.stringify({
+          v: FREE_HOME_LAYOUT_VERSION,
+          profileAnchor: anchor,
+          music,
+          wheel,
+          slots,
+        }),
+      )
     } catch {
       // ignore storage failures
     }
@@ -498,8 +891,6 @@ export function HomeScreen({ onOpenApp }: Props) {
     setActiveWidgetDrag(null)
     setHoverSlotIndex(null)
     setHoverDockIndex(null)
-    setHoverProfileAnchor(null)
-    setHoverMusicSide(null)
     setPrimedAppId(null)
     setPrimedStaticWidget(null)
   }, [reorderApps, setDesktopLayout])
@@ -533,6 +924,36 @@ export function HomeScreen({ onOpenApp }: Props) {
     return { x: (startX + endX) / 2, y: (startY + endY) / 2 }
   }, [])
 
+  const getGridAreaClientBounds = useCallback((area: GridArea) => {
+    const grid = gridRef.current
+    if (!grid) return null
+    const rect = grid.getBoundingClientRect()
+    const colWidth = (rect.width - DESKTOP_GRID_GAP_PX * (DESKTOP_GRID_COLUMNS - 1)) / DESKTOP_GRID_COLUMNS
+    const rowHeight = (rect.height - DESKTOP_GRID_GAP_PX * (DESKTOP_GRID_ROWS - 1)) / DESKTOP_GRID_ROWS
+    const left = rect.left + (area.colStart - 1) * (colWidth + DESKTOP_GRID_GAP_PX)
+    const right = rect.left + (area.colEnd - 1) * colWidth + (area.colEnd - 2) * DESKTOP_GRID_GAP_PX
+    const top = rect.top + (area.rowStart - 1) * (rowHeight + DESKTOP_GRID_GAP_PX)
+    const bottom = rect.top + (area.rowEnd - 1) * rowHeight + (area.rowEnd - 2) * DESKTOP_GRID_GAP_PX
+    return { left, top, right, bottom }
+  }, [])
+
+  /** 指针是否在名片外的 4×4 桌面区内（含组件带与图标格） */
+  const isPointInDesktopFourByFour = useCallback(
+    (point: { x: number; y: number }) => {
+      const area = getDesktopFourByFourArea(profileAnchorState)
+      const b = getGridAreaClientBounds(area)
+      if (!b) return false
+      const pad = 28
+      return (
+        point.x >= b.left - pad &&
+        point.x <= b.right + pad &&
+        point.y >= b.top - pad &&
+        point.y <= b.bottom + pad
+      )
+    },
+    [getGridAreaClientBounds, profileAnchorState],
+  )
+
   const getDockCenter = useCallback((slotIndex: number) => {
     const nav = dockNavRef.current
     if (!nav) return null
@@ -560,24 +981,49 @@ export function HomeScreen({ onOpenApp }: Props) {
   }, [desktopSlots.length, getSlotCenter])
 
   const resolveNearestProfileAnchor = useCallback((point: { x: number; y: number }): ProfileAnchor => {
-    const topCenter = getAreaCenter(getHomeWidgetLayout('top', musicSideState).profile)
-    const bottomCenter = getAreaCenter(getHomeWidgetLayout('bottom', musicSideState).profile)
-    if (!topCenter || !bottomCenter) return profileAnchorState
+    const topCenter = getAreaCenter(getProfileGridArea('top'))
+    const bottomCenter = getAreaCenter(getProfileGridArea('bottom'))
+    if (!topCenter || !bottomCenter) return 'top'
     return Math.hypot(point.x - topCenter.x, point.y - topCenter.y) <=
       Math.hypot(point.x - bottomCenter.x, point.y - bottomCenter.y)
       ? 'top'
       : 'bottom'
-  }, [getAreaCenter, musicSideState, profileAnchorState])
+  }, [getAreaCenter])
 
-  const resolveNearestMusicSide = useCallback((point: { x: number; y: number }): MusicSide => {
-    const leftCenter = getAreaCenter(getHomeWidgetLayout(profileAnchorState, 'left').music)
-    const rightCenter = getAreaCenter(getHomeWidgetLayout(profileAnchorState, 'right').music)
-    if (!leftCenter || !rightCenter) return musicSideState
-    return Math.hypot(point.x - leftCenter.x, point.y - leftCenter.y) <=
-      Math.hypot(point.x - rightCenter.x, point.y - rightCenter.y)
-      ? 'left'
-      : 'right'
-  }, [getAreaCenter, musicSideState, profileAnchorState])
+  /** 在桌面 4×4 内吸附 2×2：仅避开名片区与另一组件；图标槽可被「压住」，松手后 {@link relocateIconSlotsAfterWidgets} 会把图标挤到空位（含第 1、2 行） */
+  const snapTwoByTwoForDrag = useCallback(
+    (point: { x: number; y: number }, which: 'music' | 'wheel'): GridPoint => {
+      const { profileAnchor, music, wheel } = homeLayoutRef.current
+      const fallback = which === 'music' ? music : wheel
+      const grid = gridRef.current
+      if (!grid) return fallback
+      const other = which === 'music' ? wheel : music
+      const profileArea = getProfileGridArea(profileAnchor)
+      const otherArea = originTo2x2(other)
+
+      const candidates = listTwoByTwoTopLefts(profileAnchor)
+        .map((o) => ({ o, area: originTo2x2(o) }))
+        .filter(({ area }) => {
+          if (gridAreasOverlap(area, otherArea)) return false
+          if (gridAreasOverlap(area, profileArea)) return false
+          return true
+        })
+      if (!candidates.length) return fallback
+      let best = candidates[0]!
+      let bestD = Number.POSITIVE_INFINITY
+      for (const x of candidates) {
+        const c = getAreaCenter(x.area)
+        if (!c) continue
+        const d = Math.hypot(point.x - c.x, point.y - c.y)
+        if (d < bestD) {
+          bestD = d
+          best = x
+        }
+      }
+      return best.o
+    },
+    [getAreaCenter],
+  )
 
   const resolveDropTarget = useCallback((point: { x: number; y: number }): DropTarget => {
     const nav = dockNavRef.current
@@ -641,28 +1087,47 @@ export function HomeScreen({ onOpenApp }: Props) {
     })
   }, [])
 
-  const handleStaticWidgetPointerDragStart = useCallback((widget: 'profile' | 'music', event: React.PointerEvent<HTMLElement | HTMLButtonElement>) => {
-    const node = widget === 'profile' ? profileNodeRef.current : musicNodeRef.current
-    if (!node) return
-    const rect = node.getBoundingClientRect()
-    event.preventDefault()
-    event.currentTarget.setPointerCapture(event.pointerId)
-    setActiveWidgetDrag({
-      widget,
-      pointerId: event.pointerId,
-      width: rect.width,
-      height: rect.height,
-      offsetX: event.clientX - rect.left,
-      offsetY: event.clientY - rect.top,
-      x: rect.left,
-      y: rect.top,
-    })
-    if (widget === 'profile') setHoverProfileAnchor(profileAnchorState)
-    else setHoverMusicSide(musicSideState)
-  }, [musicSideState, profileAnchorState])
+  const handleStaticWidgetPointerDragStart = useCallback(
+    (widget: 'profile' | 'music' | 'wheel', event: React.PointerEvent<HTMLElement | HTMLButtonElement>) => {
+      const node =
+        widget === 'profile'
+          ? profileNodeRef.current
+          : widget === 'music'
+            ? musicNodeRef.current
+            : wheelNodeRef.current
+      if (!node) return
+      const rect = node.getBoundingClientRect()
+      event.preventDefault()
+      event.currentTarget.setPointerCapture(event.pointerId)
+      staticWidgetDragStartRef.current = {
+        profileAnchor: profileAnchorState,
+        music: musicOriginState,
+        wheel: wheelOriginState,
+        slots: slotOriginsState,
+      }
+      setActiveWidgetDrag({
+        widget,
+        pointerId: event.pointerId,
+        width: rect.width,
+        height: rect.height,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+        x: rect.left,
+        y: rect.top,
+      })
+    },
+    [musicOriginState, profileAnchorState, slotOriginsState, wheelOriginState],
+  )
 
   useEffect(() => {
     if (!activeDrag) return
+
+    let committedOnce = false
+    const cleanup = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+    }
 
     const onMove = (event: PointerEvent) => {
       if (event.pointerId !== activeDrag.pointerId) return
@@ -674,7 +1139,10 @@ export function HomeScreen({ onOpenApp }: Props) {
     }
 
     const finish = (event: PointerEvent) => {
+      if (committedOnce) return
       if (event.pointerId !== activeDrag.pointerId) return
+      committedOnce = true
+      cleanup()
       reorderApps([...dockIdsRef.current, ...desktopLayoutRef.current.filter((id): id is AppSlot['id'] => !!id)])
       const committed = [...desktopLayoutRef.current]
       dragBaseRef.current = null
@@ -689,56 +1157,127 @@ export function HomeScreen({ onOpenApp }: Props) {
     window.addEventListener('pointerup', finish)
     window.addEventListener('pointercancel', finish)
     return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', finish)
-      window.removeEventListener('pointercancel', finish)
+      cleanup()
     }
   }, [activeDrag, applyPreview, reorderApps, resolveDropTarget, setDesktopLayout])
 
   useEffect(() => {
     if (!activeWidgetDrag) return
 
+    let finishedOnce = false
+    const cleanup = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+    }
+
     const onMove = (event: PointerEvent) => {
       if (event.pointerId !== activeWidgetDrag.pointerId) return
       const nextX = event.clientX - activeWidgetDrag.offsetX
       const nextY = event.clientY - activeWidgetDrag.offsetY
       setActiveWidgetDrag((prev) => (prev ? { ...prev, x: nextX, y: nextY } : prev))
-      if (activeWidgetDrag.widget === 'profile') {
-        const nextAnchor = resolveNearestProfileAnchor({ x: event.clientX, y: event.clientY })
-        setProfileAnchorState(nextAnchor)
-        setHoverProfileAnchor(nextAnchor)
-      } else {
-        const nextSide = resolveNearestMusicSide({ x: event.clientX, y: event.clientY })
-        setMusicSideState(nextSide)
-        setHoverMusicSide(nextSide)
-      }
     }
 
     const finish = (event: PointerEvent) => {
+      if (finishedOnce) return
       if (event.pointerId !== activeWidgetDrag.pointerId) return
-      const nextProfileAnchor =
-        activeWidgetDrag.widget === 'profile'
-          ? resolveNearestProfileAnchor({ x: event.clientX, y: event.clientY })
-          : profileAnchorState
-      const nextMusicSide =
-        activeWidgetDrag.widget === 'music'
-          ? resolveNearestMusicSide({ x: event.clientX, y: event.clientY })
-          : musicSideState
-      persistWidgetLayout(nextProfileAnchor, nextMusicSide)
+      finishedOnce = true
+      cleanup()
+
+      const ref = homeLayoutRef.current
+      const pt = { x: event.clientX, y: event.clientY }
+      const inDesk = isPointInDesktopFourByFour(pt)
+      const layoutStart =
+        staticWidgetDragStartRef.current != null
+          ? { music: staticWidgetDragStartRef.current.music, wheel: staticWidgetDragStartRef.current.wheel }
+          : { music: ref.music, wheel: ref.wheel }
+      if (activeWidgetDrag.widget === 'profile') {
+        const start = staticWidgetDragStartRef.current
+        staticWidgetDragStartRef.current = null
+        const finalAnchor = resolveNearestProfileAnchor(pt)
+        if (start) {
+          let { music, wheel, slots } = start
+          if (finalAnchor !== start.profileAnchor) {
+            const dRow =
+              finalAnchor === 'bottom' && start.profileAnchor === 'top'
+                ? -4
+                : finalAnchor === 'top' && start.profileAnchor === 'bottom'
+                  ? 4
+                  : 0
+            if (dRow !== 0) {
+              music = { ...music, row: music.row + dRow }
+              wheel = { ...wheel, row: wheel.row + dRow }
+              slots = slots.map((s) => ({ ...s, row: s.row + dRow }))
+            }
+          }
+          persistFreeHomeLayout({
+            profileAnchor: finalAnchor,
+            music,
+            wheel,
+            slots,
+          })
+        } else {
+          persistFreeHomeLayout({
+            profileAnchor: finalAnchor,
+            music: ref.music,
+            wheel: ref.wheel,
+            slots: ref.slots,
+          })
+        }
+      } else if (activeWidgetDrag.widget === 'music') {
+        let music = ref.music
+        let wheel = ref.wheel
+        if (inDesk) {
+          if (shouldSwapMusicWheelAtDrop(pt, 'music', layoutStart, getAreaCenter, getGridAreaClientBounds)) {
+            music = ref.wheel
+            wheel = ref.music
+          } else {
+            music = snapTwoByTwoForDrag(pt, 'music')
+          }
+        }
+        persistFreeHomeLayout({
+          profileAnchor: ref.profileAnchor,
+          music,
+          wheel,
+          slots: ref.slots,
+        })
+      } else {
+        let music = ref.music
+        let wheel = ref.wheel
+        if (inDesk) {
+          if (shouldSwapMusicWheelAtDrop(pt, 'wheel', layoutStart, getAreaCenter, getGridAreaClientBounds)) {
+            music = ref.wheel
+            wheel = ref.music
+          } else {
+            wheel = snapTwoByTwoForDrag(pt, 'wheel')
+          }
+        }
+        persistFreeHomeLayout({
+          profileAnchor: ref.profileAnchor,
+          music,
+          wheel,
+          slots: ref.slots,
+        })
+      }
+      staticWidgetDragStartRef.current = null
       setActiveWidgetDrag(null)
-      setHoverProfileAnchor(null)
-      setHoverMusicSide(null)
     }
 
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', finish)
     window.addEventListener('pointercancel', finish)
     return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', finish)
-      window.removeEventListener('pointercancel', finish)
+      cleanup()
     }
-  }, [activeWidgetDrag, musicSideState, persistWidgetLayout, profileAnchorState, resolveNearestMusicSide, resolveNearestProfileAnchor])
+  }, [
+    activeWidgetDrag,
+    getAreaCenter,
+    getGridAreaClientBounds,
+    isPointInDesktopFourByFour,
+    persistFreeHomeLayout,
+    resolveNearestProfileAnchor,
+    snapTwoByTwoForDrag,
+  ])
 
   useEffect(() => {
     const onReset = () => resetWidgetLayout()
@@ -797,27 +1336,17 @@ export function HomeScreen({ onOpenApp }: Props) {
             gridTemplateRows: 'repeat(8, minmax(0, 1fr))',
           }}
         >
-          {(['top', 'bottom'] as ProfileAnchor[]).map((anchor) => (
-            <div
-              key={`profile-anchor-${anchor}`}
-              className="relative"
-              style={{
-                gridColumn: `${getHomeWidgetLayout(anchor, musicSideState).profile.colStart} / ${getHomeWidgetLayout(anchor, musicSideState).profile.colEnd}`,
-                gridRow: `${getHomeWidgetLayout(anchor, musicSideState).profile.rowStart} / ${getHomeWidgetLayout(anchor, musicSideState).profile.rowEnd}`,
-              }}
-            >
-              <AnimatePresence>
-                {isEditMode && hoverProfileAnchor === anchor ? (
-                  <motion.div
-                    className="pointer-events-none absolute inset-1 rounded-[30px] border border-[#D4AF37]/70 bg-white/24 shadow-[0_10px_24px_rgba(212,175,55,0.12)]"
-                    initial={{ opacity: 0, scale: 0.92 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.96 }}
-                    transition={{ duration: 0.16, ease: 'easeOut' }}
-                  />
-                ) : null}
-              </AnimatePresence>
-              {anchor === profileAnchorState ? (
+          {(() => {
+            const profileArea = widgetLayout.profile
+            return (
+              <div
+                key={`profile-active-${profileAnchorState}`}
+                className="relative min-h-0"
+                style={{
+                  gridColumn: `${profileArea.colStart} / ${profileArea.colEnd}`,
+                  gridRow: `${profileArea.rowStart} / ${profileArea.rowEnd}`,
+                }}
+              >
                 <motion.div
                   ref={profileNodeRef}
                   layout
@@ -834,7 +1363,11 @@ export function HomeScreen({ onOpenApp }: Props) {
                       ? { y: [-1, 1.4, -1], rotate: [-0.25, 0.35, -0.2] }
                       : { y: 0, rotate: 0, scale: primedStaticWidget === 'profile' ? 1.02 : 1 }
                   }
-                  transition={isEditMode && activeWidgetDrag?.widget !== 'profile' ? FLOAT_TRANSITION : { duration: 0.18, ease: 'easeOut' }}
+                  transition={
+                    isEditMode && activeWidgetDrag?.widget !== 'profile'
+                      ? FLOAT_TRANSITION
+                      : { duration: 0.18, ease: 'easeOut' }
+                  }
                   onContextMenu={(event) => event.preventDefault()}
                   onPointerDown={isEditMode ? (event) => handleStaticWidgetPointerDragStart('profile', event) : profileLongPressHandlers.onPointerDown}
                   onPointerMove={!isEditMode ? profileLongPressHandlers.onPointerMove : undefined}
@@ -844,34 +1377,24 @@ export function HomeScreen({ onOpenApp }: Props) {
                 >
                   <PersonalCard />
                 </motion.div>
-              ) : null}
-            </div>
-          ))}
+              </div>
+            )
+          })()}
 
-          {(['left', 'right'] as MusicSide[]).map((side) => (
-            <div
-              key={`music-side-${side}`}
-              className="relative"
-              style={{
-                gridColumn: `${getHomeWidgetLayout(profileAnchorState, side).music.colStart} / ${getHomeWidgetLayout(profileAnchorState, side).music.colEnd}`,
-                gridRow: `${getHomeWidgetLayout(profileAnchorState, side).music.rowStart} / ${getHomeWidgetLayout(profileAnchorState, side).music.rowEnd}`,
-              }}
-            >
-              <AnimatePresence>
-                {isEditMode && hoverMusicSide === side ? (
-                  <motion.div
-                    className="pointer-events-none absolute inset-1 rounded-[30px] border border-[#D4AF37]/70 bg-white/24 shadow-[0_10px_24px_rgba(212,175,55,0.12)]"
-                    initial={{ opacity: 0, scale: 0.92 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.96 }}
-                    transition={{ duration: 0.16, ease: 'easeOut' }}
-                  />
-                ) : null}
-              </AnimatePresence>
-              {side === musicSideState ? (
+          {(() => {
+            const musicArea = widgetLayout.music
+            return (
+              <div
+                key="home-widget-music"
+                className="relative z-[5] min-h-0"
+                style={{
+                  gridColumn: `${musicArea.colStart} / ${musicArea.colEnd}`,
+                  gridRow: `${musicArea.rowStart} / ${musicArea.rowEnd}`,
+                }}
+              >
                 <motion.div
                   ref={musicNodeRef}
-                  layout
+                  layout={false}
                   className="h-full w-full touch-none select-none"
                   style={{
                     userSelect: 'none',
@@ -883,11 +1406,22 @@ export function HomeScreen({ onOpenApp }: Props) {
                   animate={
                     isEditMode && activeWidgetDrag?.widget !== 'music'
                       ? { y: [-1, 1.4, -1], rotate: [-0.25, 0.35, -0.2] }
-                      : { y: 0, rotate: 0, scale: primedStaticWidget === 'music' ? 1.02 : 1 }
+                      : {
+                          y: 0,
+                          rotate: 0,
+                          scale: primedStaticWidget === 'music' ? 1.02 : 1,
+                        }
                   }
-                  transition={isEditMode && activeWidgetDrag?.widget !== 'music' ? FLOAT_TRANSITION : { duration: 0.18, ease: 'easeOut' }}
+                  transition={
+                    isEditMode && activeWidgetDrag?.widget !== 'music'
+                      ? FLOAT_TRANSITION
+                      : { duration: 0.18, ease: 'easeOut' }
+                  }
                   onContextMenu={(event) => event.preventDefault()}
-                  onPointerDown={isEditMode ? (event) => handleStaticWidgetPointerDragStart('music', event) : musicLongPressHandlers.onPointerDown}
+                  onPointerDownCapture={
+                    isEditMode ? (event) => handleStaticWidgetPointerDragStart('music', event) : undefined
+                  }
+                  onPointerDown={!isEditMode ? musicLongPressHandlers.onPointerDown : undefined}
                   onPointerMove={!isEditMode ? musicLongPressHandlers.onPointerMove : undefined}
                   onPointerUp={!isEditMode ? musicLongPressHandlers.onPointerUp : undefined}
                   onPointerCancel={!isEditMode ? musicLongPressHandlers.onPointerCancel : undefined}
@@ -895,17 +1429,56 @@ export function HomeScreen({ onOpenApp }: Props) {
                 >
                   <MusicWidget isEditMode={isEditMode} />
                 </motion.div>
-              ) : null}
-            </div>
-          ))}
+              </div>
+            )
+          })()}
 
           <div
+            key="home-widget-wheel"
+            className="relative z-[5]"
             style={{
               gridColumn: `${widgetLayout.wheel.colStart} / ${widgetLayout.wheel.colEnd}`,
               gridRow: `${widgetLayout.wheel.rowStart} / ${widgetLayout.wheel.rowEnd}`,
             }}
           >
-            <WheelWidget open={isWheelModalOpen} onOpenChange={setIsWheelModalOpen} />
+            <motion.div
+              ref={wheelNodeRef}
+              layout={false}
+              className="h-full w-full touch-none select-none"
+              style={{
+                userSelect: 'none',
+                WebkitUserSelect: 'none',
+                WebkitTouchCallout: 'none',
+                touchAction: 'none',
+                opacity: activeWidgetDrag?.widget === 'wheel' ? 0.04 : 1,
+              }}
+              animate={
+                isEditMode && activeWidgetDrag?.widget !== 'wheel'
+                  ? { y: [-1, 1.4, -1], rotate: [-0.25, 0.35, -0.2] }
+                  : { y: 0, rotate: 0, scale: primedStaticWidget === 'wheel' ? 1.02 : 1 }
+              }
+              transition={
+                isEditMode && activeWidgetDrag?.widget !== 'wheel'
+                  ? FLOAT_TRANSITION
+                  : { duration: 0.18, ease: 'easeOut' }
+              }
+              onPointerDownCapture={
+                isEditMode ? (event) => handleStaticWidgetPointerDragStart('wheel', event) : undefined
+              }
+            >
+              <WheelWidget
+                open={isWheelModalOpen}
+                onOpenChange={setIsWheelModalOpen}
+                isEditMode={isEditMode}
+                isActiveDrag={activeWidgetDrag?.widget === 'wheel'}
+                isLongPressPrimed={primedStaticWidget === 'wheel'}
+                disableOpen={isEditMode}
+                onLongPressStartDrag={(event) => {
+                  handleEnterStaticWidgetEditMode('wheel')
+                  handleStaticWidgetPointerDragStart('wheel', event)
+                }}
+              />
+            </motion.div>
           </div>
 
           {desktopSlots.map((slot, slotIndex) => {
@@ -961,15 +1534,13 @@ export function HomeScreen({ onOpenApp }: Props) {
               animate={{
                 opacity: 1,
                 scale: 1.08,
-              }}
-              exit={{ opacity: 0, scale: 1.02 }}
-              transition={{ type: 'spring', stiffness: 380, damping: 32, mass: 0.8 }}
-              style={{
                 width: activeDrag.width,
                 height: activeDrag.height,
                 left: activeDrag.x,
                 top: activeDrag.y,
               }}
+              exit={{ opacity: 0, scale: 1.02 }}
+              transition={DRAG_GHOST_TRANSITION}
             >
               <DesktopAppTile
                 app={appMap.get(activeDrag.id) ?? apps[0]!}
@@ -988,17 +1559,24 @@ export function HomeScreen({ onOpenApp }: Props) {
             <motion.div
               className="pointer-events-none fixed z-[61]"
               initial={false}
-              animate={{ opacity: 1, scale: 1.04 }}
-              exit={{ opacity: 0, scale: 1.01 }}
-              transition={{ type: 'spring', stiffness: 380, damping: 32, mass: 0.8 }}
-              style={{
+              animate={{
+                opacity: 1,
+                scale: 1.04,
                 width: activeWidgetDrag.width,
                 height: activeWidgetDrag.height,
                 left: activeWidgetDrag.x,
                 top: activeWidgetDrag.y,
               }}
+              exit={{ opacity: 0, scale: 1.01 }}
+              transition={DRAG_GHOST_TRANSITION}
             >
-              {activeWidgetDrag.widget === 'profile' ? <PersonalCard /> : <MusicWidget isEditMode />}
+              {activeWidgetDrag.widget === 'profile' ? (
+                <PersonalCard />
+              ) : activeWidgetDrag.widget === 'music' ? (
+                <MusicWidget isEditMode />
+              ) : (
+                <WheelWidget isEditMode disableOpen open={false} />
+              )}
             </motion.div>
           ) : null}
         </AnimatePresence>

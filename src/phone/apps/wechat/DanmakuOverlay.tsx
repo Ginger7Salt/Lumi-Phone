@@ -66,8 +66,14 @@ export function DanmakuOverlay({
         <div className="pointer-events-none absolute inset-x-0 overflow-hidden" style={zoneStyle}>
           {prepared.map((it) => {
             const lineHeight = it.fontPx + 8
+            const laneGapPx = 6
             const tokenStyle = laneStyleFor(it.style)
-            const top = typeof it.topPct === 'number' ? `${it.topPct}%` : it.track * lineHeight
+            const top =
+              typeof it.topPct === 'number'
+                ? `${it.topPct}%`
+                : it.track * (lineHeight + laneGapPx)
+            const dur = Math.max(3, it.durationSec)
+            const delay = Math.max(0, it.startDelaySec ?? 0)
             return (
               <span
                 key={it.id}
@@ -78,7 +84,8 @@ export function DanmakuOverlay({
                   color: it.colorRgba,
                   lineHeight: `${lineHeight}px`,
                   textShadow: it.style === 'none' ? '0 1px 2px rgba(0,0,0,0.18)' : undefined,
-                  animation: `wxDmFlyRightToLeft ${Math.max(3, it.durationSec)}s linear ${Math.max(0, it.startDelaySec ?? 0)}s infinite`,
+                  /* backwards：delay 期间停留在 keyframes 的 from（右侧屏外），避免出现左侧「贴一页 PPT」再飞走的闪屏 */
+                  animation: `wxDmFlyRightToLeft ${dur}s linear ${delay}s infinite backwards`,
                   willChange: 'transform',
                   ...tokenStyle,
                 }}

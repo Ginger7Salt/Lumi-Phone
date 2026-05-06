@@ -5,6 +5,7 @@ import type { Character, PlayerIdentity } from '../newFriendsPersona/types'
 import {
   requestWeChatDanmakuVarietyShow,
   type ChatTranscriptTurn,
+  type GlobalWechatPlate,
   type WeChatChatPromptMode,
 } from '../wechatChatAi'
 
@@ -29,6 +30,7 @@ export function useWeChatDanmakuAi() {
       recentGroupChatsReference?: string
       unsummarizedPrivateNotes?: string
       unsummarizedGroupNotes?: string
+      globalWechatPlate?: GlobalWechatPlate
     }) => {
       return requestWeChatDanmakuVarietyShow(params)
     },

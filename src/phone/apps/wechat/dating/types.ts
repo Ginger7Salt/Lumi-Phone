@@ -116,6 +116,8 @@ export type CharacterArchive = {
   /** 上帝视角：旁白推进，不直接对「你」说话、不与玩家互动 */
   godPerspective: boolean
   branchEnabled: boolean
+  /** 线下普通模式：是否在每轮 AI 剧情后生成弹幕（走弹幕接口与全局/角色弹幕配置） */
+  offlineDanmakuEnabled?: boolean
   /** VN 模式：禁用语音合成/播放（省 token + 省请求） */
   vnVoiceDisabled?: boolean
   /** VN 自定义输入面板：开启「转述」时，输入仅为剧情引导（未发生）；关闭则视为既定事实 */

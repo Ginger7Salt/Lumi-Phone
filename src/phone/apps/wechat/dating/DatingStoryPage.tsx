@@ -11,16 +11,25 @@ import {
   RefreshCw,
   Undo2,
 } from 'lucide-react'
-import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  type PointerEvent as ReactPointerEvent,
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { personaDb } from '../newFriendsPersona/idb'
-import type { Character, PlayerIdentity } from '../newFriendsPersona/types'
+import type { Character, CharacterDanmakuSettingsRow, PlayerIdentity, WeChatGlobalSettingsRow } from '../newFriendsPersona/types'
 import { formatWorldBackgroundForPrompt } from '../newFriendsPersona/worldBackgroundFormat'
 import { loadOfflineDatingPlotsPromptBlock } from './loadOfflineDatingPlotsForWechatPrompt'
 import { requestWeChatHeartWhisper, type ChatTranscriptTurn } from '../wechatChatAi'
 import { buildMemoryRelevanceHaystack } from '../wechatMemoryPromptBlocks'
-import { HeartWhisperModal } from '../HeartWhisperModal'
+import { formatHeartWhisperGenerateError, HeartWhisperModal } from '../HeartWhisperModal'
 import { useDating, vnRollbackJumpStorageKey } from './DatingContext'
 import { splitDatingAssistantOutput } from './plotCoT'
 import { StoryFeed } from './StoryFeed'
@@ -42,6 +51,13 @@ import {
   VN_BGM_DIVERSITY_WINDOW,
 } from './vnBgmCatalog'
 import { createMiniMaxT2ASyncAudioBlob } from '../../voiceprint/services/minimaxApi'
+import { densityToTrackCount, hexAndOpacityToRgba, resolveEffectiveDanmakuVisuals } from '../danmakuResolve'
+import { DanmakuOverlay, type DanmakuOverlayBullet } from '../DanmakuOverlay'
+import { registerDatingOfflineDanmakuSink } from './datingOfflineDanmakuBridge'
+
+function randomBetweenInclusive(min: number, max: number) {
+  return Math.floor(min + Math.random() * (max - min + 1))
+}
 
 type Props = {
   onBackToSelect: () => void
@@ -488,6 +504,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     updateCharacter,
     setMode,
     setBranchEnabled,
+    setOfflineDanmakuEnabled,
     setGodPerspective,
     setVnVoiceDisabled,
     setVnCustomInputParaphrase,
@@ -532,6 +549,19 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [heartWhisperOpen, setHeartWhisperOpen] = useState(false)
   const [heartWhisperLoading, setHeartWhisperLoading] = useState(false)
   const [heartWhisperData, setHeartWhisperData] = useState<HeartWhisper | null>(null)
+  const [heartWhisperGenerateError, setHeartWhisperGenerateError] = useState<string | null>(null)
+  const [heartWhisperToast, setHeartWhisperToast] = useState<string | null>(null)
+  const heartWhisperToastTimerRef = useRef<number | null>(null)
+  const showHeartWhisperToast = useCallback((msg: string) => {
+    setHeartWhisperToast(msg)
+    if (heartWhisperToastTimerRef.current != null) window.clearTimeout(heartWhisperToastTimerRef.current)
+    heartWhisperToastTimerRef.current = window.setTimeout(() => setHeartWhisperToast(null), 2600)
+  }, [])
+  useEffect(() => {
+    return () => {
+      if (heartWhisperToastTimerRef.current != null) window.clearTimeout(heartWhisperToastTimerRef.current)
+    }
+  }, [])
   const [vnCustomInput, setVnCustomInput] = useState('')
   const [vnCustomInputModalOpen, setVnCustomInputModalOpen] = useState(false)
   const [vnUserDisplayName, setVnUserDisplayName] = useState('用户')
@@ -637,6 +667,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     if (heartWhisperLoading) return
     const cid = currentCharacter.id.trim()
     if (!cid) return
+    setHeartWhisperGenerateError(null)
     setHeartWhisperLoading(true)
     try {
       const character = (await personaDb.getCharacter(cid)) as Character | null
@@ -661,6 +692,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       const offlineDatingPlotsContext =
         character ? await loadOfflineDatingPlotsPromptBlock(cid, character?.name ?? null) : ''
       // 线下剧情模式心语：严格基于当前剧情流生成，优先参考最新一轮 AI 剧情回复。
+      const wbDatingHeartIds = [cid].filter(Boolean)
       const whisper = await requestWeChatHeartWhisper({
         apiConfig,
         character,
@@ -672,6 +704,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         longTermMemoryNotes: memoryNotes,
         worldBackgroundPrompt,
         offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+        chatMemberIds: wbDatingHeartIds,
+        globalWechatPlate: 'offline_plot',
       })
       // 线下剧情心语独立存储，避免与聊天室心语串数据。
       await personaDb.setPhoneKv(datingHeartWhisperKvKey(cid), {
@@ -679,10 +713,14 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         updatedAt: Date.now(),
       })
       setHeartWhisperData(whisper)
+      setHeartWhisperGenerateError(null)
+      showHeartWhisperToast('心语已更新')
+    } catch (err) {
+      setHeartWhisperGenerateError(formatHeartWhisperGenerateError(err))
     } finally {
       setHeartWhisperLoading(false)
     }
-  }, [apiConfig, buildTranscriptFromDatingPlots, currentCharacter.id, heartWhisperLoading])
+  }, [apiConfig, buildTranscriptFromDatingPlots, currentCharacter.id, heartWhisperLoading, showHeartWhisperToast])
 
   useEffect(() => {
     if (!heartWhisperOpen) return
@@ -988,6 +1026,173 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const VN_MENU_H = 320
 
   const isVn = currentArchive.modePreference === 'vn'
+
+  const [storyGlobalDm, setStoryGlobalDm] = useState<WeChatGlobalSettingsRow | null>(null)
+  const [storyPeerDmRow, setStoryPeerDmRow] = useState<CharacterDanmakuSettingsRow | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const g = await personaDb.getGlobalSettings()
+        if (cancelled) return
+        setStoryGlobalDm(g)
+        const cid = currentCharacter.id.trim()
+        if (g.danmakuScopeMode === 'character' && cid) {
+          const row = await personaDb.getCharacterDanmakuSettings(cid)
+          if (!cancelled) setStoryPeerDmRow(row)
+        } else if (!cancelled) setStoryPeerDmRow(null)
+      } catch {
+        if (!cancelled) {
+          setStoryGlobalDm(null)
+          setStoryPeerDmRow(null)
+        }
+      }
+    })()
+    const onStorage = () => {
+      void (async () => {
+        try {
+          const g = await personaDb.getGlobalSettings()
+          setStoryGlobalDm(g)
+          const cid = currentCharacter.id.trim()
+          if (g.danmakuScopeMode === 'character' && cid) {
+            const row = await personaDb.getCharacterDanmakuSettings(cid)
+            setStoryPeerDmRow(row)
+          } else setStoryPeerDmRow(null)
+        } catch {
+          /* ignore */
+        }
+      })()
+    }
+    window.addEventListener('wechat-storage-changed', onStorage)
+    return () => {
+      cancelled = true
+      window.removeEventListener('wechat-storage-changed', onStorage)
+    }
+  }, [currentCharacter.id])
+
+  const effectiveStoryDm = useMemo(() => {
+    if (!storyGlobalDm) return null
+    const pid = currentCharacter.id.trim()
+    return resolveEffectiveDanmakuVisuals(storyGlobalDm, pid, storyPeerDmRow)
+  }, [storyGlobalDm, currentCharacter.id, storyPeerDmRow])
+
+  const [offlineDmBullets, setOfflineDmBullets] = useState<DanmakuOverlayBullet[]>([])
+  const offlineDmLaneBusyUntilRef = useRef<number[]>([])
+  useEffect(() => {
+    setOfflineDmBullets([])
+    offlineDmLaneBusyUntilRef.current = []
+  }, [currentCharacter.id])
+
+  const enqueueOfflineStoryDanmakuLines = useCallback(
+    async (lines: string[]) => {
+      if (!lines.length || isVn || !currentArchive.offlineDanmakuEnabled) return
+      let eff = effectiveStoryDm
+      if (!eff) {
+        try {
+          const g = await personaDb.getGlobalSettings()
+          const pid = currentCharacter.id.trim()
+          const row = pid ? await personaDb.getCharacterDanmakuSettings(pid) : null
+          eff = resolveEffectiveDanmakuVisuals(g, pid, row)
+        } catch {
+          return
+        }
+      }
+      if (!eff || eff.skipCharacter) return
+      const trackCount = densityToTrackCount(eff.density)
+      const durationSec = eff.scrollDurationSec
+      const fontPx = eff.fontSize
+      const colorRgba = hexAndOpacityToRgba(eff.color, eff.opacity)
+      if (offlineDmLaneBusyUntilRef.current.length !== trackCount) {
+        offlineDmLaneBusyUntilRef.current = Array.from({ length: trackCount }, () => 0)
+      }
+      let waveAccumMs = 0
+      lines.forEach((line, i) => {
+        const stepMs = i === 0 ? randomBetweenInclusive(140, 520) : randomBetweenInclusive(400, 980)
+        waveAccumMs += stepMs
+        const scheduleDelay = waveAccumMs
+        window.setTimeout(() => {
+          const pickTrackWithGap = () => {
+            const now = Date.now()
+            const busy = offlineDmLaneBusyUntilRef.current
+            let best = 0
+            let bestWait = Number.POSITIVE_INFINITY
+            for (let t = 0; t < trackCount; t += 1) {
+              const wait = Math.max(0, (busy[t] ?? 0) - now)
+              if (wait <= 0) return { track: t, waitMs: 0 }
+              if (wait < bestWait) {
+                bestWait = wait
+                best = t
+              }
+            }
+            return { track: best, waitMs: Math.max(0, bestWait) }
+          }
+          const place = () => {
+            const { track, waitMs } = pickTrackWithGap()
+            if (waitMs > 0) {
+              window.setTimeout(place, waitMs)
+              return
+            }
+            const id = `dm-story-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`
+            const durationJitter = (Math.random() - 0.5) * 2.2
+            const realDuration = Math.max(3, durationSec + durationJitter)
+            const safeGapMs = Math.max(1400, realDuration * 1000 * 0.92)
+            offlineDmLaneBusyUntilRef.current[track] = Date.now() + safeGapMs
+            const topPct =
+              eff.position === 'random'
+                ? Math.min(92, Math.max(2, (track / Math.max(1, trackCount - 1)) * 72 + Math.random() * 6))
+                : undefined
+            setOfflineDmBullets((prev) => {
+              const next: DanmakuOverlayBullet[] = [
+                ...prev,
+                {
+                  id,
+                  text: line,
+                  track,
+                  durationSec: realDuration,
+                  startDelaySec: Math.random() * 0.35 + Math.min(i * 0.1, 1.8),
+                  fontPx,
+                  colorRgba,
+                  style: eff.style,
+                  topPct,
+                },
+              ]
+              return next.slice(-180)
+            })
+          }
+          place()
+        }, scheduleDelay)
+      })
+    },
+    [currentArchive.offlineDanmakuEnabled, currentCharacter.id, effectiveStoryDm, isVn],
+  )
+
+  useEffect(() => {
+    if (isVn) {
+      registerDatingOfflineDanmakuSink(null)
+      setOfflineDmBullets([])
+      return () => {
+        registerDatingOfflineDanmakuSink(null)
+      }
+    }
+    registerDatingOfflineDanmakuSink((lineList) => {
+      void enqueueOfflineStoryDanmakuLines(lineList)
+    })
+    return () => {
+      registerDatingOfflineDanmakuSink(null)
+    }
+  }, [enqueueOfflineStoryDanmakuLines, isVn])
+
+  const offlineDmZoneStyle = useMemo((): CSSProperties => {
+    const p = effectiveStoryDm?.position ?? 'top'
+    if (p === 'middle') return { top: '28%', height: '30%' }
+    if (p === 'bottom') return { top: '54%', height: '30%' }
+    if (p === 'random') return { top: '6%', height: '58%' }
+    return { top: '3%', height: '26%' }
+  }, [effectiveStoryDm?.position])
+
+  const showOfflineDmOverlay =
+    !isVn && !!currentArchive.offlineDanmakuEnabled && !!effectiveStoryDm && !effectiveStoryDm.skipCharacter
+
   const [vnBgCurrentUrl, setVnBgCurrentUrl] = useState<string>(VN_BACKGROUND_ASSETS[0]?.url || VN_BG_FALLBACK)
   const [vnBgPrevUrl, setVnBgPrevUrl] = useState<string | null>(null)
   const [vnBgFlashOn, setVnBgFlashOn] = useState(false)
@@ -2621,9 +2826,23 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   <button className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50" onClick={() => setMode(isVn ? 'normal' : 'vn')}>
                     模式切换：{isVn ? '切到普通模式' : '切到VN模式'}
                   </button>
-                  <button className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50" onClick={() => setBranchEnabled(!currentArchive.branchEnabled)}>
-                    剧情分支开关：{currentArchive.branchEnabled ? '已开启' : '已关闭'}
-                  </button>
+                  <div
+                    className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50"
+                    title="开启后每轮 AI 剧情结束会请求弹幕（使用 API 设置中的弹幕预设；需在弹幕配置中为该角色启用）"
+                  >
+                    <span>弹幕模式</span>
+                    <VnCapsuleSwitch
+                      checked={!!currentArchive.offlineDanmakuEnabled}
+                      onToggle={() => setOfflineDanmakuEnabled(!currentArchive.offlineDanmakuEnabled)}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50">
+                    <span>剧情分支</span>
+                    <VnCapsuleSwitch
+                      checked={currentArchive.branchEnabled}
+                      onToggle={() => setBranchEnabled(!currentArchive.branchEnabled)}
+                    />
+                  </div>
                   <button
                     className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50"
                     onClick={() => {
@@ -2662,15 +2881,22 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
             </div>
           </header>
 
-          <div
-            ref={normalScrollRef}
-            className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-            style={
-              keyboardPad > 0
-                ? { paddingBottom: `calc(${keyboardPad}px + max(1rem, env(safe-area-inset-bottom, 0px)))` }
-                : undefined
-            }
-          >
+          {/* 弹幕与聊天室一致：盖在「剧情滚动区」视口上，不随列表滚动 */}
+          <div className="relative min-h-0 flex-1">
+            {showOfflineDmOverlay ? (
+              <div className="pointer-events-none absolute inset-0 z-[60]">
+                <DanmakuOverlay bullets={offlineDmBullets} zoneStyle={offlineDmZoneStyle} />
+              </div>
+            ) : null}
+            <div
+              ref={normalScrollRef}
+              className="relative min-h-0 h-full overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+              style={
+                keyboardPad > 0
+                  ? { paddingBottom: `calc(${keyboardPad}px + max(1rem, env(safe-area-inset-bottom, 0px)))` }
+                  : undefined
+              }
+            >
             <div className="rounded-2xl border border-stone-100 bg-white p-8 shadow-sm">
               {currentArchive.plots.length ? (
                 <StoryFeed
@@ -2899,6 +3125,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 </button>
               </div>
             </div>
+          </div>
           </div>
         </div>
       ) : (
@@ -4133,11 +4360,22 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         onSaved={(v) => setStyleTuning(v)}
       />
 
+      {heartWhisperToast ? (
+        <div className="pointer-events-none fixed left-1/2 top-[72px] z-[1350] max-w-[min(520px,calc(100vw-32px))] -translate-x-1/2 rounded-xl bg-white/95 px-4 py-2 text-center text-[13px] text-[#1f2937] shadow-[0_10px_22px_rgba(0,0,0,0.12)] backdrop-blur">
+          {heartWhisperToast}
+        </div>
+      ) : null}
+
       <HeartWhisperModal
         open={heartWhisperOpen}
         loading={heartWhisperLoading}
         data={heartWhisperData}
-        onClose={() => setHeartWhisperOpen(false)}
+        generateError={heartWhisperGenerateError}
+        onDismissGenerateError={() => setHeartWhisperGenerateError(null)}
+        onClose={() => {
+          setHeartWhisperOpen(false)
+          setHeartWhisperGenerateError(null)
+        }}
         onGenerate={() => {
           void generateHeartWhisper()
         }}

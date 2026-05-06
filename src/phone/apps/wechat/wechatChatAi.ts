@@ -33,6 +33,73 @@ import {
   clampModelMemoryTriggerCategory,
   clampModelMemoryTriggerPrecise,
 } from './memory/memoryTriggerUtils'
+import { buildWorldbookContext } from '../../worldbook/buildWorldbookContext'
+import type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
+import { getWorldbookLoreEntriesSnapshot } from '../../worldbook/worldbookLoreStore'
+
+export { buildWorldbookContext } from '../../worldbook/buildWorldbookContext'
+export type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
+
+function resolveWorldbookLoreInjection(params: {
+  worldbookLoreContext?: string
+  chatMemberIds?: string[]
+  globalWechatPlate?: GlobalWechatPlate
+}): string {
+  const pre = params.worldbookLoreContext?.trim()
+  if (pre) return pre
+  const ids = [...new Set((params.chatMemberIds ?? []).map((x) => String(x ?? '').trim()).filter(Boolean))]
+  return buildWorldbookContext(ids, getWorldbookLoreEntriesSnapshot(), params.globalWechatPlate)
+}
+
+function resolveChatWorldbookMemberIds(
+  chatMemberIds: string[] | undefined,
+  character: Character | null,
+): string[] | undefined {
+  if (chatMemberIds != null)
+    return [...new Set(chatMemberIds.map((x) => String(x ?? '').trim()).filter(Boolean))]
+  return character?.id?.trim() ? [character.id.trim()] : undefined
+}
+
+/**
+ * 档案「与世界书」正文中若写明禁止发表情包，则须关闭文末「表情包资源」强提示，
+ * 否则模型常跟随目录输出 `[表情包]引用名`，与档案禁令冲突。
+ */
+function loreArchiveForbidsStickerSending(loreInject: string): boolean {
+  if (!loreInject.trim()) return false
+  const banned = [
+    /不允许\s*发表情包/,
+    /禁止\s*发表情包/,
+    /勿\s*发表情包/,
+    /请勿\s*发表情包/,
+    /不要\s*发表情包/,
+    /不得\s*发表情包/,
+    /禁止\s*发送\s*表情包/,
+    /不允许\s*发送\s*表情包/,
+    /请勿\s*发送\s*表情包/,
+    /不要\s*发送\s*表情包/,
+    /不得\s*发送\s*表情包/,
+    /禁止\s*使用\s*表情包/,
+    /不允许\s*使用\s*表情包/,
+    /不准\s*发\s*表情包/,
+    /勿\s*用\s*表情包/,
+    /勿\s*发\s*表情包/,
+    /严禁\s*表情包/,
+  ]
+  return banned.some((re) => re.test(loreInject))
+}
+
+const STICKER_CATALOG_SUPPRESSED_BY_LORE = `---------------------
+【表情包资源】
+---------------------
+当前会话的「档案与世界书」已声明 **禁止发送表情包**（含客户端单独成行的 \`[表情包]引用名\`）。
+请忽略系统其它位置若出现的「可选用表情包」说明；本轮仅用**纯文字**气泡回复，**不要**输出以 \`[表情包]\` 开头的行。
+用户若发来表情包图片，可按情境接话，但你方**不要回发**表情包行。
+`
+
+function resolveStickerCatalogPromptBlockForLore(loreInject: string): string {
+  if (loreArchiveForbidsStickerSending(loreInject)) return STICKER_CATALOG_SUPPRESSED_BY_LORE
+  return buildStickerCatalogPromptBlock()
+}
 
 /** 微信单聊主回复（含思维链解析路径）completion 上限；仍受模型/API 限制 */
 export const WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS = 30000
@@ -364,7 +431,19 @@ export function buildSystemContent(params: {
   replyBias?: string
   /** 当前会话时间戳（毫秒）；未传时默认系统时间 */
   currentTimeMs?: number
+  /** 档案室「世界线法则」已拼好的片段；优先于 chatMemberIds */
+  worldbookLoreContext?: string
+  /** 当前场景涉及的角色 / 玩家身份 ID，用于从档案室动态组装法则 */
+  chatMemberIds?: string[]
+  /** 全局微信世界书生效板块；不传则仅注入「全部场景」类世界书 */
+  globalWechatPlate?: GlobalWechatPlate
 }): string {
+  const loreInject = resolveWorldbookLoreInjection({
+    worldbookLoreContext: params.worldbookLoreContext,
+    chatMemberIds: params.chatMemberIds,
+    globalWechatPlate: params.globalWechatPlate,
+  })
+  const loreBlock = loreInject ? `\n\n${loreInject}\n` : ''
   const player = params.playerDisplayName.trim() || '朋友'
   const attributionLine =
     params.promptMode === 'lumi-assistant'
@@ -392,7 +471,7 @@ export function buildSystemContent(params: {
 
   if (isLumiAssistant) {
     // 助手模式：不注入「虚构沙盒」免责声明，避免诱导沉浸式扮演。
-    return `${LUMI_ASSISTANT_SYSTEM_PROMPT}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
+    return `${LUMI_ASSISTANT_SYSTEM_PROMPT}${loreBlock}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
   }
 
   const wb = buildWorldBookText(params.character)
@@ -402,16 +481,16 @@ export function buildSystemContent(params: {
   if (params.character) {
     extra += `\n\n---\n【角色档案摘要】\n${card}\n`
     if (wbg) {
-      extra += `\n---\n【世界背景（优先于通用扮演铁则；若与下方世界书冲突，以世界书为准）】\n${wbg}\n`
+      extra += `\n---\n【世界背景（次于档案与世界书、人设世界书；若与下方世界书冲突，以世界书为准）】\n${wbg}\n`
     }
     if (wb.trim()) {
-      extra += `\n---\n【世界书条目（最高优先级设定；条目间若有冲突以最新或标注为准）】\n${wb}\n`
+      extra += `\n---\n【世界书条目（与人设绑定；与上文「档案与世界书」同级、均优先于通用协议；条目间若有冲突以最新或标注为准）】\n${wb}\n`
     }
   } else {
     extra += `\n\n---\n【当前状态】未绑定完整人设档案（无世界书）。请以友善、有分寸的微信好友身份交谈，仍须遵守上述通用铁则，且绝不暴露非人类身份。\n`
   }
 
-  return `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
+  return `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
 }
 
 function transcriptToMessages(turns: ChatTranscriptTurn[], opts?: { groupChat?: boolean }): OpenAiCompatibleMessage[] {
@@ -704,11 +783,20 @@ export async function requestWeChatPeerReplyBubbles(params: {
   danmakuConfig?: WeChatDanmakuInlineConfig
   /** 群聊：历史统一走 user 角色并带发言者前缀，避免多角色 assistant 交错 */
   groupChatTranscript?: boolean
+  /** 档案室法则：当前场景成员 ID（未传时默认仅绑定对方角色） */
+  chatMemberIds?: string[]
+  globalWechatPlate?: GlobalWechatPlate
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
   }
+
+  const wbMemberIds = resolveChatWorldbookMemberIds(params.chatMemberIds, params.character)
+  const loreInjectForStickerPolicy = resolveWorldbookLoreInjection({
+    chatMemberIds: wbMemberIds,
+    globalWechatPlate: params.globalWechatPlate,
+  })
 
   const base = buildSystemContent({
     character: params.character,
@@ -723,10 +811,12 @@ export async function requestWeChatPeerReplyBubbles(params: {
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
     replyBias: params.replyBias,
     currentTimeMs: params.currentTimeMs,
+    chatMemberIds: wbMemberIds,
+    globalWechatPlate: params.globalWechatPlate,
   })
   const isLumi = params.promptMode === 'lumi-assistant'
   const busyPrefix = buildBusyPrefix(params.busyContext)
-  const stickerCat = buildStickerCatalogPromptBlock()
+  const stickerCat = resolveStickerCatalogPromptBlockForLore(loreInjectForStickerPolicy)
   const danmakuInstruction = buildDanmakuInlineInstruction({
     enabled: !!params.danmakuConfig?.enabled,
     useMemory: !!params.danmakuConfig?.useMemory,
@@ -778,6 +868,8 @@ export async function requestWeChatVoiceCallReplyText(params: {
   unsummarizedPrivateNotes?: string
   unsummarizedGroupNotes?: string
   currentTimeMs?: number
+  chatMemberIds?: string[]
+  globalWechatPlate?: GlobalWechatPlate
 }): Promise<string> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -795,6 +887,8 @@ export async function requestWeChatVoiceCallReplyText(params: {
     unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
     currentTimeMs: params.currentTimeMs,
+    chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
+    globalWechatPlate: params.globalWechatPlate,
   })
   const system = `${base}\n\n---\n【语音通话场景规则】\n${VOICE_CALL_SYSTEM_PROMPT}\n`
   const history = transcriptToMessages(params.transcript)
@@ -866,6 +960,8 @@ export async function requestWeChatVoiceCallDecision(params: {
   unsummarizedPrivateNotes?: string
   unsummarizedGroupNotes?: string
   currentTimeMs?: number
+  chatMemberIds?: string[]
+  globalWechatPlate?: GlobalWechatPlate
 }): Promise<VoiceCallDecision> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -883,6 +979,8 @@ export async function requestWeChatVoiceCallDecision(params: {
     unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
     currentTimeMs: params.currentTimeMs,
+    chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
+    globalWechatPlate: params.globalWechatPlate,
   })
   const system = `${base}\n\n---\n【呼叫接听决策】\n${VOICE_CALL_DECISION_SYSTEM_PROMPT}\n`
   const history = transcriptToMessages(params.transcript)
@@ -950,11 +1048,19 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   currentTimeMs?: number
   danmakuConfig?: WeChatDanmakuInlineConfig
   groupChatTranscript?: boolean
+  chatMemberIds?: string[]
+  globalWechatPlate?: GlobalWechatPlate
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
   }
+  const wbMemberIds = resolveChatWorldbookMemberIds(params.chatMemberIds, params.character)
+  const loreInjectForStickerPolicy = resolveWorldbookLoreInjection({
+    chatMemberIds: wbMemberIds,
+    globalWechatPlate: params.globalWechatPlate,
+  })
+
   const base = buildSystemContent({
     character: params.character,
     playerIdentity: params.playerIdentity,
@@ -968,6 +1074,8 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
     replyBias: params.replyBias,
     currentTimeMs: params.currentTimeMs,
+    chatMemberIds: wbMemberIds,
+    globalWechatPlate: params.globalWechatPlate,
   })
   const isLumi = params.promptMode === 'lumi-assistant'
   const roleName = params.character?.name?.trim() || (isLumi ? 'Lumi' : '对方')
@@ -976,7 +1084,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     roleName,
   )
   const busyPrefix = buildBusyPrefix(params.busyContext)
-  const stickerCat = buildStickerCatalogPromptBlock()
+  const stickerCat = resolveStickerCatalogPromptBlockForLore(loreInjectForStickerPolicy)
   const danmakuInstruction = buildDanmakuInlineInstruction({
     enabled: !!params.danmakuConfig?.enabled,
     useMemory: !!params.danmakuConfig?.useMemory,
@@ -1119,6 +1227,8 @@ export async function requestWeChatPeerReply(params: {
   currentTimeMs?: number
   /** 默认 `persona`；内置 Lumi 会话固定 `lumi-assistant`（与人设绑定无关）。 */
   promptMode?: WeChatChatPromptMode
+  chatMemberIds?: string[]
+  globalWechatPlate?: GlobalWechatPlate
 }): Promise<string> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1138,6 +1248,8 @@ export async function requestWeChatPeerReply(params: {
     unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
     currentTimeMs: params.currentTimeMs,
+    chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
+    globalWechatPlate: params.globalWechatPlate,
   })
   const history = transcriptToMessages(params.transcript)
   const messages: OpenAiCompatibleMessage[] = [{ role: 'system', content: system }, ...history]
@@ -1151,26 +1263,93 @@ export async function requestWeChatPeerReply(params: {
   return cleaned || text.trim()
 }
 
+/** 推理模型常在 </thinking> 之后才输出 JSON；推理段里的「{」会误导 naive 的 indexOf（心语 / 群心语等 JSON 复用） */
+function thinkingAwareJsonSearchBases(raw: string): string[] {
+  const fenced = stripAssistantFence(String(raw ?? '').trim())
+  if (!fenced) return ['']
+  const closeTag = '</thinking>'
+  const idx = fenced.lastIndexOf(closeTag)
+  const ordered: string[] = []
+  if (idx >= 0) {
+    const tail = fenced.slice(idx + closeTag.length).trim()
+    if (tail.includes('{')) ordered.push(tail)
+  }
+  ordered.push(fenced)
+  return [...new Set(ordered)]
+}
+
+/** 从首个 { 起截取平衡的一层 JSON 对象，避免字符串内含 `}` 时 lastIndexOf 误切（简化状态机，忽略引号外其它括号） */
+function sliceBalancedJsonObject(s: string): string | null {
+  const start = s.indexOf('{')
+  if (start < 0) return null
+  let depth = 0
+  let inStr = false
+  let esc = false
+  for (let i = start; i < s.length; i += 1) {
+    const c = s[i]
+    if (inStr) {
+      if (esc) {
+        esc = false
+        continue
+      }
+      if (c === '\\') {
+        esc = true
+        continue
+      }
+      if (c === '"') inStr = false
+      continue
+    }
+    if (c === '"') {
+      inStr = true
+      continue
+    }
+    if (c === '{') depth += 1
+    else if (c === '}') {
+      depth -= 1
+      if (depth === 0) return s.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
 function parseHeartWhisperJson(text: string): Omit<HeartWhisper, 'timestamp'> {
-  const raw = stripAssistantFence(text)
-  const start = raw.indexOf('{')
-  const end = raw.lastIndexOf('}')
-  const jsonText = start >= 0 && end > start ? raw.slice(start, end + 1) : raw
-  const j = JSON.parse(jsonText) as {
-    location?: unknown
-    action?: unknown
-    outfit?: unknown
-    inner_thoughts?: unknown
-    view_on_user?: unknown
-  }
+  const bases = thinkingAwareJsonSearchBases(text)
+  let lastErr: unknown = null
   const txt = (v: unknown) => String(v ?? '').trim()
-  return {
-    location: txt(j.location),
-    action: txt(j.action),
-    outfit: txt(j.outfit),
-    innerThoughts: txt(j.inner_thoughts),
-    userImpression: txt(j.view_on_user),
+
+  for (const base of bases) {
+    const balanced = sliceBalancedJsonObject(base)
+    const jsonText =
+      balanced ??
+      (() => {
+        const t = base.trim()
+        const start = t.indexOf('{')
+        const end = t.lastIndexOf('}')
+        return start >= 0 && end > start ? t.slice(start, end + 1) : t
+      })()
+    try {
+      const j = JSON.parse(jsonText) as {
+        location?: unknown
+        action?: unknown
+        outfit?: unknown
+        inner_thoughts?: unknown
+        view_on_user?: unknown
+      }
+      return {
+        location: txt(j.location),
+        action: txt(j.action),
+        outfit: txt(j.outfit),
+        innerThoughts: txt(j.inner_thoughts),
+        userImpression: txt(j.view_on_user),
+      }
+    } catch (e) {
+      lastErr = e
+    }
   }
+
+  const hint =
+    lastErr instanceof Error && lastErr.message ? lastErr.message : '模型返回可能混入了思维链、截断或非 JSON'
+  throw new Error(`心语 JSON 解析失败：${hint}。请重试或更换模型。`)
 }
 
 function formatHeartWhisperTimestamp(ts: number): string {
@@ -1199,33 +1378,46 @@ type GroupPsycheModelEntry = {
 }
 
 function parseGroupPsycheFromModel(text: string): GroupPsycheModelEntry[] {
-  const raw = stripAssistantFence(text)
-  const start = raw.indexOf('{')
-  const end = raw.lastIndexOf('}')
-  const jsonText = start >= 0 && end > start ? raw.slice(start, end + 1) : raw
-  let j: { entries?: unknown }
-  try {
-    j = JSON.parse(jsonText) as { entries?: unknown }
-  } catch {
-    throw new Error('群聊心语 JSON 解析失败')
-  }
-  const arr = Array.isArray(j.entries) ? j.entries : []
+  const bases = thinkingAwareJsonSearchBases(text)
+  let lastErr: unknown = null
   const txt = (v: unknown) => String(v ?? '').trim()
-  const out: GroupPsycheModelEntry[] = []
-  for (const it of arr) {
-    const o = (it ?? {}) as Record<string, unknown>
-    const cid = txt(o.character_id ?? o.charId ?? o.characterId)
-    if (!cid) continue
-    out.push({
-      character_id: cid,
-      location: txt(o.location),
-      clothing: txt(o.clothing ?? o.outfit),
-      posture: txt(o.posture ?? o.action),
-      monologue: txt(o.monologue ?? o.inner_thoughts),
-      impression_on_user: txt(o.impression_on_user ?? o.view_on_user),
-    })
+
+  for (const base of bases) {
+    const balanced = sliceBalancedJsonObject(base)
+    const jsonText =
+      balanced ??
+      (() => {
+        const t = base.trim()
+        const start = t.indexOf('{')
+        const end = t.lastIndexOf('}')
+        return start >= 0 && end > start ? t.slice(start, end + 1) : t
+      })()
+    try {
+      const j = JSON.parse(jsonText) as { entries?: unknown }
+      const arr = Array.isArray(j.entries) ? j.entries : []
+      const out: GroupPsycheModelEntry[] = []
+      for (const it of arr) {
+        const o = (it ?? {}) as Record<string, unknown>
+        const cid = txt(o.character_id ?? o.charId ?? o.characterId)
+        if (!cid) continue
+        out.push({
+          character_id: cid,
+          location: txt(o.location),
+          clothing: txt(o.clothing ?? o.outfit),
+          posture: txt(o.posture ?? o.action),
+          monologue: txt(o.monologue ?? o.inner_thoughts),
+          impression_on_user: txt(o.impression_on_user ?? o.view_on_user),
+        })
+      }
+      return out
+    } catch (e) {
+      lastErr = e
+    }
   }
-  return out
+
+  const hint =
+    lastErr instanceof Error && lastErr.message ? lastErr.message : '模型返回可能混入了思维链、截断或非 JSON'
+  throw new Error(`群聊心语 JSON 解析失败：${hint}。请重试或更换模型。`)
 }
 
 function escapeRegExpForAlias(s: string): string {
@@ -1293,6 +1485,8 @@ export async function requestWeChatGroupPsyche(params: {
   recentGroupChatsReference?: string
   unsummarizedPrivateNotes?: string
   unsummarizedGroupNotes?: string
+  /** 档案室法则成员 ID；未传时默认取 roster 内 NPC */
+  chatMemberIds?: string[]
 }): Promise<GroupPsycheArchive> {
   const roster = params.roster.filter((m) => m.charId?.trim())
   const nowMs = typeof params.nowMs === 'number' && Number.isFinite(params.nowMs) ? params.nowMs : Date.now()
@@ -1303,6 +1497,10 @@ export async function requestWeChatGroupPsyche(params: {
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
   }
+  const wbIds =
+    params.chatMemberIds != null
+      ? [...new Set(params.chatMemberIds.map((x) => String(x ?? '').trim()).filter(Boolean))]
+      : [...new Set(roster.map((r) => r.charId.trim()))]
   const rosterJson = JSON.stringify(
     roster.map((r) => ({
       character_id: r.charId.trim(),
@@ -1322,6 +1520,8 @@ export async function requestWeChatGroupPsyche(params: {
     unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
     currentTimeMs: nowMs,
+    chatMemberIds: wbIds,
+    globalWechatPlate: 'group_chat',
   })
   const history = transcriptToMessages(params.transcript.slice(-36), { groupChat: true })
   const stripHint =
@@ -1355,6 +1555,8 @@ export async function requestWeChatHeartWhisper(params: {
   recentGroupChatsReference?: string
   unsummarizedPrivateNotes?: string
   unsummarizedGroupNotes?: string
+  chatMemberIds?: string[]
+  globalWechatPlate?: GlobalWechatPlate
 }): Promise<HeartWhisper> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1372,6 +1574,8 @@ export async function requestWeChatHeartWhisper(params: {
     unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
     currentTimeMs: params.nowMs,
+    chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
+    globalWechatPlate: params.globalWechatPlate ?? 'private_chat',
   })
   const history = transcriptToMessages(params.transcript.slice(-24))
   const userPronoun = resolveUserPronoun(params.playerIdentity)
@@ -1383,7 +1587,7 @@ export async function requestWeChatHeartWhisper(params: {
     ...history,
     { role: 'user', content: '请基于刚刚最后一轮对话，输出心语 JSON。' },
   ]
-  const text = await openAiCompatibleChat(cfg, messages, { temperature: 0.78, max_tokens: 900 })
+  const text = await openAiCompatibleChat(cfg, messages, { temperature: 0.78, max_tokens: 1400 })
   const parsed = parseHeartWhisperJson(text)
   const nowMs = typeof params.nowMs === 'number' && Number.isFinite(params.nowMs) ? params.nowMs : Date.now()
   return {
@@ -1867,6 +2071,8 @@ export async function requestWeChatDanmakuVarietyShow(params: {
   recentGroupChatsReference?: string
   unsummarizedPrivateNotes?: string
   unsummarizedGroupNotes?: string
+  chatMemberIds?: string[]
+  globalWechatPlate?: GlobalWechatPlate
 }): Promise<string[]> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1902,6 +2108,8 @@ export async function requestWeChatDanmakuVarietyShow(params: {
       recentGroupChatsReference: params.recentGroupChatsReference,
       unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
       unsummarizedGroupNotes: params.unsummarizedGroupNotes,
+      chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
+      globalWechatPlate: params.globalWechatPlate,
     })
     const system = `${base}\n\n${identityCtx}\n\n---\n【弹幕生成附加铁则】\n${rulesBlock}`
     const history = transcriptToMessages(params.transcript)
@@ -2065,8 +2273,16 @@ export function buildWeChatGroupMultiSpeakerSystem(params: {
   currentTimeMs?: number
   promptMode: WeChatChatPromptMode
   danmakuInstruction?: string
+  /** 档案室：当前群场景涉及的角色 / 玩家身份 ID */
+  chatMemberIds?: string[]
 }): string {
   const isLumi = params.promptMode === 'lumi-assistant'
+  const archiveInject = resolveWorldbookLoreInjection({
+    chatMemberIds: params.chatMemberIds,
+    globalWechatPlate: 'group_chat',
+  })
+  const stickerCat = resolveStickerCatalogPromptBlockForLore(archiveInject)
+  const loreLead = archiveInject ? `${archiveInject}\n\n----------\n` : ''
   const list = params.members
     .map((m) => {
       const gn = (m.groupNickname || '').trim() || m.charId
@@ -2117,7 +2333,6 @@ export function buildWeChatGroupMultiSpeakerSystem(params: {
     : ''
   const bias = params.replyBias?.trim() ? `\n\n---\n【本轮回复偏向】\n${params.replyBias.trim()}\n` : ''
   const time = formatCurrentTimeBlock(params.currentTimeMs, { forLumiAssistant: isLumi })
-  const stickerCat = buildStickerCatalogPromptBlock()
   const danmakuInstr = params.danmakuInstruction?.trim() ?? ''
   const recallGuide = isLumi
     ? `【撤回】仅在明显误发时可极少使用输出协议中的撤回格式；禁止用于恋爱拉扯或虚构剧情。`
@@ -2127,10 +2342,10 @@ export function buildWeChatGroupMultiSpeakerSystem(params: {
     : `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`
 
   if (isLumi) {
-    return `${LUMI_ASSISTANT_SYSTEM_PROMPT}\n\n${core}${groupUnsum}${offline}${bias}${time}\n${params.playerSection}${recallGuide ? `\n\n${recallGuide}` : ''}\n\n${outputAppendix}${danmakuInstr ? `\n\n${danmakuInstr}` : ''}\n\n${stickerCat}`
+    return `${LUMI_ASSISTANT_SYSTEM_PROMPT}\n\n${loreLead}${core}${groupUnsum}${offline}${bias}${time}\n${params.playerSection}${recallGuide ? `\n\n${recallGuide}` : ''}\n\n${outputAppendix}${danmakuInstr ? `\n\n${danmakuInstr}` : ''}\n\n${stickerCat}`
   }
   const fictionCot = `\n\n${FICTIONAL_COT_APPENDIX}\n`
-  return `【群聊多角色输出协议｜最高优先】\n${core}${groupUnsum}${offline}${bias}\n\n----------\n${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${fictionCot}${params.playerSection}${time}\n\n${recallGuide}\n\n${outputAppendix}${danmakuInstr ? `\n\n${danmakuInstr}` : ''}\n\n${stickerCat}`
+  return `${loreLead}【群聊多角色输出协议（多角色与 SPEAKER 格式；与上文「档案与世界书」冲突时以档案为准）】\n${core}${groupUnsum}${offline}${bias}\n\n----------\n${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${fictionCot}${params.playerSection}${time}\n\n${recallGuide}\n\n${outputAppendix}${danmakuInstr ? `\n\n${danmakuInstr}` : ''}\n\n${stickerCat}`
 }
 
 /** 单行是否以群管家/群助手名义开头（与 ChatRoom emit 推断一致） */

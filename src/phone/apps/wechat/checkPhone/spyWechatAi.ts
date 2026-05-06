@@ -257,6 +257,7 @@ export async function generateSpyWechatData(params: {
   const offlineDatingPlotsContext =
     promptMode === 'persona' && cid ? await loadOfflineDatingPlotsPromptBlock(cid, character?.name ?? null) : ''
 
+  const wbSpyIds = [cid].map((x) => String(x ?? '').trim()).filter((x) => x && x !== '__none__')
   const baseSystem = buildSystemContent({
     character,
     playerIdentity,
@@ -265,6 +266,7 @@ export async function generateSpyWechatData(params: {
     longTermMemoryNotes: memoryNotes,
     worldBackgroundPrompt,
     offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+    chatMemberIds: wbSpyIds,
   })
 
   const o = params.options

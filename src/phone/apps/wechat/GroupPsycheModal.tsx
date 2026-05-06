@@ -34,15 +34,20 @@ export function GroupPsycheModal({
   open,
   loading,
   archive,
+  generateError,
+  onDismissGenerateError,
   onClose,
   onGenerate,
 }: {
   open: boolean
   loading: boolean
   archive: GroupPsycheArchive | null
+  generateError?: string | null
+  onDismissGenerateError?: () => void
   onClose: () => void
   onGenerate: () => void
 }) {
+  const err = String(generateError ?? '').trim()
   const list = archive?.characters ?? []
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
@@ -124,6 +129,28 @@ export function GroupPsycheModal({
                 </Pressable>
               </div>
             </div>
+
+            {err ? (
+              <div className="shrink-0 border-b border-red-100/90 bg-red-50/95 px-5 py-2.5" role="alert">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold text-red-900">生成失败</p>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-red-950/90">
+                      {err}
+                    </p>
+                  </div>
+                  {onDismissGenerateError ? (
+                    <Pressable
+                      type="button"
+                      onClick={onDismissGenerateError}
+                      className="shrink-0 rounded-lg border border-red-300/80 bg-white px-2.5 py-1 text-[11px] font-medium text-red-900 hover:bg-red-100/80"
+                    >
+                      知道了
+                    </Pressable>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
 
             <div className="shrink-0 border-b border-gray-100/80 px-2 pt-2">
               <p className="px-3 pb-1 text-[10px] uppercase tracking-widest text-gray-400">ROSTER · 成员</p>

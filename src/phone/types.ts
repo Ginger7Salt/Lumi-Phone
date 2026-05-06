@@ -98,7 +98,7 @@ export type DockStyle = {
 }
 
 export type AppSlot = {
-  id: 'wechat' | 'takeout' | 'weibo' | 'api' | 'voiceprint' | 'dataArchive' | 'appearance'
+  id: 'wechat' | 'takeout' | 'weibo' | 'api' | 'voiceprint' | 'dataArchive' | 'loreArchive' | 'appearance'
   label: string
   /** 可选：自定义图标图片 URL（优先于线框 SVG） */
   iconImageUrl: string
@@ -341,7 +341,8 @@ export type CustomizationState = {
 }
 
 export const DEFAULT_WALLPAPER_URL = publicAssetUrl('/image/手机壁纸1.png')
-export const DESKTOP_LAYOUT_SLOT_COUNT = 6
+/** 主屏桌面图标格数量（4×4 桌面区内的 4×2 图标带） */
+export const DESKTOP_LAYOUT_SLOT_COUNT = 8
 
 /** 微信「信息」列表与聊天会话页默认背景图（放在 `public/image/`，经 {@link publicAssetUrl} 带 base） */
 export const DEFAULT_WECHAT_CHAT_WALLPAPER_URL = publicAssetUrl('/image/聊天壁纸默认1.jpg')
@@ -423,9 +424,10 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     { id: 'api', label: 'API设置', iconImageUrl: '', iconRadius: 18 },
     { id: 'voiceprint', label: '声纹档案', iconImageUrl: '', iconRadius: 18 },
     { id: 'dataArchive', label: '数据中心', iconImageUrl: '', iconRadius: 18 },
+    { id: 'loreArchive', label: '档案室', iconImageUrl: '', iconRadius: 18 },
     { id: 'appearance', label: '外观', iconImageUrl: '', iconRadius: 18 },
   ],
-  desktopLayout: ['voiceprint', 'dataArchive', 'appearance', null, null, null],
+  desktopLayout: ['voiceprint', 'dataArchive', 'appearance', null, null, null, null, null],
   ui: {
     showStatusBar: true,
     fullScreen: false,
@@ -447,6 +449,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     api: { ...DEFAULT_APP_PAGE_STYLE },
     voiceprint: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#ffffff' },
     dataArchive: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#f3efea' },
+    loreArchive: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#fafafa' },
     /** 「外观与文案」页本身底图：与微信默认聊天壁纸一致，避免与微信 Tab 纯色底冲突观感 */
     appearance: {
       ...DEFAULT_APP_PAGE_STYLE,

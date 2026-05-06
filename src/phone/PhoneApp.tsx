@@ -12,7 +12,9 @@ import { ApiSettingsApp } from './apps/api/ApiSettingsApp'
 import { VoiceprintHubApp } from './apps/voiceprint/VoiceprintHubApp'
 import { DataArchiveApp } from './apps/dataArchive/DataArchiveApp'
 import { LUMI_SYS_FIRST_BOOT_KEY } from './apps/dataArchive/constants'
+import { LoreArchiveApp } from './apps/loreArchive/LoreArchiveApp'
 import { WeChatApp } from './apps/wechat/WeChatApp'
+import { WorldbookLoreProvider } from './worldbook/worldbookLoreStore'
 import type { AppSlot } from './types'
 
 type Route =
@@ -113,6 +115,7 @@ export function PhoneApp() {
       }
     >
       <ApiSettingsProvider>
+        <WorldbookLoreProvider>
         <PhoneShell>
           <AnimatePresence mode="wait" initial={false}>
             {route.name === 'home' && (
@@ -147,6 +150,8 @@ export function PhoneApp() {
                   <VoiceprintHubApp onBack={goHome} />
                 ) : route.id === 'dataArchive' ? (
                   <DataArchiveApp onBack={goHome} />
+                ) : route.id === 'loreArchive' ? (
+                  <LoreArchiveApp onBack={goHome} />
                 ) : (
                   <AppPlaceholderScreen appId={route.id} onBack={goHome} />
                 )}
@@ -154,6 +159,7 @@ export function PhoneApp() {
             )}
           </AnimatePresence>
         </PhoneShell>
+        </WorldbookLoreProvider>
         {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
         <EntryNoticeModal
           open={!showSplash && showEntryNotice}

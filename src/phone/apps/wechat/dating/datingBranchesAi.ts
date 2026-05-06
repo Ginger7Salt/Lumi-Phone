@@ -1,4 +1,6 @@
 import { openAiCompatibleChat } from '../newFriendsPersona/ai'
+import { buildWorldbookContext } from '../../../worldbook/buildWorldbookContext'
+import { getWorldbookLoreEntriesSnapshot } from '../../../worldbook/worldbookLoreStore'
 import type { ApiConfig } from '../../api/types'
 import { DATING_AI_MAX_OUTPUT_TOKENS, type BranchOption, type CharacterInfo } from './types'
 
@@ -210,7 +212,8 @@ ${formatBlock}
 - 若玩家当场开口，对白用「…」括起来；**禁止**内心OS；若只有动作/决定，可全旁白。
 - 格式示例：我靠近一步。「别躲。」`
 
-  const system = `你是线下约会剧情「分支选项」策划。**只输出合法 UTF-8 JSON 数组**，禁止 Markdown 代码围栏、禁止数组前后的解释文字、禁止注释。
+  const archiveBlock = buildWorldbookContext([], getWorldbookLoreEntriesSnapshot(), 'offline_plot').trim()
+  const system = `${archiveBlock ? `${archiveBlock}\n\n` : ''}你是线下约会剧情「分支选项」策划。**只输出合法 UTF-8 JSON 数组**，禁止 Markdown 代码围栏、禁止数组前后的解释文字、禁止注释。
 【JSON 语法铁律】style/card/director 为 JSON 字符串时：内部若需要引号，对白只用「」，不要用英文 "；反斜杠按需转义；不要尾随逗号。
 【分支卡片硬约束】card 字段：每条 **≤20 个字**；**禁止**任何内心活动（禁止 **...**）；尽量一句话表达可选行动/可说出口的话。指向玩家须用「你」（上帝视角）或「我」（玩家视角），禁止写身份卡上的玩家大名。
 数组长度必须为 4，且按顺序对应风格标签（style 字段必须与之一致）：

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { useEffect, useMemo, useState, type PointerEventHandler } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Pressable } from './Pressable'
 import { WheelModal } from './WheelModal'
 import { useCustomization } from '../CustomizationContext'
@@ -26,7 +26,6 @@ type Props = {
   open?: boolean
   onOpenChange?: (open: boolean) => void
   registerNode?: (node: HTMLDivElement | null) => void
-  onStartDrag?: PointerEventHandler<HTMLButtonElement>
   onLongPressStartDrag?: (event: React.PointerEvent<HTMLElement>) => void
 }
 
@@ -38,7 +37,6 @@ export function WheelWidget({
   open,
   onOpenChange,
   registerNode,
-  onStartDrag,
   onLongPressStartDrag,
 }: Props) {
   const { state } = useCustomization()
@@ -138,15 +136,8 @@ export function WheelWidget({
             onClick={() => {
               if (!isEditMode && !disableOpen) setModalOpen(true)
             }}
-            className="relative flex h-full w-full flex-col overflow-hidden rounded-[28px] border p-3 text-left shadow-[0_20px_36px_rgba(15,23,42,0.12)]"
+            className="relative flex h-full w-full items-center justify-center overflow-visible text-left"
             style={{
-              background: useStaticFallback
-                ? 'rgba(250,250,251,0.96)'
-                : 'linear-gradient(180deg, rgba(255,255,255,0.72), rgba(248,249,251,0.6))',
-              borderColor: useStaticFallback ? 'rgba(226,232,240,0.9)' : 'rgba(255,255,255,0.7)',
-              boxShadow: useStaticFallback ? '0 6px 14px rgba(15,23,42,0.08)' : undefined,
-              backdropFilter: useStaticFallback ? 'none' : 'blur(22px) saturate(1.08)',
-              WebkitBackdropFilter: useStaticFallback ? 'none' : 'blur(22px) saturate(1.08)',
               opacity: isActiveDrag ? 0.04 : 1,
               userSelect: 'none',
               WebkitUserSelect: 'none',
@@ -154,22 +145,15 @@ export function WheelWidget({
               touchAction: 'none',
             }}
             onContextMenu={(event) => event.preventDefault()}
-            onPointerDown={isEditMode ? onStartDrag : longPressHandlers.onPointerDown}
+            onPointerDown={!isEditMode ? longPressHandlers.onPointerDown : undefined}
             onPointerMove={!isEditMode ? longPressHandlers.onPointerMove : undefined}
             onPointerUp={!isEditMode ? longPressHandlers.onPointerUp : undefined}
             onPointerCancel={!isEditMode ? longPressHandlers.onPointerCancel : undefined}
             onPointerLeave={!isEditMode ? longPressHandlers.onPointerLeave : undefined}
           >
-            <p
-              className="text-[10px] italic tracking-[0.22em]"
-              style={{ color: theme.textMuted }}
-            >
-              Destiny Compass
-            </p>
-
-            <div className="relative mt-3 flex flex-1 items-center justify-center">
+            <div className="relative aspect-square w-[min(88%,168px)] max-w-[168px] shrink-0">
               <div
-                className="pointer-events-none absolute top-0 h-0 w-0"
+                className="pointer-events-none absolute left-1/2 top-0 z-10 h-0 w-0 -translate-x-1/2"
                 style={{
                   borderLeft: '7px solid transparent',
                   borderRight: '7px solid transparent',
@@ -178,7 +162,7 @@ export function WheelWidget({
                 }}
               />
               <div
-                className="relative aspect-square w-[80%] max-w-[132px] rounded-full border border-white/80 bg-white/70 p-2"
+                className="relative mt-2 aspect-square w-full rounded-full border border-white/80 bg-white/70 p-2 shadow-[0_12px_28px_rgba(15,23,42,0.14)]"
                 style={{
                   background: useStaticFallback ? 'rgba(255,255,255,0.95)' : undefined,
                   borderColor: useStaticFallback ? 'rgba(226,232,240,0.95)' : undefined,
@@ -215,20 +199,6 @@ export function WheelWidget({
                 </div>
                 <div className="absolute left-1/2 top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#D4AF37]/40 bg-[#D4AF37]/15" />
               </div>
-            </div>
-
-            <div className="mt-2 flex items-end justify-between">
-              <div>
-                <p className="text-[12px]" style={{ color: theme.text }}>
-                  决策罗盘
-                </p>
-                <p className="mt-0.5 text-[10px]" style={{ color: theme.textMuted }}>
-                  点击展开命运指针
-                </p>
-              </div>
-              <span className="text-[10px] tracking-[0.18em]" style={{ color: '#D4AF37' }}>
-                8 WAYS
-              </span>
             </div>
           </Pressable>
         </motion.div>

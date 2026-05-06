@@ -4252,6 +4252,7 @@ function WeChatAppInner({ onBack }: Props) {
       }))
       const offlineDatingPlotsContext = await loadOfflineDatingPlotsPromptBlock(character.id, character.name ?? null)
       const peerDisplayName = state.profile.displayName?.trim() || '朋友'
+      const friendReqWbIds = [character.id?.trim()].filter(Boolean) as string[]
       const ai = await requestWeChatPeerReplyBubbles({
         apiConfig,
         character,
@@ -4264,6 +4265,8 @@ function WeChatAppInner({ onBack }: Props) {
         offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
         replyBias: buildFriendRequestReplyBias({ messages: params.messages, extraBias: params.replyBias }),
         currentTimeMs: getCurrentTimeMs(),
+        chatMemberIds: friendReqWbIds,
+        globalWechatPlate: 'private_chat',
       })
       return {
         bubbles: ai.bubbles.filter((x) => String(x || '').trim().length > 0),

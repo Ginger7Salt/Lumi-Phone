@@ -3,6 +3,13 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Pressable } from '../../components/Pressable'
 import type { HeartWhisper } from './newFriendsPersona/types'
 
+/** 供聊天室 / 约会页在捕获异常后写入面板展示 */
+export function formatHeartWhisperGenerateError(err: unknown): string {
+  if (err instanceof Error && err.message.trim()) return err.message.trim()
+  if (typeof err === 'string' && err.trim()) return err.trim()
+  return '未知错误，请稍后重试'
+}
+
 function WhisperField({
   en,
   zh,
@@ -51,15 +58,21 @@ export function HeartWhisperModal({
   open,
   loading,
   data,
+  generateError,
+  onDismissGenerateError,
   onClose,
   onGenerate,
 }: {
   open: boolean
   loading: boolean
   data: HeartWhisper | null
+  /** 最近一次「生成/刷新」失败时的可读原因，展示在面板内便于对照 */
+  generateError?: string | null
+  onDismissGenerateError?: () => void
   onClose: () => void
   onGenerate: () => void
 }) {
+  const err = String(generateError ?? '').trim()
   return (
     <AnimatePresence>
       {open ? (
@@ -103,6 +116,31 @@ export function HeartWhisperModal({
             </div>
 
             <div className="mt-3 border-t border-[#eeeeee]" />
+
+            {err ? (
+              <div
+                className="mt-3 rounded-xl border border-red-200/90 bg-red-50 px-3 py-2.5"
+                role="alert"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[12px] font-semibold text-red-900">生成失败</p>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-red-950/90">
+                      {err}
+                    </p>
+                  </div>
+                  {onDismissGenerateError ? (
+                    <Pressable
+                      type="button"
+                      onClick={onDismissGenerateError}
+                      className="shrink-0 rounded-lg border border-red-300/80 bg-white px-2.5 py-1 text-[11px] font-medium text-red-900 hover:bg-red-100/80"
+                    >
+                      知道了
+                    </Pressable>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
 
             <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
               <div className="text-right">
