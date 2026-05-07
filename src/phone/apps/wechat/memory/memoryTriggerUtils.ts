@@ -47,23 +47,49 @@ export function normalizeStoredMemoryEmotionNeedList(raw: unknown): string[] | u
   return out.length ? out : undefined
 }
 
+/**
+ * 码点级上限截断后：尽量落在句读处，并去掉常见「半截叙述」尾字，减少模型超长句被硬砍成「既不像关键词也不像句子」的残片。
+ * 仅用于自动总结入库前的规范化。
+ */
+function smartTruncateChineseKeyword(raw: string, maxChars: number): string {
+  const normalized = String(raw ?? '').replace(/\s+/g, ' ').trim()
+  if (!normalized) return ''
+  const chars = [...normalized]
+  if (chars.length <= maxChars) return normalized
+  let slice = chars.slice(0, maxChars).join('')
+  const puncts = new Set(['，', '。', '；', '、', ',', ';', '·', '\n'])
+  for (let i = slice.length - 1; i >= 2; i--) {
+    if (puncts.has(slice[i]!)) {
+      slice = slice.slice(0, i + 1).trimEnd()
+      break
+    }
+  }
+  const badEndRe = /[在为与及和的地得被把给从我以于是着了的呀吧呢吗嘛嘛哪啥]$/
+  while (slice.length > 3 && badEndRe.test(slice)) {
+    slice = slice.slice(0, -1).trimEnd()
+  }
+  const out = slice.trim()
+  if (out.length >= 2) return out
+  return chars.slice(0, Math.min(6, maxChars)).join('').trim()
+}
+
 /** 仅自动总结模型 JSON：大分类 ≤5 字（与提示词一致） */
 export function clampModelMemoryTriggerCategory(raw: string | undefined | null): string | undefined {
   const t = trimMemoryTriggerText(raw)
   if (!t) return undefined
-  const seg = [...t].slice(0, 5).join('').trim()
+  const seg = smartTruncateChineseKeyword(t, 5)
   return seg || undefined
 }
 
-/** 仅自动总结模型 JSON：精准词 ≤10 字 */
+/** 仅自动总结模型 JSON：精准词 ≤10 字（智能截断，减轻硬切残句） */
 export function clampModelMemoryTriggerPrecise(raw: string | undefined | null): string | undefined {
   const t = trimMemoryTriggerText(raw)
   if (!t) return undefined
-  const seg = [...t].slice(0, 10).join('').trim()
+  const seg = smartTruncateChineseKeyword(t, 10)
   return seg || undefined
 }
 
-/** 仅自动总结模型 JSON：情绪/需求 最多 5 条、每条最多 12 字 */
+/** 仅自动总结模型 JSON：情绪/需求 最多 5 条、每条最多 10 字（偏短词，与提示词「2～8 字」一致） */
 export function clampModelMemoryEmotionNeedList(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined
   const out = (raw as unknown[])
@@ -73,13 +99,13 @@ export function clampModelMemoryEmotionNeedList(raw: unknown): string[] | undefi
         .trim(),
     )
     .filter(Boolean)
-    .map((s) => [...s].slice(0, 12).join('').trim())
+    .map((s) => smartTruncateChineseKeyword(s, 10))
     .filter(Boolean)
     .slice(0, 5)
   return out.length ? out : undefined
 }
 
-/** 仅自动总结模型 JSON：在 category / precise / emotion_need 之外再补充至多 2 条触发短语，每条 ≤24 字 */
+/** 仅自动总结模型 JSON：补充触发短语至多 2 条、每条 ≤16 字（与提示词 4～16 字对齐；智能截断） */
 export function clampModelMemorySupplementKeywords(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined
   const out = (raw as unknown[])
@@ -89,7 +115,7 @@ export function clampModelMemorySupplementKeywords(raw: unknown): string[] | und
         .trim(),
     )
     .filter(Boolean)
-    .map((s) => [...s].slice(0, 24).join('').trim())
+    .map((s) => smartTruncateChineseKeyword(s, 16))
     .filter(Boolean)
     .slice(0, 2)
   return out.length ? out : undefined

@@ -1,12 +1,13 @@
 import { ChevronDown, Dice5, Plus, Trash2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { ApiConfig } from '../../api/types'
 import { generateWorldBookItemContent } from './ai'
-import type { Character, PlayerIdentity, WorldBook, WorldBookItem, WorldBookPriority, WorldBookPronounGuide } from './types'
+import type { Character, PlayerIdentity, WorldBook, WorldBookItem, WorldBookPriority } from './types'
 import { formatWorldBookItemLineForPrompt } from './worldBookPronounGuide'
 import { uid } from './utils'
 import { WorldBookItemGenLengthModal } from './WorldBookItemGenLengthModal'
 import { InlineDropdown } from './InlineDropdown'
+import { WORLD_BOOK_CHAR_PLACEHOLDER, WORLD_BOOK_USER_PLACEHOLDER } from '../charUserPlaceholders'
 
 const COLORS = {
   bg: '#f5f5f5',
@@ -22,18 +23,6 @@ const WB_ITEM_GENERATING_TEXT = '生成中…'
 
 function priorityLabel(p: WorldBookPriority) {
   return p === 'before' ? '聊天之前' : '聊天之后'
-}
-
-function worldBookPronounGuideLabel(forPlayerIdentity: boolean, g?: WorldBookPronounGuide): string {
-  const v = g ?? 'default'
-  if (forPlayerIdentity) {
-    if (v === 'user_as_i') return '我=本人'
-    if (v === 'third_person') return '第三人称写本人'
-    return '我=本人'
-  }
-  if (v === 'user_as_i') return '我=用户（非该角色）'
-  if (v === 'third_person') return '第三人称写角色为主'
-  return '我=该角色，你=用户'
 }
 
 /** 世界书/条目启用：黑白配色滑动开关（关：浅灰轨；开：黑轨 + 白点） */
@@ -91,9 +80,31 @@ export function WorldBooksEditor({
   const [wbItemGenPicker, setWbItemGenPicker] = useState<null | { wbId: string; itemId: string }>(null)
   /** 与 MBTI 一致的下拉：同一时间只展开一条目的「聊天之前/之后」 */
   const [priorityOpenKey, setPriorityOpenKey] = useState<string | null>(null)
-  const [pronounOpenKey, setPronounOpenKey] = useState<string | null>(null)
+  const itemTextareaRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map())
 
   const worldBooks = character.worldBooks ?? []
+
+  const insertItemPlaceholder = (wbId: string, itemId: string, token: string) => {
+    const key = `${wbId}::${itemId}`
+    const wb = worldBooks.find((w) => w.id === wbId)
+    const it = wb?.items?.find((x) => x.id === itemId)
+    if (!it) return
+    const cur = String(it.content ?? '')
+    const el = itemTextareaRefs.current.get(key)
+    if (!el) {
+      updateItem(wbId, itemId, { content: cur + token })
+      return
+    }
+    const start = el.selectionStart ?? cur.length
+    const end = el.selectionEnd ?? start
+    const next = cur.slice(0, start) + token + cur.slice(end)
+    updateItem(wbId, itemId, { content: next })
+    queueMicrotask(() => {
+      el.focus()
+      const pos = start + token.length
+      el.setSelectionRange(pos, pos)
+    })
+  }
 
   const setWorldBooks = (next: WorldBook[]) => {
     onChange({ ...character, worldBooks: next, updatedAt: Date.now() })
@@ -161,7 +172,6 @@ export function WorldBooksEditor({
               priority: it.priority,
               name: it.name,
               content: String(it.content).trim(),
-              pronounGuide: it.pronounGuide,
               subjectName: wbSubjectName,
               voice: wbPromptVoice,
             }),
@@ -186,7 +196,9 @@ export function WorldBooksEditor({
             世界书
           </p>
           <p className="mt-1 text-[12px]" style={{ color: COLORS.sub }}>
-            可创建多个世界书，条目可设聊天之前/之后；点「AI 生成」会先选目标字数。
+            {forPlayerIdentity
+              ? '条目均为玩家本人设定；与通讯录里各人设档案无关。'
+              : '可创建多个世界书，条目可设聊天之前/之后；人设条目建议用 {{char}} / {{user}} 区分角色与绑定的玩家身份。点「AI 生成」会先选目标字数。'}
           </p>
         </div>
         <button
@@ -356,69 +368,41 @@ export function WorldBooksEditor({
                                 </div>
                               </div>
 
-                              <div className="mt-2">
-                                <span className="text-[12px]" style={{ color: COLORS.sub }}>
-                                  人称与视角
-                                </span>
-                                <p className="mt-0.5 text-[11px] leading-relaxed" style={{ color: COLORS.faint }}>
-                                  {forPlayerIdentity
-                                    ? '说明本条里「我」通常指身份卡上的你本人，减少与对话角色混淆。'
-                                    : '若以用户口吻写「我」（例如暗恋、职务），请选择「我=用户」；否则模型容易把「我」当成该角色。'}
+                              {forPlayerIdentity ? (
+                                <p className="mt-2 text-[11px] leading-relaxed" style={{ color: COLORS.sub }}>
+                                  身份世界书仅描述<strong>玩家本人</strong>，与聊天里的虚构人设无关；无需占位符或额外人称选项。
                                 </p>
-                                <div className="mt-1">
-                                  <InlineDropdown
-                                    label="人称与视角"
-                                    valueText={worldBookPronounGuideLabel(forPlayerIdentity, it.pronounGuide)}
-                                    open={pronounOpenKey === key}
-                                    onToggle={() => setPronounOpenKey((k) => (k === key ? null : key))}
-                                  >
-                                    <div className="border-b px-3 py-2" style={{ borderColor: '#f0f0f0' }}>
-                                      <p className="text-[11px] leading-relaxed" style={{ color: COLORS.sub }}>
-                                        注入 AI 提示时会在本条后附一句「本条代词」说明，用于生成 NPC、私聊、简介等场景。
-                                      </p>
-                                    </div>
-                                    <div className="grid grid-cols-1 gap-2 px-3 py-2">
-                                      {(
-                                        [
-                                          'default',
-                                          ...(forPlayerIdentity ? [] : (['user_as_i'] as const)),
-                                          'third_person',
-                                        ] as WorldBookPronounGuide[]
-                                      ).map((pg) => {
-                                        const active = (it.pronounGuide ?? 'default') === pg
-                                        return (
-                                          <button
-                                            key={pg}
-                                            type="button"
-                                            className="rounded-xl border px-3 py-2.5 text-left text-[12px] transition-all duration-200 ease-out"
-                                            style={{
-                                              borderColor: '#e5e5e5',
-                                              background: active ? '#111827' : '#ffffff',
-                                              color: active ? '#ffffff' : '#000000',
-                                            }}
-                                            onClick={() => {
-                                              updateItem(wb.id, it.id, { pronounGuide: pg })
-                                              setPronounOpenKey(null)
-                                            }}
-                                          >
-                                            <span className="font-semibold">{worldBookPronounGuideLabel(forPlayerIdentity, pg)}</span>
-                                            {pg === 'user_as_i' && !forPlayerIdentity ? (
-                                              <span className="mt-0.5 block text-[11px] font-normal opacity-90">
-                                                适用于世界书里用「我」指用户、用「你」指角色的写法。
-                                              </span>
-                                            ) : null}
-                                            {pg === 'third_person' ? (
-                                              <span className="mt-0.5 block text-[11px] font-normal opacity-90">
-                                                以他/她或全名描写为主，弱化「我」的单一归属。
-                                              </span>
-                                            ) : null}
-                                          </button>
-                                        )
-                                      })}
-                                    </div>
-                                  </InlineDropdown>
+                              ) : (
+                                <div className="mt-2 rounded-[10px] border border-dashed px-3 py-2" style={{ borderColor: COLORS.border }}>
+                                  <p className="text-[11px] leading-relaxed" style={{ color: COLORS.sub }}>
+                                    人设条目请用占位符区分<strong>角色本人</strong>与<strong>绑定的玩家身份</strong>：{' '}
+                                    <code className="rounded bg-neutral-100 px-0.5">{WORLD_BOOK_CHAR_PLACEHOLDER}</code>{' '}
+                                    = 当前绑定人设姓名；{' '}
+                                    <code className="rounded bg-neutral-100 px-0.5">{WORLD_BOOK_USER_PLACEHOLDER}</code>{' '}
+                                    = 该人设绑定的玩家身份姓名；注入前自动替换，避免把角色设定写成玩家或反过来。
+                                  </p>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={generating}
+                                      onClick={() => insertItemPlaceholder(wb.id, it.id, WORLD_BOOK_CHAR_PLACEHOLDER)}
+                                      className="rounded-full border bg-white px-2.5 py-1 text-[11px] font-medium transition-all hover:bg-[#f5f5f5] disabled:opacity-50"
+                                      style={{ borderColor: COLORS.border, color: COLORS.text }}
+                                    >
+                                      + {'{{char}}'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={generating}
+                                      onClick={() => insertItemPlaceholder(wb.id, it.id, WORLD_BOOK_USER_PLACEHOLDER)}
+                                      className="rounded-full border bg-white px-2.5 py-1 text-[11px] font-medium transition-all hover:bg-[#f5f5f5] disabled:opacity-50"
+                                      style={{ borderColor: COLORS.border, color: COLORS.text }}
+                                    >
+                                      + {'{{user}}'}
+                                    </button>
+                                  </div>
                                 </div>
-                              </div>
+                              )}
 
                               {it.collapsed ? null : (
                                 <>
@@ -431,6 +415,12 @@ export function WorldBooksEditor({
                                       placeholder="关键词（可选）"
                                     />
                                     <textarea
+                                      ref={(el) => {
+                                        if (forPlayerIdentity) return
+                                        const k = `${wb.id}::${it.id}`
+                                        if (el) itemTextareaRefs.current.set(k, el)
+                                        else itemTextareaRefs.current.delete(k)
+                                      }}
                                       readOnly={generating}
                                       value={generating ? WB_ITEM_GENERATING_TEXT : (it.content ?? '')}
                                       onChange={(e) => {
@@ -443,7 +433,11 @@ export function WorldBooksEditor({
                                         color: generating ? COLORS.sub : COLORS.text,
                                       }}
                                       rows={4}
-                                      placeholder="条目内容"
+                                      placeholder={
+                                        forPlayerIdentity
+                                          ? '条目内容（描写玩家本人即可）'
+                                          : '条目内容（可用上方按钮插入 {{char}} / {{user}}）'
+                                      }
                                     />
                                   </div>
 

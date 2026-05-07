@@ -3,6 +3,7 @@ import type {
   Character,
   CharacterPsyche,
   GroupPsycheArchive,
+  GroupChatRow,
   HeartWhisper,
   PlayerIdentity,
   ScheduleTable,
@@ -37,6 +38,7 @@ import {
 import { buildWorldbookContext } from '../../worldbook/buildWorldbookContext'
 import type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
 import { getWorldbookLoreEntriesSnapshot } from '../../worldbook/worldbookLoreStore'
+import { expandCharUserPlaceholders, resolveCharUserNamesForPrompt } from './charUserPlaceholders'
 
 export { buildWorldbookContext } from '../../worldbook/buildWorldbookContext'
 export type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
@@ -439,6 +441,11 @@ export function buildSystemContent(params: {
   /** 全局微信世界书生效板块；不传则仅注入「全部场景」类世界书 */
   globalWechatPlate?: GlobalWechatPlate
 }): string {
+  const expandNames = resolveCharUserNamesForPrompt({
+    character: params.character,
+    playerIdentity: params.playerIdentity,
+    playerDisplayName: params.playerDisplayName,
+  })
   const loreInject = resolveWorldbookLoreInjection({
     worldbookLoreContext: params.worldbookLoreContext,
     chatMemberIds: params.chatMemberIds,
@@ -472,7 +479,8 @@ export function buildSystemContent(params: {
 
   if (isLumiAssistant) {
     // 助手模式：不注入「虚构沙盒」免责声明，避免诱导沉浸式扮演。
-    return `${LUMI_ASSISTANT_SYSTEM_PROMPT}${loreBlock}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
+    const raw = `${LUMI_ASSISTANT_SYSTEM_PROMPT}${loreBlock}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
+    return expandCharUserPlaceholders(raw, expandNames)
   }
 
   const wb = buildWorldBookText(params.character)
@@ -491,7 +499,8 @@ export function buildSystemContent(params: {
     extra += `\n\n---\n【当前状态】未绑定完整人设档案（无世界书）。请以友善、有分寸的微信好友身份交谈，仍须遵守上述通用铁则，且绝不暴露非人类身份。\n`
   }
 
-  return `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
+  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
+  return expandCharUserPlaceholders(rawMain, expandNames)
 }
 
 function transcriptToMessages(turns: ChatTranscriptTurn[], opts?: { groupChat?: boolean }): OpenAiCompatibleMessage[] {
@@ -1617,19 +1626,32 @@ export async function requestWeChatHeartWhisper(params: {
   }
 }
 
+/** 自动总结入库正文：统一占位符，便于改名后注入/展示仍解析为最新显示名 */
+const MEMORY_BODY_PLACEHOLDER_INSTRUCTION = `
+【记忆正文·指称铁律】（**仅**约束 JSON 的 content 正文；**primary 与 linked[].content 同等遵守**）
+- 正文**禁止**抄写材料里的**玩家、对方人设及其他出镜角色**的**真实姓名、完整档案昵称、微信号**。
+- **禁止**把材料里出现过的称呼**原样汉字串**写进 content（含：对话台词里的直呼、群昵称、通讯录备注、摘录标题行「显示名：」后的标签、线上发言者标签里的昵称等）。指人**只能**用 {{user}} / {{char}} / {{archive_char}} / {{id:UUID}}，或不含上述专名的**纯泛称**（如「对方店里那位同事」须仍不夹真名）。
+- 玩家：叙事主视角用第一人称「我」（「我」=玩家）；若句子里需要第三人称指玩家，**只许** {{user}}；**禁止**用「用户」「玩家」及材料中的身份姓名为指代（关联记忆 linked 为全文第三人称时尤须遵守）。
+- **当前私聊会话中的对方人设**（本条记忆将挂在该角色档案下）：须用 {{char}} 指代，**禁止**写其材料中的显示名。
+- 若材料涉及**线下约会存档主角**（人脉/约会根人设）：用 {{archive_char}}；**禁止**用「主要角色」「男主角」「女主角」「存档主角」等泛称代替占位符。
+- 其他已知人设：若用户消息附录或摘录标题中给出了 **character_id**（UUID），正文须写 {{id:该id}}（把「该id」换成真实 UUID），与材料**完全一致、无空格**；**禁止**臆造 id。无 id 时用「另一名在场者」等**不涉真名**的泛称。
+（说明：category / precise / emotion_need / extra_keywords 仍可从材料提炼**场景、物品、事件**类钩子词便于搜索；尽量不要把人物全名塞进触发维。）
+`.trim()
+
 const MEMORY_JSON_OUTPUT_RULE = `
 【输出格式】只输出一个 JSON 对象，禁止 markdown 代码围栏，禁止 JSON 前后任何解释文字。字段如下：
-- "content": string，第一人称「我」视角的一条长期记忆正文（与原先「一段备忘」要求一致）。
+- "content": string，第一人称「我」视角的一条长期记忆正文（「我」=玩家）；**必须**遵守下方【记忆正文·指称铁律】，用 {{char}} / {{user}} / {{archive_char}} / {{id:人设UUID}} 指人，勿写真名。
 - "category": string，大分类触发词，**不超过 5 个汉字**（如「工作」「吵架」「约会」）。
-- "precise": string，精准匹配词，**不超过 10 个汉字**，须与材料里可核对的具体信息挂钩。
+- "precise": string，精准匹配词，**不超过 10 个汉字**，须是**完整可读**的钩子（专名片段、场景简称、约定代称），如「校庆后台」「司予吉他」；**禁止**输出半句叙事或长到会被截断的从句；须与材料可核对。
 - "emotion_need": string[]，情绪/需求侧触发词，**3～5 个**短词（每个建议 2～8 个汉字），如「委屈」「道歉」「追问」。
 - "extra_keywords": string[]，**尽量 2 个**补充触发短语（每个建议 4～16 个汉字），与 category / precise / emotion_need 角度不同：用来兜住本条记忆里**最要点名、但前三维不易单独覆盖**的钩子（如关键物名、数字、独特说法、约定简称），须可在材料中核对；与前四维用词尽量不重复。实在只能想到 1 个时也可只输出 1 项。
-触发词须从材料提炼；无把握宁可少写；禁止编造材料未出现的专名。`.trim()
+触发词须从材料提炼；无把握宁可少写；禁止编造材料未出现的专名。
+${MEMORY_BODY_PLACEHOLDER_INSTRUCTION}`.trim()
 
 const MEMORY_SUMMARY_SYSTEM = `
 你是「长期记忆」提取助手。根据用户给出的“本次未总结片段”对话摘录，写出一条可长期沿用的记忆条目，并提炼触发关键词。
 要求：
-- 必须使用第一人称“我”，并且站在用户视角叙述（像“我…他/她…”）。
+- 必须使用第一人称“我”，并且站在用户视角叙述；指对方人设时**只写** {{char}}，不要用材料里的对方昵称或姓名。
 - 只总结本次提供的片段，禁止混入历史记忆、禁止补写片段外剧情。
 - 只阐述可从聊天文本直接核对的事实：谁说了什么、确认了什么、约定了什么、结果怎样。
 - 禁止写“我怎么想/我觉得/我感到”等主观心理活动；禁止写角色未在聊天里明确表达的心理活动。
@@ -1712,7 +1734,9 @@ export async function requestWeChatMemorySummary(params: {
     { role: 'system', content: MEMORY_SUMMARY_SYSTEM },
     {
       role: 'user',
-      content: `以下是“尚未总结”的对话摘录，请仅基于这段内容生成长期记忆 JSON：\n\n${userBlock}`,
+      content:
+        `以下是“尚未总结”的对话摘录，请仅基于这段内容生成长期记忆 JSON：\n\n${userBlock}\n\n` +
+        `【指称】摘录中气泡正文可能出现昵称或@名；写入 JSON 的 content 时指对方人设**只许** {{char}}，指玩家第三人称用 {{user}}，**禁止**把对话里出现的对方真名/昵称汉字原样抄进正文。`,
     },
   ]
   const text = await openAiCompatibleChat(cfg, messages, {
@@ -1725,7 +1749,7 @@ export async function requestWeChatMemorySummary(params: {
 const UNIFIED_MEMORY_SUMMARY_SYSTEM = `
 你是「长期记忆」提取助手。用户会提供两段材料：「线上聊天摘录」与「线下约会剧情摘录」，任一段可能为「（无）」。
 要求：
-- 必须使用第一人称“我”，站在用户视角叙述（像“我…他/她…”），把线上与线下里**实际发生**的信息合成一条连贯备忘。
+- 必须使用第一人称“我”，站在用户视角叙述，把线上与线下里**实际发生**的信息合成一条连贯备忘；指人称时遵守 JSON 内【记忆正文·指称铁律】（对方用 {{char}}，玩家用「我」或 {{user}}，线下主角涉及用 {{archive_char}}，其他人设用 {{id:UUID}}）。
 - 只总结本次材料中可直接核对的事实：谁说了什么、做了什么、约定了什么、场景与结果；禁止混入材料外的剧情。
 - 禁止写“我怎么想/我觉得/我感到”等主观心理；禁止推断角色未说出口的心理。
 - 若某一栏为「（无）」，不要编造该栏内容；另一栏有内容则正常总结。
@@ -1765,7 +1789,8 @@ export async function requestUnifiedMemorySummary(params: {
       content:
         `以下是「尚未总结」的材料，请仅基于这些内容生成长期记忆 JSON：\n\n` +
         `【线上聊天摘录】\n${onlineBlock}\n\n` +
-        `【线下约会剧情摘录】\n${offlineBlock}`,
+        `【线下约会剧情摘录】\n${offlineBlock}\n\n` +
+        `【指称】材料里的人名、昵称、显示名标签**不得**原样写入 content；须占位符（与系统提示【记忆正文·指称铁律】一致）。`,
     },
   ]
   const text = await openAiCompatibleChat(cfg, messages, {
@@ -1775,17 +1800,251 @@ export async function requestUnifiedMemorySummary(params: {
   const parsed = parseMemoryAutoSummaryModelOutput(text)
   return {
     ...parsed,
-    content: parsed.content
-      .replace(/^\s*【[^】]+】\s*/g, '')
-      .replace(/^\s*(\[私聊\]|\[线上\]|\[线下\]|\[群聊\])+\s*/g, '')
-      .trim(),
+    content: sanitizeUnifiedMemorySummaryPlainContent(parsed.content),
   }
+}
+
+function sanitizeUnifiedMemorySummaryPlainContent(raw: string): string {
+  return String(raw ?? '')
+    .replace(/^\s*【[^】]+】\s*/g, '')
+    .replace(/^\s*(\[私聊\]|\[线上\]|\[线下\]|\[群聊\]|\[关联线下\])+\s*/g, '')
+    .trim()
+}
+
+/** 约会剧情同一 HTTP 回复末尾追加的合并长期记忆 JSON 分隔符（须单独成行）。 */
+export const DATING_UNIFIED_MEMORY_JSON_DELIMITER = '<<<DATING_UNIFIED_MEMORY_JSON>>>'
+
+/** 与 {@link requestUnifiedMemorySummaryWithLinked} 用户消息中的线上摘录格式一致。 */
+export function formatUnifiedMemoryOnlineBlock(
+  onlineTranscript: ChatTranscriptTurn[],
+  peerFallback = '对方',
+): string {
+  const tail = onlineTranscript.slice(-40)
+  const onlineLines = tail
+    .map((t) => {
+      const who = t.from === 'self' ? '我' : (t.speakerLabel?.trim() || peerFallback)
+      return `${who}：${String(t.text || '').trim()}`
+    })
+    .filter((s) => s.length > 3)
+  return onlineLines.length ? onlineLines.join('\n') : '（无）'
+}
+
+export const UNIFIED_MEMORY_LINKED_JSON_RULE = `
+【输出格式】只输出一个 JSON 对象，禁止 markdown 代码围栏，禁止 JSON 前后任何解释文字。顶层必须为：
+{
+  "primary": {
+    "content": string,
+    "category": string,
+    "precise": string,
+    "emotion_need": string[],
+    "extra_keywords": string[]
+  },
+  "linked": [
+    {
+      "character_id": string,
+      "content": string,
+      "category": string,
+      "precise": string,
+      "emotion_need": string[],
+      "extra_keywords": string[]
+    }
+  ]
+}
+- primary：写给「当前私聊对象」的一条长期记忆；字段含义与原先单对象 JSON 相同；**content 须用占位符指人**（{{user}} 玩家、{{char}} 当前私聊对象、{{archive_char}} 线下存档主角、{{id:人设UUID}} 其他人脉，规则同 linked）。
+- linked：写给「人脉 NPC」的零或多条；character_id 必须与用户消息【人脉 NPC 线下关联摘录】中出现的 character_id **完全一致**；仅当摘录非「（无）」且某 NPC 确有材料时填写；每名 NPC 至多一条；无则 linked 为 []。
+- linked[].content：**第三人称旁白**；凡写到人**必须**用表达式（入库不替换，注入时由程序替换），**禁止**用汉字直呼玩家、存档主角、本条 NPC 或其他人脉的真名/昵称/「用户」「玩家」「主角」「主要角色」等代称：须 **{{user}}**=玩家（第三人称凡涉玩家一律此式）；**{{char}}**=本条 linked 所属人脉 NPC（与 character_id 同一人）；**{{archive_char}}**=线下剧情存档根人设（**禁止**用「主角」「主要角色」等汉字代替）；**{{id:人设UUID}}**=其他人脉，**id 须与「人脉可关联角色 id 表」反引号内完全一致**（无空格）。**禁止**把摘录「显示名：」或台词里的称呼原样抄入本条 content。仍须写清可核对事实。
+- 不要在任何 content 字段内添加「[线上]」「[线下]」等标签（程序会加前缀）。
+${MEMORY_BODY_PLACEHOLDER_INSTRUCTION}
+若模型仍返回旧版「仅顶层 content/category/…」单对象且无 primary 键，调用方会把它当作 primary 并视 linked 为空。`.trim()
+
+/** 约会单次模型回复：分隔剧情正文与末尾合并记忆 JSON。 */
+export function splitDatingAiResponseAndUnifiedMemoryJson(raw: string): {
+  plotRaw: string
+  memoryJsonText: string | null
+} {
+  const d = DATING_UNIFIED_MEMORY_JSON_DELIMITER
+  const idx = raw.lastIndexOf(d)
+  if (idx < 0) return { plotRaw: String(raw ?? '').trim(), memoryJsonText: null }
+  return {
+    plotRaw: raw.slice(0, idx).trimEnd(),
+    memoryJsonText: (raw.slice(idx + d.length).trim() || null) as string | null,
+  }
+}
+
+/**
+ * 注入约会 user 消息末尾：要求模型在剧情/VN 输出后追加一行分隔符 + unified memory JSON（与 {@link requestUnifiedMemorySummaryWithLinked} 同 schema）。
+ */
+export function buildDatingCombinedMemoryUserAppendix(params: {
+  onlineTranscript: ChatTranscriptTurn[]
+  peerLabel: string
+  offlinePriorBlock: string
+  npcLinkedExcerptsBlock: string
+  /** 当前约会视角人设 id（primary 归属）；勿写入 linked */
+  datingPeerCharacterId: string
+  /** 人脉子角色 id 表（反引号内为唯一合法 linked.character_id） */
+  eligibleLinkedNpcRoster: string
+}): string {
+  const onlineBlock = formatUnifiedMemoryOnlineBlock(params.onlineTranscript, params.peerLabel.trim() || '对方')
+  let off = String(params.offlinePriorBlock || '').trim()
+  if (!off) off = '（无）'
+  if (off.length > 7500) off = `${off.slice(0, 7500)}\n\n（以下因长度已截断）`
+  let npc = String(params.npcLinkedExcerptsBlock || '').trim()
+  if (!npc) npc = '（无）'
+  if (npc.length > 11000) npc = `${npc.slice(0, 11000)}\n\n（人脉 NPC 摘录因长度已截断）`
+  const peerId = String(params.datingPeerCharacterId || '').trim() || '（当前视角）'
+  const roster = String(params.eligibleLinkedNpcRoster || '').trim() || '（当前无人脉子角色）'
+
+  return `
+---------------------
+【同一回复内追加：合并长期记忆 JSON（必须执行）】
+在你写完完整剧情正文之后：若本轮包含 VN「【VN语音参数】…【VN语音参数结束】」隐藏块，须放在剧情正文之后、本 JSON 之前；否则紧接在剧情正文最后一行之后。**另起一行**输出且**仅一行**分隔符（勿加前后空格）：
+${DATING_UNIFIED_MEMORY_JSON_DELIMITER}
+分隔符之后直到全文结束，输出**恰好一个** JSON 对象（禁止 markdown 围栏、禁止 JSON 前后解释），结构如下：
+${UNIFIED_MEMORY_LINKED_JSON_RULE}
+
+【约会特则·覆盖上文 JSON 说明里 linked「仅摘录」的硬性限制】
+- linked 的 character_id **只能**使用下方「人脉可关联角色 id 表」反引号内的 id，**禁止**编造 id；**禁止**把当前约会对象 \`${peerId}\` 写进 linked（应写在 primary）。
+- 「人脉 NPC 线下关联摘录」可能为（无）或未含某配角：只要你**分隔符上方**已写出的剧情正文里，该 id 对应角色出现**可核对**的言行或互动，仍须为其写 linked（普通剧情/VN 均可）；无则该项不写。
+- 仍须遵守：禁止材料与正文外臆造；每名 NPC 至多一条 linked。
+
+【本轮合并长期记忆的语义要求】
+- 你是嵌入在本轮剧情模型里的「长期记忆」子任务：须综合下列「线上 / 已有线下 / 人脉 NPC 摘录」以及**分隔符上方你刚输出的全部剧情正文**（去掉 \`<thinking>…</thinking>\`；VN 标签可保留）提炼事实。
+- primary：用户视角第一人称「我」；合成线上（若有）+ 游标后已有线下（若有）+ **本轮新正文**；**正文指人一律占位符**（{{user}} / {{char}} / {{archive_char}} / {{id:UUID}}，勿写真名）；不要在 JSON 里写 [私聊][线下] 前缀。
+- linked：除上表摘录外，**必须**结合你刚写的**本轮剧情正文**判断人脉 NPC 是否有可记事实（见「约会特则」）；勿因摘录为（无）就整段 linked 留空——若正文里确有下表 id 之事实，须写 linked。每条 linked 的 content **须为第三人称**，且凡涉玩家、存档主角、本条 NPC、他人脉**一律**写 **{{user}} / {{archive_char}} / {{char}} / {{id:UUID}}**，**禁止**「用户」「玩家」「主角」「主要角色」及材料真名（规则同上方 JSON 与【记忆正文·指称铁律】）。
+- 若汇总后确实无任何可核对的新事实，primary.content 可为 "" 且 linked=[]。
+
+【人脉可关联角色 id 表】（linked.character_id 仅可从中择一或多；勿选 \`${peerId}\`）
+${roster}
+
+【线上聊天摘录（未总结）】
+${onlineBlock}
+
+【线下·游标后已有剧情（不含你本轮将写的正文；本轮正文以上文输出为准）】
+${off}
+
+【人脉 NPC 线下关联摘录】
+${npc}
+
+【指称·材料边界】上文「显示名：」、发言者标签、剧情台词里的称呼**仅用于你对号入座是谁**；写入 JSON 的 **primary / linked[].content** 时**不得**复述这些汉字专名，须一律改为占位符（与【记忆正文·指称铁律】一致）。
+`.trim()
+}
+
+const UNIFIED_MEMORY_SUMMARY_SYSTEM_WITH_LINKED = `
+你是「长期记忆」提取助手。用户会提供三段正文材料：「线上聊天摘录」「线下约会剧情摘录」「人脉 NPC 线下关联摘录」，任一段可能为「（无）」。
+要求：
+- primary：把「线上」与「线下约会剧情摘录」里**实际发生**的信息合成一条连贯备忘，站在用户视角用第一人称「我」；**content 须遵守【记忆正文·指称铁律】**（与 linked 占位符规则一致）；若某一栏为「（无）」，勿编造该栏；另一栏有内容则正常总结。
+- linked：仅基于「人脉 NPC 线下关联摘录」中**对应 character_id 的片段**，为各 NPC 各写一条备忘；**全文第三人称**；凡涉玩家、存档主角、本条 NPC、他人脉**必须**分别写 **{{user}}、{{archive_char}}、{{char}}、{{id:人设UUID}}**（与摘录 id 一致），**禁止**「用户」「玩家」「主角」「主要角色」及材料真名；摘录为「（无）」时 linked 必须为 []。
+- 只总结材料中可直接核对的事实；禁止主观心理臆测；禁止材料外剧情。
+- 口语化、具体；primary 正文约 60～200 字；每条 linked 约 40～160 字（信息很少可更短）。
+${UNIFIED_MEMORY_LINKED_JSON_RULE}
+`.trim()
+
+export type LinkedMemoryAutoSummaryEntry = MemoryAutoSummaryResult & { characterId: string }
+
+export type UnifiedMemorySummaryWithLinkedResult = {
+  primary: MemoryAutoSummaryResult
+  linked: LinkedMemoryAutoSummaryEntry[]
+}
+
+function parseLinkedMemoryRowFromJsonObject(o: Record<string, unknown>): LinkedMemoryAutoSummaryEntry | null {
+  const cid = String(o.character_id ?? o.characterId ?? '').trim()
+  if (!cid) return null
+  const sub = parseMemoryAutoSummaryModelOutput(JSON.stringify(o))
+  return { ...sub, characterId: cid }
+}
+
+/** 解析「primary + linked」合并自动总结；兼容旧版仅顶层单对象 JSON。 */
+export function parseUnifiedMemorySummaryWithLinkedModelOutput(raw: string): UnifiedMemorySummaryWithLinkedResult {
+  const stripped = stripAssistantFence(String(raw ?? '')).trim()
+  const start = stripped.indexOf('{')
+  const end = stripped.lastIndexOf('}')
+  if (start < 0 || end <= start) {
+    const primary = parseMemoryAutoSummaryModelOutput(raw)
+    return { primary: { ...primary, content: sanitizeUnifiedMemorySummaryPlainContent(primary.content) }, linked: [] }
+  }
+  const slice = stripped.slice(start, end + 1)
+  try {
+    const j = JSON.parse(slice) as Record<string, unknown>
+    const extractLinked = (): LinkedMemoryAutoSummaryEntry[] => {
+      const linkedRaw = j.linked
+      const out: LinkedMemoryAutoSummaryEntry[] = []
+      if (!Array.isArray(linkedRaw)) return out
+      for (const item of linkedRaw) {
+        if (!item || typeof item !== 'object') continue
+        const row = parseLinkedMemoryRowFromJsonObject(item as Record<string, unknown>)
+        if (!row) continue
+        out.push({
+          ...row,
+          content: sanitizeUnifiedMemorySummaryPlainContent(row.content),
+        })
+      }
+      return out
+    }
+
+    const primObj = j.primary
+    if (primObj && typeof primObj === 'object' && !Array.isArray(primObj)) {
+      const primary = parseMemoryAutoSummaryModelOutput(JSON.stringify(primObj))
+      return {
+        primary: { ...primary, content: sanitizeUnifiedMemorySummaryPlainContent(primary.content) },
+        linked: extractLinked(),
+      }
+    }
+
+    const primary = parseMemoryAutoSummaryModelOutput(slice)
+    return {
+      primary: { ...primary, content: sanitizeUnifiedMemorySummaryPlainContent(primary.content) },
+      linked: extractLinked(),
+    }
+  } catch {
+    const primary = parseMemoryAutoSummaryModelOutput(raw)
+    return { primary: { ...primary, content: sanitizeUnifiedMemorySummaryPlainContent(primary.content) }, linked: [] }
+  }
+}
+
+/**
+ * 微信线上 + 约会线下 + 人脉 NPC 关联线下摘录，**单次模型调用**合并总结（primary 写入当前私聊对象；linked 由调用方校验 id 后写入各 NPC）。
+ */
+export async function requestUnifiedMemorySummaryWithLinked(params: {
+  apiConfig: ApiConfig | null
+  onlineTranscript: ChatTranscriptTurn[]
+  offlineTextBlock: string
+  npcLinkedExcerptsBlock: string
+}): Promise<UnifiedMemorySummaryWithLinkedResult> {
+  const cfg = params.apiConfig
+  if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
+    throw new Error('未配置 AI API')
+  }
+  const onlineBlock = formatUnifiedMemoryOnlineBlock(params.onlineTranscript)
+  let offlineBlock = String(params.offlineTextBlock || '').trim()
+  if (!offlineBlock) offlineBlock = '（无）'
+  if (offlineBlock.length > 8000) offlineBlock = `${offlineBlock.slice(0, 8000)}\n\n（以下线下摘录因长度已截断）`
+  let npcBlock = String(params.npcLinkedExcerptsBlock || '').trim()
+  if (!npcBlock) npcBlock = '（无）'
+  if (npcBlock.length > 12000) npcBlock = `${npcBlock.slice(0, 12000)}\n\n（人脉 NPC 摘录因长度已截断）`
+  const messages: OpenAiCompatibleMessage[] = [
+    { role: 'system', content: UNIFIED_MEMORY_SUMMARY_SYSTEM_WITH_LINKED },
+    {
+      role: 'user',
+      content:
+        `以下是「尚未总结」的材料，请仅基于这些内容输出 JSON（含 primary 与 linked）：\n\n` +
+        `【线上聊天摘录】\n${onlineBlock}\n\n` +
+        `【线下约会剧情摘录】\n${offlineBlock}\n\n` +
+        `【人脉 NPC 线下关联摘录】\n${npcBlock}\n\n` +
+        `【指称】材料中的发言者昵称、摘录「显示名：」、剧情里的人名**不得**原样写入任一 content；须 {{user}}/{{char}}/{{archive_char}}/{{id:UUID}}（与系统提示【记忆正文·指称铁律】一致）。`,
+    },
+  ]
+  const text = await openAiCompatibleChat(cfg, messages, {
+    temperature: 0.35,
+    max_tokens: 2200,
+  })
+  return parseUnifiedMemorySummaryWithLinkedModelOutput(text)
 }
 
 const GROUP_CHAT_MEMORY_SUMMARY_SYSTEM = `
 你是「长期记忆」提取助手。用户会提供两段材料：「线上群聊摘录」与「群成员与群状态快照」，任一段可能为「（无）」。
 要求：
-- 必须使用第一人称“我”，站在用户视角叙述（像“我在群里…某某说了…群管家…”），把两段里**实际发生**的信息合成一条连贯备忘。
+- 必须使用第一人称“我”，站在用户视角叙述，把两段里**实际发生**的信息合成一条连贯备忘；**禁止**在 content 里写群成员真名或完整档案昵称，也**禁止**把材料「群名」「用户在本群的昵称」「成员与身份」行里出现的称呼汉字原样抄入正文（他人一律 {{id:UUID}} 或泛称）。
+- 玩家用「我」或 {{user}}；提及其他群成员时，**必须**使用用户消息末尾【群成员 character_id 对照】中的 {{id:UUID}} 形式（与 UUID 完全一致），不要用群昵称替代；无对照条的成员用泛称。
 - 必须覆盖：谁在群里、谁发了什么要点、角色之间有无互相接话；若有群状态快照中的**群主/管理员/禁言**等，也要如实写入（仅基于快照，勿编造未写明的操作）。
 - 只总结本次材料中可直接核对的事实；禁止混入材料外的剧情。
 - 禁止写“我怎么想/我觉得/我感到”等主观心理；禁止推断角色未说出口的心理。
@@ -1796,11 +2055,28 @@ const GROUP_CHAT_MEMORY_SUMMARY_SYSTEM = `
 ${MEMORY_JSON_OUTPUT_RULE}
 `.trim()
 
+/** 群聊自动总结：供模型写 \\`{{id:…}}\\` 时对照（勿在正文写群昵称代替 id）。 */
+export function formatGroupMemberIdRosterForMemoryPrompt(group: GroupChatRow | null): string {
+  if (!group?.members?.length) {
+    return '（无成员 id 对照；content 勿写人物真名，他人称「某成员」。）'
+  }
+  const lines: string[] = []
+  for (const m of group.members) {
+    const cid = m.charId.trim()
+    if (!cid || cid === WECHAT_GROUP_USER_CHAR_ID || cid === WECHAT_GROUP_BOT_CHARACTER_ID) continue
+    const gn = (m.groupNickname || '').trim() || '（无群昵称）'
+    lines.push(`- {{id:${cid}}} ← 材料中发言者标签多为「${gn}」`)
+  }
+  return lines.length ? lines.join('\n') : '（无 AI 角色成员）'
+}
+
 /** 微信群聊：合并未游标群消息与群档案快照，供自动总结入库（调用方加 [线上][群聊] 等前缀）。 */
 export async function requestGroupChatMemorySummary(params: {
   apiConfig: ApiConfig | null
   onlineTranscript: ChatTranscriptTurn[]
   groupArchiveBlock: string
+  /** 用于正文 \\`{{id:…}}\\`；与群成员一致 */
+  group?: GroupChatRow | null
 }): Promise<MemoryAutoSummaryResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1818,6 +2094,7 @@ export async function requestGroupChatMemorySummary(params: {
   let archive = String(params.groupArchiveBlock || '').trim()
   if (!archive) archive = '（无）'
   if (archive.length > 6000) archive = `${archive.slice(0, 6000)}\n\n（群档案因长度已截断）`
+  const idRoster = formatGroupMemberIdRosterForMemoryPrompt(params.group ?? null)
   const messages: OpenAiCompatibleMessage[] = [
     { role: 'system', content: GROUP_CHAT_MEMORY_SUMMARY_SYSTEM },
     {
@@ -1825,7 +2102,9 @@ export async function requestGroupChatMemorySummary(params: {
       content:
         `以下是「尚未总结」的材料，请仅基于这些内容生成长期记忆 JSON：\n\n` +
         `【线上群聊摘录】\n${onlineBlock}\n\n` +
-        `【群成员与群状态快照】\n${archive}`,
+        `【群成员与群状态快照】\n${archive}\n\n` +
+        `【群成员 character_id 对照】\n${idRoster}\n\n` +
+        `【指称】content 中提及其他成员须用 {{id:…}}，**禁止**把上文快照或气泡里的群昵称、真名原样写入正文。`,
     },
   ]
   const text = await openAiCompatibleChat(cfg, messages, {
@@ -2150,6 +2429,7 @@ const WECHAT_GROUP_MULTI_SPEAKER_LUMI_RULES = `
 - **（铁则）换任何一名 NPC 接话**＝新起一行，且该行**必须以** \`<<SPEAKER:该说话人的合法 characterId>>\` **开头**。**裸行绝不表示换人**；若该换人了却漏写 SPEAKER，后续裸行会**全部**仍算上一说话人，造成严重串头像。
 - **（省 token）同一 NPC 连续发言、且希望合并成同一条气泡的多行正文**：**仅第一物理行**写 \`<<SPEAKER:该 id>>\` + 正文；后续物理行可**不写 SPEAKER**（裸行续写），程序会把裸行并进**同一人**的气泡。**一旦**中间插入了别的 NPC（对方行首已带 SPEAKER），你再以同一 NPC 开口时，必须**重新**起一行并**再次**写 \`<<SPEAKER:该 id>>\`，不可依赖裸行「自动换人」。
 - **同一 NPC 要连发多条独立小气泡**（微信里多条短消息、而非一条里换行）：**每条气泡各自占用至少一行，且每条气泡的第一行都必须**以 \`<<SPEAKER:同一 characterId>>\` 开头（不可只对第一条写标、后面几条裸写冒充新人）。
+- **同轮出镜次数（无「每人只能说一次」）**：单次模型输出的一整轮里，**同一 NPC 允许出现任意多次**——既可连发多条气泡，也可 **A→B→A→C→A** 与他人穿插接力；**没有**硬性规定「每名角色每轮只能回一次话」。每次该 NPC **重新开口**（含被别人插话后再说）均须单独起行并带合法 \`<<SPEAKER:该角色ID>>\`。
 - **表情包、语音/红包/转账等独立气泡**：各自单独成行，且该行**必须以**对应说话人的 \`<<SPEAKER:…>>\` 开头（可与文字气泡同一角色 id）。
 - <<SPEAKER:…>> 只给程序解析，玩家侧不会看到该标记；正文中不要再写「小明：」「小李：」这类前缀。
 - **群管家（群机器人系统号）** 出镜时：该行正文**禁止**以 \`@群助手\`、\`@ 群助手\`、\`@群管家\`、\`@群机器人\` 或本群自定义机器人别名加 @ 的形式**自称开头**（客户端已用头像与昵称标识发件人；如此写会像未消隐的路由标记）。**禁止**在正文开头写 \`群管家：\`、\`群助手：\` 等「称呼+冒号」假聊天气泡前缀。对他人使用 @ 接话、调侃仍可照常。
@@ -2189,13 +2469,13 @@ const WECHAT_GROUP_MULTI_SPEAKER_LUMI_RULES = `
 - **其他普通成员 NPC**：对**他人**被拦截或禁言隐藏的台词**不知原文**；**禁止**逐字复述、禁止当众念屏；可疑惑、吃瓜、打圆场、「你刚发了啥？」「我这边啥也看不见」。
 - **群主 / 管理员 NPC 与用户占位为 owner/admin 时**：可将点「查看」读到的、或「风纪后台记录」中的信息与职务行为对齐；**禁止**让普通成员若无其事说出**他人**被拦句子的具体措辞（除非剧情已当众宣读）。
 
-【节奏与气泡粒度｜强约束（真微信群交流感）】
-- 每条气泡要像真人微信：**短、快、碎**——多数气泡 **一两句、不超过两三行**；优先接梗、附和、反问、吐槽半句、打断，**忌**单人长篇独白、忌一人**无插话地**连刷很多条再换另一人又连刷很多条（像轮流演讲）。
-- **整体顺序要像多人插话**：优先 **A 一句 → B 一句 → … → 再回到 A**；回到 A 时该行**必须**再次 \`<<SPEAKER:A>>\`。同一人**意犹未尽**可连发 2～3 条：若每条是**独立小气泡**则每条行首都写 SPEAKER；若合并为**一条多行气泡**则仅首行 SPEAKER、后续裸续行。**不宜**同一人无他人插话时连续超过约 **4 条独立气泡**（除非剧情刻意连环追打，也须尽快有人插嘴）。
-- **禁止**「角色 A 先堆一长串、再角色 B 堆一长串」的块状结构；需要同一人多说几句时，**多条短气泡各行首带 SPEAKER** 或 **单条多行仅首行 SPEAKER + 裸续**，优于单条超长正文。
-- **本轮不要求每名在场 NPC 都开口**（忌「全员点名报到」）：常见 **1～3 名**有台词即可，其余本轮可**吃瓜潜水**；人设嘴碎爱插话的仍可偶尔一句。**禁止**为了凑人头而让每人轮流对用户单独表态。
-- **成员之间可以先聊起来**：允许连续多句只在 NPC 之间互怼、拆台、起哄（用本群昵称指对方），**不必**句句都歪成「对用户汇报」。用户抛开放式问题（如聚餐吃什么、周末去哪）时，特别适合 **两人主编抬杠、其他人围观或偶尔插一刀**，而不是每人郑重回答用户一遍。
-- 场上 NPC **≥4** 时：多数轮次建议 **本轮最多约一半成员**有台词即可，避免全员拥挤；有人多话、有人围观更像真群。**每位 NPC 每次开口**（含插话回来）仍须在对应行遵守上文「换人必标 / 同块可续」。
+【节奏与气泡粒度｜活人微信群（不设机械条数）】
+- **不设**「本轮必须几条气泡、几名 NPC 开口」的硬性规定：条数与篇幅以**像真群在聊**为准，可疏可密；**重心**在**成员之间互嘴、接梗、拆台、帮腔**（用本群昵称指对方），且**句句贴合各自人设**。
+- 气泡仍宜偏**短、快、碎**（微信感）；优先接梗、附和、反问、吐槽半句。**整体要像多人插话**（A→B→A…），**同一角色本轮可出现任意多次**，回到某人时须重新 \`<<SPEAKER>>\`。**忌**生硬「轮流演讲」：不要 A 堆完一大段再换 B 堆一大段；需要同一人多说时，用**多条短气泡各行首 SPEAKER** 或 **单条多行仅首行 SPEAKER + 裸续**。
+- **本轮不要求每名在场 NPC 都开口**：有人吃瓜潜水很正常；**禁止**为凑人头全员对用户排队表态。
+- **不要忽视用户**：用户刚说的话、语气与潜在情绪须在**整轮氛围里被接住**——可直接有人回一句，也可主要在 NPC 互怼中**自然回扣**用户那句话或情绪；**禁止**全轮只顾彼此怼、对用户消息像没看见（除非人设刻意冷处理，且仍须让读者感到张力而非全员 OOC）。
+- 用户抛开放式问题（聚餐、去哪等）时，优先 **NPC 之间借机抬杠、调侃** 顺带带上议题；**不必**每人对用户单独作答一遍。
+- **每位 NPC 每次开口**（含插话回来）仍须在对应行遵守上文「换人必标 / 同块可续」SPEAKER 铁则。
 
 【私聊近况与多角关系｜强约束】
 - 每名成员小节中的 **「与用户的关系与好感站位」**（若有）：综合人脉连线、长期记忆与私聊摘录，列出你对用户的**关系档位、好感大致区间、是否倾向恋爱/暧昧/地下恋、占有欲强弱**。你必须以此为锚决定群内反应——**禁止**全员一成不变的「路人捧哏」腔。
@@ -2226,9 +2506,9 @@ const WECHAT_GROUP_MULTI_SPEAKER_LUMI_RULES = `
 - 【后台自检快照】若上文包含「后台自检快照｜发送前核对」段落：其中 **第 0 节**为职务权限产品规则，**第 1～9 节**（含群公告与群管家规则快照）所列事实均为程序生成的**唯一事实**；对白与心理活动不得与之矛盾。**第 10 节（编演自检）**提醒自问改名、管人、群管理员/转让群主/群公告/群管家敏感词等；**全程禁止替用户做决定**（勿代替用户确认设置、勿擅自替用户占位下发改名类指令）。注意：职务边界以 **第 0 节**为准——**群机器人敏感词与触发规则**：任意成员可查看，**群主或管理员可编辑**；群主/管理员可用的禁言、踢人、改群名等与 **第 0 节**一致；**普通成员**不可代管。**任免群管理员**须用本段规定的 \`<<GROUP_SET_ADMIN|…>>\` 落库；**禁言、踢人、转让群主**尚无专用 \`<<…>>\` 时勿编造其它格式。
 - 【禁止替用户做决定】所有群主/管理员操作、群管家违禁词、禁言踢人等叙事均为 **NPC 角色行为**；**禁止**输出代替真人用户决策、代替用户保存群设置、代替用户发言的内容；用户占位 id 仅用于用户本人剧情明确时的改名等指令，**禁止 NPC 替用户下发**。
 - 只能扮演列表中的已知成员，禁止凭空创造新成员。
-- **与用户话题相扣即可，禁止全员围着用户排队回复**：本轮须在整体上让用户感到群里**接住了 TA 的话题或气氛**，但接住方式**不限于**每人对用户说一句。允许一人**简短**带一下用户话头，其余主要在成员之间展开；也允许多句 NPC 互聊后再自然带回用户。**禁止**机械安排「角色1答用户→角色2答用户→…」像问卷调查。
+- **互嘴为主、用户不可架空**：本轮须在整体上让用户感到**被听见**——群里可以主要在成员之间互怼，但须**明显回扣**用户的话题、情绪或潜台词（不必每人对用户说一句，**禁止**全轮零回响）。接住方式可多样：有人简短接用户、互怼里夹枪带棒其实在回用户、或末尾自然带回用户均可。**禁止**机械「角色1答用户→角色2答用户→…」像问卷调查。
 - **禁止**开放式提问下每人各报一个答案挤满屏幕（如每人轮流「我要吃 X」）；优先写成 **NPC 互相调侃吃法、身材、钱包、口味**，顺带点到议题即可。
-- 允许成员之间先互嘴再多句后再顺带回应用户；不要所有气泡都机械复述用户原话。
+- 允许成员之间先互嘴再多句后再回扣用户；不要所有气泡都机械复述用户原话。
 - 用户只回「行」「好」「可以」等短时，优先让成员之间把话题撑开，而不是每人复读确认。
 - 若用户消息里明确 @ 了某位（@其群昵称或相关称呼），主要由对应成员先接；其他人最多补一句短的。
 - 除非人设明确拒回（极端冷脸、激烈冲突中拒答、正忙到不能分神），被 @ 的成员至少输出 1 条带其 SPEAKER 的可见回复；不要对 @ 装看不见。

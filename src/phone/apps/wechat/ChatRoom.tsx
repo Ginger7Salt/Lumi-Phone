@@ -3701,6 +3701,10 @@ export function ChatRoom({
             } catch {
               /* 保持 loadIdentityId */
             }
+          } else if (roomType !== 'group' && character?.playerIdentityId?.trim()) {
+            /** 私聊：`{{user}}` 与身份卡须与该人设绑定的玩家身份一致，避免多身份全局会话串号 */
+            const bound = character.playerIdentityId.trim()
+            if (bound && bound !== '__none__') loadIdentityId = bound
           }
           if (loadIdentityId && loadIdentityId !== '__none__') {
             try {
@@ -3824,9 +3828,10 @@ export function ChatRoom({
             const groupCtxBias =
               roomType === 'group' && groupDocRef.current
                 ? [
-                    `【群聊】微信群「${groupDocRef.current.name}」：本轮为 **单次模型调用**；用 <<SPEAKER:角色ID>> 分行输出——**换人必须行首带标**，同人连续多行可**仅首行带标、后续裸续**；**强交流感**：短句、多人**插话交错**（如 A 一句 B 一句 A 再开口须重新带标），禁止「一人先堆一大段、再换另一人堆一大段」。`,
-                    '历史记录里带发言者前缀的是其他群成员；可互怼、帮腔、抢话；每条气泡宜短，像真微信群碎嘴。',
-                    '**不要求每名 NPC 本轮都开口**：可多人互聊、部分人吃瓜；忌全员轮流对用户单独表态。',
+                    `【群聊】微信群「${groupDocRef.current.name}」：本轮为 **单次模型调用**；用 <<SPEAKER:角色ID>> 分行输出——**换人必须行首带标**，同人连续多行可**仅首行带标、后续裸续**；**活人感**：成员之间**互嘴、接梗**为主，贴合人设；**不设**固定气泡条数，以像真群在聊为准；禁止「一人先堆一大段、再换另一人堆一大段」的轮流演讲感。`,
+                    '历史记录里带发言者前缀的是其他群成员；可互怼、帮腔、抢话；气泡宜短碎，但条数可疏可密。',
+                    '**不要求每名 NPC 本轮都开口**；忌全员轮流对用户单独表态；同一 NPC 可本轮多次发言，每次再开口须重新带 <<SPEAKER>>。',
+                    '**勿忽视用户**：用户的话与情绪须在整轮中有回响（可直接接一句，或在互怼中自然回扣），禁止全轮只顾 NPC 互怼像没看见用户。',
                     '用户连发多条时不必逐条复读；短确认句（「行」「好」）时优先让群内话题自然延续。',
                   ].join('\n')
                 : ''
@@ -5356,6 +5361,7 @@ export function ChatRoom({
                 conversationKey,
                 characterId: persistCharacterId,
                 characterRealName: notifyPeerRound.trim() || peerNotifyTitle.trim() || '对方',
+                sessionPlayerIdentityId: playerIdentityId,
               })
             }
           } catch (err) {
@@ -8262,10 +8268,14 @@ export function ChatRoom({
           }
 
           let playerIdentity: PlayerIdentity | null = null
-          const piid = playerIdentityId.trim()
-          if (!lumiAssistantChat && piid && piid !== '__none__') {
+          let loadPid = playerIdentityId.trim()
+          if (!lumiAssistantChat && character?.playerIdentityId?.trim()) {
+            const b = character.playerIdentityId.trim()
+            if (b && b !== '__none__') loadPid = b
+          }
+          if (!lumiAssistantChat && loadPid && loadPid !== '__none__') {
             try {
-              playerIdentity = await personaDb.getPlayerIdentity(piid)
+              playerIdentity = await personaDb.getPlayerIdentity(loadPid)
             } catch {
               playerIdentity = null
             }
@@ -8367,10 +8377,14 @@ export function ChatRoom({
           }
 
           let playerIdentity: PlayerIdentity | null = null
-          const piid = playerIdentityId.trim()
-          if (!lumiAssistantChat && piid && piid !== '__none__') {
+          let loadPidVc = playerIdentityId.trim()
+          if (!lumiAssistantChat && character?.playerIdentityId?.trim()) {
+            const b = character.playerIdentityId.trim()
+            if (b && b !== '__none__') loadPidVc = b
+          }
+          if (!lumiAssistantChat && loadPidVc && loadPidVc !== '__none__') {
             try {
-              playerIdentity = await personaDb.getPlayerIdentity(piid)
+              playerIdentity = await personaDb.getPlayerIdentity(loadPidVc)
             } catch {
               playerIdentity = null
             }

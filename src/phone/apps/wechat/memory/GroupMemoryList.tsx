@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
 import { Edit2, Plus, Search, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Pressable } from '../../../components/Pressable'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterMemory, CharacterMemoryTriggerMode, GroupChatRow } from '../newFriendsPersona/types'
@@ -17,6 +18,10 @@ import {
   MemoryContentWithSourceBadges,
   parseMemorySourcePrefix,
 } from './memorySourceBadges'
+import {
+  MemoryManualPlaceholderToolbar,
+  useMemoryDraftPlaceholderPreview,
+} from './MemoryManualPlaceholderToolbar'
 import { MemoryManualKeywordEditor } from './MemoryManualKeywordEditor'
 import { MemoryTriggerModeBadge } from './MemoryTriggerModeBadge'
 import { flattenMemoryTriggerKeywords, formatMemoryTriggerSummaryLine } from './memoryTriggerUtils'
@@ -213,6 +218,28 @@ export function GroupMemoryList({
   const [addKeywords, setAddKeywords] = useState<string[]>([])
   const [addKwKey, setAddKwKey] = useState(0)
 
+  const addTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const addBucketId = addTargetGid ? groupMemoryBucketCharacterId(addTargetGid) : ''
+  const addInvolvedPreview = useMemo(() => {
+    if (!addTargetGid) return null
+    return involvedIdsForGroup(groupMetaById.get(addTargetGid))
+  }, [addTargetGid, groupMetaById])
+
+  const addPlaceholderPreview = useMemoryDraftPlaceholderPreview({
+    draft: addDraft,
+    characterId: addOpen ? addBucketId : null,
+    memoryScope: 'group',
+    involvedCharIds: addInvolvedPreview ?? undefined,
+  })
+
+  const editPlaceholderPreview = useMemoryDraftPlaceholderPreview({
+    draft: editDraft,
+    characterId: editRow?.characterId ?? null,
+    memoryScope: 'group',
+    involvedCharIds: editRow?.involvedCharIds,
+  })
+
   const saveAdd = async () => {
     const gid = addTargetGid?.trim()
     if (!gid) return
@@ -390,19 +417,20 @@ export function GroupMemoryList({
         )}
       </motion.div>
 
-      {addOpen ? (
-        <div
-          className="fixed inset-0 z-[140] flex items-center justify-center bg-black/40 px-4"
-          role="presentation"
-          onClick={() => {
-            setAddOpen(false)
-            setAddTargetGid(null)
-          }}
-        >
+      {addOpen
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[50000] flex min-h-0 items-center justify-center overflow-y-auto overscroll-contain bg-black/40 px-4 py-10 sm:py-14"
+              role="presentation"
+              onClick={() => {
+                setAddOpen(false)
+                setAddTargetGid(null)
+              }}
+            >
           <div
             role="dialog"
             aria-modal
-            className="max-h-[min(90vh,720px)] w-full max-w-[400px] overflow-y-auto rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
+            className="my-auto max-h-[min(90dvh,720px)] w-full max-w-[400px] overflow-y-auto rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <p className="text-[15px] font-medium text-neutral-950">添加群聊记忆</p>
@@ -412,10 +440,21 @@ export function GroupMemoryList({
               标记来源（顺序须一致）。
             </p>
             <textarea
+              ref={addTextareaRef}
               value={addDraft}
               onChange={(e) => setAddDraft(e.target.value)}
               placeholder="输入记忆内容…"
               className="mt-3 min-h-[160px] w-full resize-y rounded-[10px] border border-neutral-100 bg-neutral-50 px-3 py-2 text-[14px] text-neutral-800 outline-none focus:border-neutral-950"
+            />
+            <MemoryManualPlaceholderToolbar
+              textareaRef={addTextareaRef}
+              value={addDraft}
+              onChange={setAddDraft}
+              previewExpanded={addPlaceholderPreview.expanded}
+              previewLoading={addPlaceholderPreview.loading}
+              placeholderCharacterId={addOpen ? addBucketId : null}
+              memoryScope="group"
+              involvedCharIds={addInvolvedPreview ?? null}
             />
             <MemoryManualKeywordEditor
               key={addKwKey}
@@ -445,26 +484,40 @@ export function GroupMemoryList({
               </Pressable>
             </div>
           </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
 
-      {editRow ? (
-        <div
-          className="fixed inset-0 z-[140] flex items-center justify-center bg-black/40 px-4"
-          role="presentation"
-          onClick={() => setEditRow(null)}
-        >
+      {editRow
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[50000] flex min-h-0 items-center justify-center overflow-y-auto overscroll-contain bg-black/40 px-4 py-10 sm:py-14"
+              role="presentation"
+              onClick={() => setEditRow(null)}
+            >
           <div
             role="dialog"
             aria-modal
-            className="max-h-[min(90vh,720px)] w-full max-w-[400px] overflow-y-auto rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
+            className="my-auto max-h-[min(90dvh,720px)] w-full max-w-[400px] overflow-y-auto rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <p className="text-[15px] font-medium text-neutral-950">编辑群聊记忆</p>
             <textarea
+              ref={editTextareaRef}
               value={editDraft}
               onChange={(e) => setEditDraft(e.target.value)}
               className="mt-3 min-h-[160px] w-full resize-y rounded-[10px] border border-neutral-100 bg-neutral-50 px-3 py-2 text-[14px] text-neutral-800 outline-none focus:border-neutral-950"
+            />
+            <MemoryManualPlaceholderToolbar
+              textareaRef={editTextareaRef}
+              value={editDraft}
+              onChange={setEditDraft}
+              previewExpanded={editPlaceholderPreview.expanded}
+              previewLoading={editPlaceholderPreview.loading}
+              placeholderCharacterId={editRow?.characterId ?? null}
+              memoryScope="group"
+              involvedCharIds={editRow?.involvedCharIds ?? null}
             />
             <MemoryManualKeywordEditor
               key={editKwKey}
@@ -491,8 +544,10 @@ export function GroupMemoryList({
               </Pressable>
             </div>
           </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

@@ -1,6 +1,10 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useMemo, useRef } from 'react'
 import type { LoreEntry } from '../../worldbook/loreArchiveTypes'
+import {
+  WORLD_BOOK_CHAR_PLACEHOLDER,
+  WORLD_BOOK_USER_PLACEHOLDER,
+} from '../wechat/charUserPlaceholders'
 import type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
 import { GLOBAL_WECHAT_PLATE_LABELS } from '../../worldbook/globalWorldBookTypes'
 import { Pressable } from '../../components/Pressable'
@@ -28,18 +32,18 @@ function togglePlateInScope(scope: LoreEntry['plateScope'], plate: GlobalWechatP
   return arr.length ? { mode: 'plates', plates: arr } : { mode: 'all' }
 }
 
-function AutoGrowTextarea({
-  value,
-  onChange,
-  placeholder,
-}: {
-  value: string
-  onChange: (v: string) => void
-  placeholder: string
-}) {
-  const ref = useRef<HTMLTextAreaElement | null>(null)
+const AutoGrowTextarea = forwardRef<
+  HTMLTextAreaElement,
+  { value: string; onChange: (v: string) => void; placeholder: string }
+>(function AutoGrowTextarea({ value, onChange, placeholder }, forwardedRef) {
+  const innerRef = useRef<HTMLTextAreaElement | null>(null)
+  const ref = (el: HTMLTextAreaElement | null) => {
+    innerRef.current = el
+    if (typeof forwardedRef === 'function') forwardedRef(el)
+    else if (forwardedRef) forwardedRef.current = el
+  }
   const adjust = useCallback(() => {
-    const el = ref.current
+    const el = innerRef.current
     if (!el) return
     el.style.height = '0px'
     el.style.height = `${Math.max(160, el.scrollHeight)}px`
@@ -59,9 +63,31 @@ function AutoGrowTextarea({
       className="w-full resize-none bg-transparent text-[15px] leading-relaxed text-neutral-800 outline-none placeholder:text-neutral-300"
     />
   )
-}
+})
 
 export function LoreEditor({ draft, roster, onChange, onBack, autoSaveLabel }: Props) {
+  const contentRef = useRef<HTMLTextAreaElement | null>(null)
+
+  const insertPlaceholder = useCallback(
+    (token: string) => {
+      const el = contentRef.current
+      if (!el) {
+        onChange({ ...draft, content: `${draft.content}${token}`, updatedAt: Date.now() })
+        return
+      }
+      const start = el.selectionStart ?? draft.content.length
+      const end = el.selectionEnd ?? start
+      const next = `${draft.content.slice(0, start)}${token}${draft.content.slice(end)}`
+      onChange({ ...draft, content: next, updatedAt: Date.now() })
+      queueMicrotask(() => {
+        el.focus()
+        const pos = start + token.length
+        el.setSelectionRange(pos, pos)
+      })
+    },
+    [draft, onChange],
+  )
+
   const plateAll = draft.plateScope.mode === 'all'
   const charAll = draft.characterScope.mode === 'all'
 
@@ -134,10 +160,38 @@ export function LoreEditor({ draft, roster, onChange, onBack, autoSaveLabel }: P
         />
 
         <div className="mt-8">
+          <p className="mb-2 text-[11px] leading-relaxed text-neutral-500">
+            人称约定（全档案统一）：{' '}
+            <code className="rounded bg-neutral-100 px-1 py-0.5 text-[11px] text-neutral-800">
+              {WORLD_BOOK_CHAR_PLACEHOLDER}
+            </code>{' '}
+            = 该条目关联的人设<strong>角色本人</strong>；{' '}
+            <code className="rounded bg-neutral-100 px-1 py-0.5 text-[11px] text-neutral-800">
+              {WORLD_BOOK_USER_PLACEHOLDER}
+            </code>{' '}
+            = <strong>玩家本人</strong>（当前会话人设<strong>在通讯录绑定的</strong>玩家身份）。注入微信/约会前会自动替换为姓名，多身份不会串号。
+          </p>
+          <div className="mb-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => insertPlaceholder(WORLD_BOOK_CHAR_PLACEHOLDER)}
+              className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-[11px] font-medium text-neutral-800 transition-colors hover:bg-neutral-50"
+            >
+              插入 {'{{char}}'}
+            </button>
+            <button
+              type="button"
+              onClick={() => insertPlaceholder(WORLD_BOOK_USER_PLACEHOLDER)}
+              className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-[11px] font-medium text-neutral-800 transition-colors hover:bg-neutral-50"
+            >
+              插入 {'{{user}}'}
+            </button>
+          </div>
           <AutoGrowTextarea
+            ref={contentRef}
             value={draft.content}
             onChange={(content) => onChange({ ...draft, content, updatedAt: Date.now() })}
-            placeholder="为你的世界注入额外的规则"
+            placeholder="为你的世界注入额外的规则（可用上方按钮插入角色/玩家占位符）"
           />
         </div>
 

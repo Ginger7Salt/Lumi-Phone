@@ -2,8 +2,9 @@ import type { ApiConfig } from '../api/types'
 import { buildWorldbookContext } from '../../worldbook/buildWorldbookContext'
 import { getWorldbookLoreEntriesSnapshot } from '../../worldbook/worldbookLoreStore'
 import type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
-import type { Character } from './newFriendsPersona/types'
+import type { Character, PlayerIdentity } from './newFriendsPersona/types'
 import { personaDb } from './newFriendsPersona/idb'
+import { expandCharUserPlaceholders, resolveCharUserNamesForPrompt } from './charUserPlaceholders'
 import { buildMemoryRelevanceHaystack } from './wechatMemoryPromptBlocks'
 import { listUnsummarizedOfflinePlotTraceItems } from './dating/loadOfflineDatingPlotsForWechatPrompt'
 import type { MemoryTraceData } from './memoryTraceTypes'
@@ -116,6 +117,48 @@ function activeSessionMessageCount(transcript: ChatTranscriptTurn[]): number {
   return Math.min(countTranscriptTurns(transcript), WECHAT_HISTORY_MAX_MESSAGES)
 }
 
+/** 当前全局玩家身份展示名：人设未绑定身份或绑定记录缺省时，与记忆注入一致用于 `{{user}}` */
+async function resolvePlayerDisplayFallbackForTrace(): Promise<string> {
+  try {
+    const cur = await personaDb.getCurrentIdentity()
+    if (!cur) return ''
+    return (
+      String(cur.wechatNickname ?? '').trim() ||
+      String(cur.name ?? '').trim() ||
+      String(cur.remark ?? '').trim() ||
+      ''
+    )
+  } catch {
+    return ''
+  }
+}
+
+/** 思维溯源展示须与发给模型的占位符展开一致：按人设绑定的玩家身份解析 `{{user}}` */
+async function expandTraceTextForCharacter(
+  ch: Character | null,
+  playerDisplayFallback: string,
+): Promise<(s: string) => string> {
+  if (!ch) {
+    const fb = playerDisplayFallback.trim() || '用户'
+    return (s: string) => expandCharUserPlaceholders(String(s ?? ''), { charName: '对方', userName: fb })
+  }
+  let iden: PlayerIdentity | null = null
+  const boundId = ch.playerIdentityId?.trim()
+  if (boundId && boundId !== '__none__') {
+    try {
+      iden = await personaDb.getPlayerIdentity(boundId)
+    } catch {
+      iden = null
+    }
+  }
+  const names = resolveCharUserNamesForPrompt({
+    character: ch,
+    playerIdentity: iden,
+    playerDisplayName: playerDisplayFallback.trim(),
+  })
+  return (s: string) => expandCharUserPlaceholders(String(s ?? ''), names)
+}
+
 export async function publishWeChatPrivatePersonaMemoryTrace(params: {
   character: Character | null
   charDisplayName: string
@@ -143,13 +186,19 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
   })
 
   const personaDetail = buildFullPersonaDetailForMemoryTrace(params.character)
-  const characterWorldBook = buildWorldBookText(params.character, TRACE_WORLD_BOOK_MAX_CHARS).trim()
-  const globalWorldbook = buildWorldbookContext(
+  const characterWorldBookRaw = buildWorldBookText(params.character, TRACE_WORLD_BOOK_MAX_CHARS).trim()
+  const globalWorldbookRaw = buildWorldbookContext(
     params.chatMemberIds,
     getWorldbookLoreEntriesSnapshot(),
     params.globalWechatPlate,
     { skipLengthCap: true, plainUserEntriesOnly: true },
   ).trim()
+  const playerFb = await resolvePlayerDisplayFallbackForTrace()
+  const expand = await expandTraceTextForCharacter(params.character, playerFb)
+  const characterWorldBook = expand(characterWorldBookRaw)
+  const globalWorldbook = expand(globalWorldbookRaw)
+  const personaDetailOut = expand(personaDetail)
+  const worldBgOut = expand(params.worldBackgroundPrompt.trim())
 
   const offlinePlots = await listUnsummarizedOfflinePlotTraceItems(cid, params.charDisplayName, {
     fullSnippet: true,
@@ -194,8 +243,8 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
     contextMatrix: {
       baseDirectives: {
         persona: personaTagsFromCharacter(params.character),
-        personaDetail,
-        worldBackground: params.worldBackgroundPrompt.trim(),
+        personaDetail: personaDetailOut,
+        worldBackground: worldBgOut,
         characterWorldBook: characterWorldBook || '（未绑定或未启用人设世界书条目）',
         globalWorldbook: globalWorldbook || '（当前场景无匹配的档案室全局条目）',
         worldbooks: [],
@@ -242,13 +291,19 @@ export async function publishWeChatGroupMemoryTrace(params: {
 
   const primaryChar = await personaDb.getCharacter(cid)
   const personaDetail = buildFullPersonaDetailForMemoryTrace(primaryChar)
-  const characterWorldBook = buildWorldBookText(primaryChar, TRACE_WORLD_BOOK_MAX_CHARS).trim()
-  const globalWorldbook = buildWorldbookContext(
+  const characterWorldBookRaw = buildWorldBookText(primaryChar, TRACE_WORLD_BOOK_MAX_CHARS).trim()
+  const globalWorldbookRaw = buildWorldbookContext(
     params.wbGroupCharIds,
     getWorldbookLoreEntriesSnapshot(),
     'group_chat',
     { skipLengthCap: true, plainUserEntriesOnly: true },
   ).trim()
+  const playerFb = await resolvePlayerDisplayFallbackForTrace()
+  const expand = await expandTraceTextForCharacter(primaryChar, playerFb)
+  const characterWorldBook = expand(characterWorldBookRaw)
+  const globalWorldbook = expand(globalWorldbookRaw)
+  const personaDetailOut = expand(personaDetail)
+  const worldBgOut = expand((params.worldBackgroundFirst ?? '').trim())
 
   const unsChats: MemoryTraceData['contextMatrix']['recentContext']['unsummarizedChats'] = []
   if (params.groupUnsummarizedNotes.trim()) {
@@ -275,9 +330,9 @@ export async function publishWeChatGroupMemoryTrace(params: {
       baseDirectives: {
         persona: [`多角色会话`, `主参考记忆：${params.primaryNpcDisplayName}`],
         personaDetail:
-          personaDetail.trim() ||
+          personaDetailOut.trim() ||
           `【群聊说明】本溯源以首位发言 NPC「${params.primaryNpcDisplayName}」的人设档案为主参考；多角色台词由群聊管线分别注入。`,
-        worldBackground: (params.worldBackgroundFirst ?? '').trim(),
+        worldBackground: worldBgOut,
         characterWorldBook: characterWorldBook || '（该 NPC 未绑定或未启用人设世界书）',
         globalWorldbook: globalWorldbook || '（当前群场景无匹配的档案室全局条目）',
         worldbooks: [],
@@ -324,11 +379,18 @@ export async function publishDatingOfflineMemoryTrace(params: {
   const plate = params.isVnMode ? ('vn' as const) : ('offline_plot' as const)
   const chRow = await personaDb.getCharacter(cid)
   const personaDetail = buildFullPersonaDetailForMemoryTrace(chRow)
-  const characterWorldBook = buildWorldBookText(chRow, TRACE_WORLD_BOOK_MAX_CHARS).trim()
-  const globalWorldbook = buildWorldbookContext([cid], getWorldbookLoreEntriesSnapshot(), plate, {
+  const characterWorldBookRaw = buildWorldBookText(chRow, TRACE_WORLD_BOOK_MAX_CHARS).trim()
+  const globalWorldbookRaw = buildWorldbookContext([cid], getWorldbookLoreEntriesSnapshot(), plate, {
     skipLengthCap: true,
     plainUserEntriesOnly: true,
   }).trim()
+  const playerFb = await resolvePlayerDisplayFallbackForTrace()
+  const expand = await expandTraceTextForCharacter(chRow, playerFb)
+  const characterWorldBook = expand(characterWorldBookRaw)
+  const rawArchiveFallback = globalWorldbookRaw.trim() || (params.datingArchiveBlockPlain?.trim() ?? '')
+  const globalWorldbook = expand(rawArchiveFallback) || '（当前板块无档案室条目）'
+  const personaDetailOut = expand(personaDetail)
+  const worldBgOut = expand(params.worldBackground.trim())
   const offlinePlots = await listUnsummarizedOfflinePlotTraceItems(cid, params.charName, {
     fullSnippet: true,
     maxItems: 2000,
@@ -351,13 +413,10 @@ export async function publishDatingOfflineMemoryTrace(params: {
     contextMatrix: {
       baseDirectives: {
         persona: [...params.identityTags].slice(0, 12),
-        personaDetail: personaDetail.trim() || params.identityTags.join('、'),
-        worldBackground: params.worldBackground.trim(),
+        personaDetail: personaDetailOut.trim() || params.identityTags.join('、'),
+        worldBackground: worldBgOut,
         characterWorldBook: characterWorldBook || '（未绑定或未启用人设世界书）',
-        globalWorldbook:
-          globalWorldbook.trim() ||
-          (params.datingArchiveBlockPlain?.trim() ?? '') ||
-          '（当前板块无档案室条目）',
+        globalWorldbook: globalWorldbook,
         worldbooks: [],
       },
       recentContext: {

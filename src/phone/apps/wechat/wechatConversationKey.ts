@@ -32,6 +32,24 @@ export function wechatConversationKey(characterId: string, playerIdentityId: str
 }
 
 /**
+ * 从私聊 `conversationKey`（`characterId::sessionPlayerId`）拆出两端；群聊键返回 null。
+ * `characterId` 中若含 `::` 则按**最后一次** `::` 分割（与 {@link wechatConversationKey} 拼接规则一致）。
+ */
+export function parsePrivateWeChatConversationCharacterAndSession(conversationKey: string): {
+  characterId: string
+  sessionPlayerId: string
+} | null {
+  const k = conversationKey.trim()
+  if (!k || isWechatGroupConversationKey(k)) return null
+  const idx = k.lastIndexOf('::')
+  if (idx <= 0) return null
+  const characterId = k.slice(0, idx).trim()
+  const sessionPlayerId = (k.slice(idx + 2).trim() || '__none__').trim()
+  if (!characterId) return null
+  return { characterId, sessionPlayerId }
+}
+
+/**
  * 私聊在 IndexedDB 中使用的身份段：与 ChatRoom 的 `chatRouteIdentityId` 一致——
  * 优先角色表绑定的 `playerIdentityId`，否则为当前 App 选用身份；皆无则为 `__none__`。
  */

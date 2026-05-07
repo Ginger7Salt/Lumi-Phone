@@ -1,16 +1,23 @@
 import { motion } from 'framer-motion'
 import { Edit2, Plus, Search, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   WECHAT_LUMI_ASSISTANT_CONTACT,
   type WeChatContactRow,
 } from '../../../../components/WeChatContactsInstagram'
 import { Pressable } from '../../../components/Pressable'
+import { resolveOfflineDatingArchiveContext } from '../dating/offlineDatingArchiveResolve'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterMemory, CharacterMemoryTriggerMode } from '../newFriendsPersona/types'
 import { uid } from '../newFriendsPersona/utils'
-import { composeMemoryWithSourcePrefix, MemoryContentWithSourceBadges, parseMemorySourcePrefix } from './memorySourceBadges'
+import { MemoryContentWithSourceBadgesFromRow } from './memoryContentExpanded'
+import { composeMemoryWithSourcePrefix, parseMemorySourcePrefix } from './memorySourceBadges'
 import { memoryTextMatchesQuery } from './memorySearchFilter'
+import {
+  MemoryManualPlaceholderToolbar,
+  useMemoryDraftPlaceholderPreview,
+} from './MemoryManualPlaceholderToolbar'
 import { MemoryManualKeywordEditor } from './MemoryManualKeywordEditor'
 import { MemoryTriggerModeBadge } from './MemoryTriggerModeBadge'
 import { flattenMemoryTriggerKeywords, formatMemoryTriggerSummaryLine } from './memoryTriggerUtils'
@@ -27,8 +34,8 @@ function formatTs(ts: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-function MemoryCardBody({ content, clamp }: { content: string; clamp: boolean }) {
-  const { body } = parseMemorySourcePrefix(content)
+function MemoryCardBody({ memory, clamp }: { memory: CharacterMemory; clamp: boolean }) {
+  const { body } = parseMemorySourcePrefix(memory.content)
   const [open, setOpen] = useState(false)
   const long = body.length > 120 || body.split('\n').length > 3
   const showClamp = clamp && long && !open
@@ -37,8 +44,8 @@ function MemoryCardBody({ content, clamp }: { content: string; clamp: boolean })
       <p
         className={`text-[14px] leading-relaxed text-neutral-600 ${showClamp ? 'line-clamp-3' : ''} whitespace-pre-wrap`}
       >
-        <MemoryContentWithSourceBadges
-          content={content}
+        <MemoryContentWithSourceBadgesFromRow
+          memory={memory}
           bodyClassName="text-[14px] leading-relaxed text-neutral-600 whitespace-pre-wrap"
           emptyBodyFallback="—"
         />
@@ -74,6 +81,7 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [subTab, setSubTab] = useState<'own' | 'linked'>('own')
 
   const reload = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent === true
@@ -130,11 +138,22 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
     setSelectedId(filteredRows[0]!.id)
   }, [rows, filteredRows, selectedId])
 
+  useEffect(() => {
+    setSubTab('own')
+  }, [selectedId])
+
   const activeListRaw = selectedId ? byCharacter.get(selectedId) ?? [] : []
   const activeList = useMemo(() => {
     if (!searchQuery.trim()) return activeListRaw
     return activeListRaw.filter((m) => memoryTextMatchesQuery(m, searchQuery))
   }, [activeListRaw, searchQuery])
+
+  const activeOwnList = useMemo(
+    () => activeList.filter((m) => m.memoryScope !== 'linked'),
+    [activeList],
+  )
+  const activeLinkedList = useMemo(() => activeList.filter((m) => m.memoryScope === 'linked'), [activeList])
+  const displayedList = subTab === 'own' ? activeOwnList : activeLinkedList
 
   const deleteMemory = async (id: string) => {
     if (!window.confirm('删除这条记忆？')) return
@@ -177,6 +196,43 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
   const [addTriggerMode, setAddTriggerMode] = useState<CharacterMemoryTriggerMode>('keyword')
   const [addKeywords, setAddKeywords] = useState<string[]>([])
   const [addKwKey, setAddKwKey] = useState(0)
+  const [addMemoryScope, setAddMemoryScope] = useState<'private' | 'linked'>('private')
+  const [addLinkedRootId, setAddLinkedRootId] = useState<string | null>(null)
+  const addTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  useEffect(() => {
+    if (!addOpen || !selectedId) {
+      setAddLinkedRootId(null)
+      return
+    }
+    if (addMemoryScope !== 'linked') {
+      setAddLinkedRootId(null)
+      return
+    }
+    let cancelled = false
+    void resolveOfflineDatingArchiveContext(selectedId).then((ctx) => {
+      if (!cancelled) setAddLinkedRootId(ctx?.archiveCharacterId?.trim() || selectedId)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [addOpen, selectedId, addMemoryScope])
+
+  const addPlaceholderPreview = useMemoryDraftPlaceholderPreview({
+    draft: addDraft,
+    characterId: addOpen ? selectedId : null,
+    memoryScope: addMemoryScope === 'linked' ? 'linked' : 'private',
+    linkedFromCharacterId: addLinkedRootId,
+  })
+
+  const editPlaceholderPreview = useMemoryDraftPlaceholderPreview({
+    draft: editDraft,
+    characterId: editRow?.characterId ?? null,
+    memoryScope: editRow?.memoryScope === 'linked' ? 'linked' : 'private',
+    linkedFromCharacterId: editRow?.linkedFromCharacterId,
+    involvedCharIds: editRow?.involvedCharIds,
+  })
 
   const saveAdd = async () => {
     if (!selectedId) return
@@ -186,14 +242,31 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
     const mode: CharacterMemoryTriggerMode = addTriggerMode === 'always' ? 'always' : 'keyword'
     const normalized = [...new Set(addKeywords.map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean))]
     const kws = normalized.length ? normalized : undefined
+    const scope = addMemoryScope
+    let content = t.slice(0, 4000)
+    let linkedFromCharacterId: string | undefined
+    if (scope === 'linked') {
+      const ctx = await resolveOfflineDatingArchiveContext(selectedId)
+      linkedFromCharacterId = ctx?.archiveCharacterId?.trim() || selectedId
+      content = composeMemoryWithSourcePrefix(
+        {
+          hasOnlineTag: false,
+          hasGroupChatTag: false,
+          hasOfflineTag: false,
+          hasLinkedOfflineTag: true,
+        },
+        t,
+      ).slice(0, 4000)
+    }
     await personaDb.upsertCharacterMemory({
       id: uid('mem'),
       characterId: selectedId,
-      content: t.slice(0, 4000),
+      content,
       createdAt: now,
       updatedAt: now,
       isAutoGenerated: false,
-      memoryScope: 'private',
+      memoryScope: scope === 'linked' ? 'linked' : 'private',
+      ...(linkedFromCharacterId ? { linkedFromCharacterId } : {}),
       memoryTriggerMode: mode,
       memoryTriggerCategory: undefined,
       memoryTriggerPrecise: undefined,
@@ -283,7 +356,29 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
           </p>
         ) : (
           <>
-            <div className="mb-3 flex justify-end">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex rounded-[10px] border border-neutral-100 bg-neutral-50 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setSubTab('own')}
+                  className={`rounded-[8px] px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                    subTab === 'own' ? 'bg-white text-neutral-950 shadow-sm' : 'text-neutral-500 hover:text-neutral-800'
+                  }`}
+                >
+                  自有记忆（{activeOwnList.length}）
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubTab('linked')}
+                  className={`rounded-[8px] px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                    subTab === 'linked'
+                      ? 'bg-white text-neutral-950 shadow-sm'
+                      : 'text-neutral-500 hover:text-neutral-800'
+                  }`}
+                >
+                  关联记忆（{activeLinkedList.length}）
+                </button>
+              </div>
               <Pressable
                 type="button"
                 onClick={() => {
@@ -291,6 +386,7 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
                   setAddTriggerMode('keyword')
                   setAddKeywords([])
                   setAddKwKey((k) => k + 1)
+                  setAddMemoryScope(subTab === 'linked' ? 'linked' : 'private')
                   setAddOpen(true)
                 }}
                 className="inline-flex items-center gap-1.5 rounded-[10px] border border-neutral-200 bg-white px-3 py-2 text-[13px] font-medium text-neutral-800 shadow-sm transition-colors hover:border-neutral-300 hover:bg-neutral-50"
@@ -299,13 +395,17 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
                 添加记忆
               </Pressable>
             </div>
-            {activeList.length === 0 ? (
+            {displayedList.length === 0 ? (
               <p className="py-12 text-center text-[13px] text-neutral-400">
-                {searchQuery.trim() ? '无匹配记忆' : '暂无私人记忆'}
+                {searchQuery.trim()
+                  ? '无匹配记忆'
+                  : subTab === 'linked'
+                    ? '暂无关联记忆（来自绑定主角线下剧情中与本角色相关的摘录）'
+                    : '暂无私人记忆'}
               </p>
             ) : (
               <motion.ul className="flex flex-col gap-3" variants={listVariants} initial="hidden" animate="show">
-                {activeList.map((mem) => (
+                {displayedList.map((mem) => (
                   <motion.li key={mem.id} variants={itemVariants} layout>
                     <div className="group relative rounded-[12px] border border-neutral-100 bg-white p-4 shadow-sm">
                       <div className="flex items-start justify-between gap-3">
@@ -339,7 +439,7 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
                         </div>
                       </div>
                       <div className="mt-3">
-                        <MemoryCardBody content={mem.content} clamp />
+                        <MemoryCardBody memory={mem} clamp />
                         <p className="mt-2 text-[12px] leading-snug text-neutral-500">
                           {formatMemoryTriggerSummaryLine(mem)}
                         </p>
@@ -354,29 +454,51 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
       </main>
       </div>
 
-      {addOpen ? (
-        <div
-          className="fixed inset-0 z-[140] flex items-center justify-center bg-black/40 px-4"
-          role="presentation"
-          onClick={() => setAddOpen(false)}
-        >
+      {addOpen
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[50000] flex min-h-0 items-center justify-center overflow-y-auto overscroll-contain bg-black/40 px-4 py-10 sm:py-14"
+              role="presentation"
+              onClick={() => setAddOpen(false)}
+            >
           <div
             role="dialog"
             aria-modal
-            className="max-h-[min(90vh,720px)] w-full max-w-[400px] overflow-y-auto rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
+            className="my-auto max-h-[min(90dvh,720px)] w-full max-w-[400px] overflow-y-auto rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <p className="text-[15px] font-medium text-neutral-950">添加记忆</p>
             <p className="mt-1 text-[12px] leading-relaxed text-neutral-400">
-              可直接输入正文；需要时在文首加
-              <span className="text-neutral-600"> [私聊] [群聊] [线下] </span>
-              标记来源（顺序须一致）。
+              {addMemoryScope === 'linked' ? (
+                <>
+                  本条将存入「关联记忆」并自动加上
+                  <span className="text-neutral-600"> [关联线下] </span>
+                  前缀；正文写线下情境中与该角色有关的事实即可。
+                </>
+              ) : (
+                <>
+                  可直接输入正文；需要时在文首加
+                  <span className="text-neutral-600"> [私聊] [群聊] [线下] [关联线下] </span>
+                  标记来源（顺序须一致）。
+                </>
+              )}
             </p>
             <textarea
+              ref={addTextareaRef}
               value={addDraft}
               onChange={(e) => setAddDraft(e.target.value)}
               placeholder="输入记忆内容…"
               className="mt-3 min-h-[160px] w-full resize-y rounded-[10px] border border-neutral-100 bg-neutral-50 px-3 py-2 text-[14px] text-neutral-800 outline-none focus:border-neutral-950"
+            />
+            <MemoryManualPlaceholderToolbar
+              textareaRef={addTextareaRef}
+              value={addDraft}
+              onChange={setAddDraft}
+              previewExpanded={addPlaceholderPreview.expanded}
+              previewLoading={addPlaceholderPreview.loading}
+              placeholderCharacterId={addOpen ? selectedId : null}
+              memoryScope={addMemoryScope === 'linked' ? 'linked' : 'private'}
+              involvedCharIds={null}
             />
             <MemoryManualKeywordEditor
               key={addKwKey}
@@ -403,26 +525,40 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
               </Pressable>
             </div>
           </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
 
-      {editRow ? (
-        <div
-          className="fixed inset-0 z-[140] flex items-center justify-center bg-black/40 px-4"
-          role="presentation"
-          onClick={() => setEditRow(null)}
-        >
+      {editRow
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[50000] flex min-h-0 items-center justify-center overflow-y-auto overscroll-contain bg-black/40 px-4 py-10 sm:py-14"
+              role="presentation"
+              onClick={() => setEditRow(null)}
+            >
           <div
             role="dialog"
             aria-modal
-            className="max-h-[min(90vh,720px)] w-full max-w-[400px] overflow-y-auto rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
+            className="my-auto max-h-[min(90dvh,720px)] w-full max-w-[400px] overflow-y-auto rounded-[14px] border border-neutral-100 bg-white p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <p className="text-[15px] font-medium text-neutral-950">编辑记忆</p>
             <textarea
+              ref={editTextareaRef}
               value={editDraft}
               onChange={(e) => setEditDraft(e.target.value)}
               className="mt-3 min-h-[160px] w-full resize-y rounded-[10px] border border-neutral-100 bg-neutral-50 px-3 py-2 text-[14px] text-neutral-800 outline-none focus:border-neutral-950"
+            />
+            <MemoryManualPlaceholderToolbar
+              textareaRef={editTextareaRef}
+              value={editDraft}
+              onChange={setEditDraft}
+              previewExpanded={editPlaceholderPreview.expanded}
+              previewLoading={editPlaceholderPreview.loading}
+              placeholderCharacterId={editRow?.characterId ?? null}
+              memoryScope={editRow?.memoryScope === 'linked' ? 'linked' : 'private'}
+              involvedCharIds={editRow?.involvedCharIds ?? null}
             />
             <MemoryManualKeywordEditor
               key={editKwKey}
@@ -449,8 +585,10 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
               </Pressable>
             </div>
           </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

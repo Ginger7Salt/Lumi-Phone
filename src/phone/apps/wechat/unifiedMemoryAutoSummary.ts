@@ -1,18 +1,34 @@
 import type { ApiConfig } from '../api/types'
-import { findGroupMember } from './groupChatUtils'
-import { personaDb, pullPhoneKvWithLocalStorageLegacy } from './newFriendsPersona/idb'
-import type { GroupChatRow, GroupMember, WeChatChatMessage } from './newFriendsPersona/types'
 import {
+  collectCharacterMentionSearchTokens,
+  resolveOfflineDatingArchiveContext,
+  textMentionsAnyToken,
+} from './dating/offlineDatingArchiveResolve'
+import { splitDatingAssistantOutput } from './dating/plotCoT'
+import { findGroupMember } from './groupChatUtils'
+import { buildNpcLinkedOfflineExcerptUserBlock } from './memory/linkedOfflineExcerptsForAutoSummary'
+import { personaDb, pullPhoneKvWithLocalStorageLegacy } from './newFriendsPersona/idb'
+import type { Character, GroupChatRow, GroupMember, WeChatChatMessage } from './newFriendsPersona/types'
+import {
+  parseUnifiedMemorySummaryWithLinkedModelOutput,
   requestGroupChatMemorySummary,
-  requestUnifiedMemorySummary,
+  requestUnifiedMemorySummaryWithLinked,
   type ChatTranscriptTurn,
+  type UnifiedMemorySummaryWithLinkedResult,
 } from './wechatChatAi'
 import {
   groupMemoryBucketCharacterId,
+  resolvePrivateChatSessionPlayerIdentityId,
+  wechatConversationKey,
   WECHAT_GROUP_BOT_CHARACTER_ID,
   WECHAT_GROUP_USER_CHAR_ID,
 } from './wechatConversationKey'
 import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtils'
+import {
+  sanitizeGroupMemorySummaryBody,
+  sanitizeUnifiedLinkedMemoryBody,
+  sanitizeUnifiedPrimaryMemoryBody,
+} from './memory/autoSummaryPlaceholderSanitize'
 
 const DATING_ARCHIVES_KV = 'wechat-dating-archives-v1'
 
@@ -25,6 +41,17 @@ export type DatingPlotSnapshotItem = {
   type: string
   content: string
   timestamp?: number
+  /** 剧情气泡 id；约会关联记忆按轮覆盖时需要 */
+  id?: string
+}
+
+/** 从快照末尾向前找最近一条 AI 剧情 id（用于约会关联记忆按气泡覆盖） */
+export function lastAiDatingPlotIdInSnapshot(plots: DatingPlotSnapshotItem[]): string | undefined {
+  for (let i = plots.length - 1; i >= 0; i--) {
+    const p = plots[i]
+    if (p?.type === 'ai' && typeof p.id === 'string' && p.id.trim()) return p.id.trim()
+  }
+  return undefined
 }
 
 function extractPlotsFromArchives(raw: unknown, characterId: string): DatingPlotSnapshotItem[] {
@@ -41,9 +68,10 @@ function extractPlotsFromArchives(raw: unknown, characterId: string): DatingPlot
     const content = typeof o.content === 'string' ? o.content : ''
     const timestamp =
       typeof o.timestamp === 'number' && Number.isFinite(o.timestamp) ? o.timestamp : 1
+    const id = typeof o.id === 'string' && o.id.trim() ? o.id.trim() : undefined
     if (!content.trim()) continue
     if (type !== 'player' && type !== 'ai') continue
-    out.push({ type, content, timestamp })
+    out.push({ type, content, timestamp, ...(id ? { id } : {}) })
   }
   return out
 }
@@ -58,27 +86,44 @@ export async function loadDatingPlotsFromKv(characterId: string): Promise<Dating
   return extractPlotsFromArchives(raw, cid)
 }
 
-/**
- * 在「已达到自动总结间隔」之后调用（调用方须先 `bumpMemoryAiRoundCount` 且得到 `shouldSummarize: true`）。
- * 合并未游标覆盖的微信消息与约会线下剧情，写入一条长期记忆，并分别推进两条游标。
- * 若线上与线下均无新材料，则回滚计数，避免白消耗一次间隔。
- */
-export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
-  apiConfig: ApiConfig | null
+/** 供约会「剧情+合并记忆」同一 HTTP 或独立总结共用：游标后的线上 / 线下与人脉摘录等。 */
+export type UnifiedMemoryGatherResult = {
   conversationKey: string
   characterId: string
   characterRealName: string
-  /** 约会页刚写入、KV 可能尚未同步时，传入当前完整 plots */
-  datingPlotsSnapshot?: DatingPlotSnapshotItem[] | null
-}): Promise<void> {
-  const cid = params.characterId.trim()
-  const ck = params.conversationKey.trim()
-  if (!cid || !ck) return
+  hadOnline: boolean
+  hadOfflinePrior: boolean
+  onlineTranscript: ChatTranscriptTurn[]
+  offlinePlotsPrior: DatingPlotSnapshotItem[]
+  offlineBlock: string
+  npcLinked: { linkedArchiveOwnerId: string; allowedNpcIds: Set<string>; block: string }
+  plotsArchiveId: string
+  chunkMessages: WeChatChatMessage[]
+}
 
-  const cursorTs = await personaDb.getMemorySummaryCursorTimestamp(ck)
+export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
+  characterId: string
+  characterRealName: string
+  datingPlotsSnapshot: DatingPlotSnapshotItem[] | null | undefined
+  /**
+   * 与 ChatRoom 私聊一致：角色未绑定身份时用于拼 `conversationKey` 的「当前会话身份」；
+   * 未传时回退为全局当前身份（IndexedDB），再否则 `__none__`。
+   */
+  sessionPlayerIdentityId?: string | null
+}): Promise<UnifiedMemoryGatherResult | null> {
+  const cid = params.characterId.trim()
+  if (!cid) return null
+  const row = await personaDb.getCharacter(cid)
+  const explicit = params.sessionPlayerIdentityId?.trim() || ''
+  const fromGlobal = (await personaDb.getCurrentIdentityId()).trim()
+  const appHint = explicit || fromGlobal || null
+  const pidForConv = resolvePrivateChatSessionPlayerIdentityId(row, appHint)
+  const conversationKey = wechatConversationKey(cid, pidForConv)
+
+  const cursorTs = await personaDb.getMemorySummaryCursorTimestamp(conversationKey)
   const fromTs = (cursorTs ?? 0) + 1
   const chunkMessages = await personaDb.listWeChatChatMessagesFromTimestampAsc({
-    conversationKey: ck,
+    conversationKey,
     fromTimestampInclusive: fromTs,
     limit: 500,
   })
@@ -94,15 +139,18 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
     return [turn]
   })
 
-  const datingCursor = await personaDb.getDatingPlotSummaryCursor(cid)
+  const archCtx = await resolveOfflineDatingArchiveContext(cid)
+  const plotsArchiveId = archCtx?.archiveCharacterId?.trim() || cid
+
+  const datingCursor = await personaDb.getDatingPlotSummaryCursor(plotsArchiveId)
   const dMin = datingCursor ?? 0
 
-  let plotsSource: DatingPlotSnapshotItem[] =
+  const plotsSource: DatingPlotSnapshotItem[] =
     params.datingPlotsSnapshot && params.datingPlotsSnapshot.length > 0
       ? params.datingPlotsSnapshot
-      : await loadDatingPlotsFromKv(cid)
+      : await loadDatingPlotsFromKv(plotsArchiveId)
 
-  const offlinePlots = plotsSource
+  const offlinePlotsPrior = plotsSource
     .filter((p) => {
       const ts =
         typeof p.timestamp === 'number' && Number.isFinite(p.timestamp) ? p.timestamp : 1
@@ -112,8 +160,10 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
 
   const peer = params.characterRealName.trim() || '对方'
   const offlineLines: string[] = []
-  for (const p of offlinePlots) {
-    const t = String(p.content || '').trim()
+  for (const p of offlinePlotsPrior) {
+    let t = String(p.content || '').trim()
+    if (!t) continue
+    if (p.type === 'ai') t = splitDatingAssistantOutput(t).content.trim()
     if (!t) continue
     if (p.type === 'player') offlineLines.push(`我：${t}`)
     else offlineLines.push(`${peer}：${t}`)
@@ -121,67 +171,334 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
   const offlineBlock = offlineLines.join('\n')
 
   const hadOnline = onlineTranscript.length > 0
-  const hadOffline = offlineBlock.trim().length > 0
+  const hadOfflinePrior = offlineBlock.trim().length > 0
 
-  if (!hadOnline && !hadOffline) {
-    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
-    return
-  }
-
-  const summary = await requestUnifiedMemorySummary({
-    apiConfig: params.apiConfig,
-    onlineTranscript,
-    offlineTextBlock: hadOffline ? offlineBlock : '',
+  const npcLinked = await buildNpcLinkedOfflineExcerptUserBlock({
+    archiveCharacterId: plotsArchiveId,
+    perspectiveCharacterId: cid,
+    offlinePlots: offlinePlotsPrior,
   })
 
-  let body = summary.content.trim().slice(0, 2000)
-  if (!body) {
-    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
-    return
+  return {
+    conversationKey,
+    characterId: cid,
+    characterRealName: peer,
+    hadOnline,
+    hadOfflinePrior,
+    onlineTranscript,
+    offlinePlotsPrior,
+    offlineBlock,
+    npcLinked: {
+      linkedArchiveOwnerId: npcLinked.linkedArchiveOwnerId,
+      allowedNpcIds: npcLinked.allowedNpcIds,
+      block: npcLinked.block,
+    },
+    plotsArchiveId,
+    chunkMessages,
+  }
+}
+
+/** 删除约会某轮关联记忆时须匹配的 `linkedFromCharacterId` 集合（存档根 / 线下 KV id / 当前视角人设 id 可能不一致） */
+export function linkedMemoryOwnerIdsForGather(gather: UnifiedMemoryGatherResult): string[] {
+  const a = gather.npcLinked.linkedArchiveOwnerId.trim()
+  const b = gather.plotsArchiveId.trim()
+  const c = gather.characterId.trim()
+  return [...new Set([a, b, c].filter(Boolean))]
+}
+
+/**
+ * 将已解析的合并总结写入 DB 并推进游标（约会同一 HTTP 尾段 JSON 与独立 {@link requestUnifiedMemorySummaryWithLinked} 共用）。
+ */
+export async function applyUnifiedMemoryFromParsedSummary(
+  summary: UnifiedMemorySummaryWithLinkedResult,
+  gather: UnifiedMemoryGatherResult,
+  opts: {
+    offlinePlotsForCursorAdvance: DatingPlotSnapshotItem[]
+    tagOfflineIncludesNewAiTurn: boolean
+    skipConversationRoundBump?: boolean
+    /**
+     * 约会：未到「自动总结间隔」时只落人脉 linked，不写主角 primary，也不推进私聊/约会总结游标，
+     * 以便达到间隔时仍能合并未游标覆盖的线上+线下再写 primary。
+     */
+    deferPrimaryAndUnifiedCursors?: boolean
+    /** 当前这段 AI 剧情气泡 id：写入前会先删掉本轮此前自动生成的关联记忆，便于「重新生成」覆盖 */
+    datingAiPlotId?: string | null
+  },
+): Promise<boolean> {
+  const skipBump = opts.skipConversationRoundBump === true
+  const defer = opts.deferPrimaryAndUnifiedCursors === true
+  const cid = gather.characterId
+  const ck = gather.conversationKey
+  const linkedOwnerId = gather.npcLinked.linkedArchiveOwnerId.trim() || gather.plotsArchiveId
+  const archiveForSanitize = gather.plotsArchiveId.trim() || linkedOwnerId
+
+  let primaryBody = summary.primary.content.trim().slice(0, 2000)
+  if (primaryBody) {
+    try {
+      primaryBody = (await sanitizeUnifiedPrimaryMemoryBody(primaryBody, cid, archiveForSanitize)).slice(0, 2000)
+    } catch {
+      /* 保持原文，避免总结整体失败 */
+    }
+  }
+  const allowedNpc = gather.npcLinked.allowedNpcIds
+  const networkRows = await personaDb.listNpcsFor(linkedOwnerId)
+  const networkNpcIdSet = new Set(networkRows.map((n) => n.id.trim()).filter(Boolean))
+  /** 用于摘录漏检时：线下 + 人脉摘录 + 线上未总结摘录 是否出现该 NPC 可检索称呼 */
+  const onlineMentionBits = gather.onlineTranscript
+    .map((t) => String(t.text || '').trim())
+    .filter(Boolean)
+    .join('\n')
+  const offlineMentionCorpus = `${gather.offlineBlock}\n${gather.npcLinked.block}\n${onlineMentionBits}`.trim()
+
+  const seenNpc = new Set<string>()
+  const linkedWrites: typeof summary.linked = []
+  for (const entry of summary.linked) {
+    const id = entry.characterId.trim()
+    if (!id || !entry.content.trim()) continue
+    if (seenNpc.has(id)) continue
+    if (id === cid) continue
+
+    let accept = allowedNpc.has(id)
+    if (!accept && networkNpcIdSet.has(id) && offlineMentionCorpus.length > 0) {
+      const npcRow = networkRows.find((n) => n.id.trim() === id) as Character | undefined
+      const toks = collectCharacterMentionSearchTokens(npcRow ?? null)
+      if (toks.length > 0 && textMentionsAnyToken(offlineMentionCorpus, toks)) accept = true
+    }
+    if (!accept) continue
+    seenNpc.add(id)
+    linkedWrites.push(entry)
   }
 
-  const tagPrefix =
-    `${hadOnline ? '[私聊]' : ''}${hadOffline ? '[线下]' : ''}${hadOnline || hadOffline ? ' ' : ''}`
-  const trimmed = tagPrefix + body
+  const memSettingsForLinked = await personaDb.getMemorySettings()
+  const linkedMemoryPersistEnabled = memSettingsForLinked.linkedMemoryAutoSummaryEnabled !== false
+  const linkedWritesToPersist = linkedMemoryPersistEnabled ? linkedWrites : []
+
+  const hadOfflineTag = gather.hadOfflinePrior || opts.tagOfflineIncludesNewAiTurn
+  const datingRound = opts.datingAiPlotId?.trim()
+  const linkedDeleteOwners = linkedMemoryOwnerIdsForGather(gather)
+
+  /** 未到间隔且无 linked：若带约会 plot id，仍清空该轮旧关联记忆（重新生成后模型未再给 linked） */
+  if (defer && linkedWritesToPersist.length === 0) {
+    if (datingRound && linkedDeleteOwners.length) {
+      await personaDb.deleteAutoLinkedMemoriesForDatingRoundMulti(linkedDeleteOwners, datingRound)
+      return true
+    }
+    return false
+  }
+
+  const wroteAny = defer
+    ? linkedWritesToPersist.length > 0
+    : !!(primaryBody || linkedWritesToPersist.length)
+
+  if (!wroteAny) {
+    if (!skipBump) await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    else {
+      const plots = opts.offlinePlotsForCursorAdvance
+      if (
+        plots.length > 0 &&
+        (gather.hadOfflinePrior || opts.tagOfflineIncludesNewAiTurn)
+      ) {
+        const maxPlotTs = Math.max(
+          ...plots.map((p) =>
+            typeof p.timestamp === 'number' && Number.isFinite(p.timestamp) ? p.timestamp : 1,
+          ),
+        )
+        if (maxPlotTs > 0) {
+          await personaDb.setDatingPlotSummaryCursor(gather.plotsArchiveId, maxPlotTs)
+        }
+      }
+      if (skipBump) await personaDb.resetMemoryAiRoundCountForConversation(ck)
+    }
+    return false
+  }
+
+  if (datingRound && linkedDeleteOwners.length) {
+    await personaDb.deleteAutoLinkedMemoriesForDatingRoundMulti(linkedDeleteOwners, datingRound)
+  }
 
   const now = Date.now()
   const triggerMode = await resolveAutoSummaryMemoryTriggerMode()
-  const kwBackup = buildAutoSummaryMemoryKeywordsBackup({
-    memoryTriggerCategory: summary.memoryTriggerCategory,
-    memoryTriggerPrecise: summary.memoryTriggerPrecise,
-    memoryTriggerEmotionNeed: summary.memoryTriggerEmotionNeed,
-    memorySupplementKeywords: summary.memorySupplementKeywords,
-  })
-  await personaDb.upsertCharacterMemory({
-    id: `mem-${now}-${Math.random().toString(36).slice(2, 9)}`,
-    characterId: cid,
-    content: trimmed,
-    createdAt: now,
-    updatedAt: now,
-    isAutoGenerated: true,
-    memoryTriggerMode: triggerMode,
-    memoryTriggerCategory: summary.memoryTriggerCategory,
-    memoryTriggerPrecise: summary.memoryTriggerPrecise,
-    memoryTriggerEmotionNeed: summary.memoryTriggerEmotionNeed,
-    memoryKeywords: kwBackup,
-  })
 
-  if (hadOnline && chunkMessages.length) {
-    const latestTs = chunkMessages[chunkMessages.length - 1]!.timestamp
+  if (!defer && primaryBody) {
+    const tagPrefix =
+      `${gather.hadOnline ? '[私聊]' : ''}${hadOfflineTag ? '[线下]' : ''}${gather.hadOnline || hadOfflineTag ? ' ' : ''}`
+    const trimmed = tagPrefix + primaryBody
+    const kwBackup = buildAutoSummaryMemoryKeywordsBackup({
+      memoryTriggerCategory: summary.primary.memoryTriggerCategory,
+      memoryTriggerPrecise: summary.primary.memoryTriggerPrecise,
+      memoryTriggerEmotionNeed: summary.primary.memoryTriggerEmotionNeed,
+      memorySupplementKeywords: summary.primary.memorySupplementKeywords,
+    })
+    await personaDb.upsertCharacterMemory({
+      id: `mem-${now}-${Math.random().toString(36).slice(2, 9)}`,
+      characterId: cid,
+      content: trimmed,
+      createdAt: now,
+      updatedAt: now,
+      isAutoGenerated: true,
+      memoryTriggerMode: triggerMode,
+      memoryTriggerCategory: summary.primary.memoryTriggerCategory,
+      memoryTriggerPrecise: summary.primary.memoryTriggerPrecise,
+      memoryTriggerEmotionNeed: summary.primary.memoryTriggerEmotionNeed,
+      memoryKeywords: kwBackup,
+    })
+  }
+
+  for (const entry of linkedWritesToPersist) {
+    let lb = entry.content.trim().slice(0, 2000)
+    if (!lb) continue
+    try {
+      lb = (
+        await sanitizeUnifiedLinkedMemoryBody(lb, entry.characterId.trim(), linkedOwnerId, cid)
+      ).slice(0, 2000)
+    } catch {
+      /* 保持原文 */
+    }
+    const trimmedLinked = `[关联线下] ${lb}`
+    const kwLinked = buildAutoSummaryMemoryKeywordsBackup({
+      memoryTriggerCategory: entry.memoryTriggerCategory,
+      memoryTriggerPrecise: entry.memoryTriggerPrecise,
+      memoryTriggerEmotionNeed: entry.memoryTriggerEmotionNeed,
+      memorySupplementKeywords: entry.memorySupplementKeywords,
+    })
+    const npcCid = entry.characterId.trim()
+    const stableLinkedId =
+      datingRound && linkedOwnerId
+        ? `mem-dlk--${encodeURIComponent(linkedOwnerId)}--${encodeURIComponent(datingRound)}--${encodeURIComponent(npcCid)}`
+        : `mem-l-${npcCid}-${now}-${Math.random().toString(36).slice(2, 9)}`
+    await personaDb.upsertCharacterMemory({
+      id: stableLinkedId,
+      characterId: npcCid,
+      content: trimmedLinked,
+      createdAt: now,
+      updatedAt: now,
+      isAutoGenerated: true,
+      memoryScope: 'linked',
+      linkedFromCharacterId: linkedOwnerId,
+      ...(datingRound ? { datingLinkedSourcePlotId: datingRound } : {}),
+      memoryTriggerMode: triggerMode,
+      memoryTriggerCategory: entry.memoryTriggerCategory,
+      memoryTriggerPrecise: entry.memoryTriggerPrecise,
+      memoryTriggerEmotionNeed: entry.memoryTriggerEmotionNeed,
+      memoryKeywords: kwLinked,
+    })
+  }
+
+  if (!defer && gather.hadOnline && gather.chunkMessages.length) {
+    const latestTs = gather.chunkMessages[gather.chunkMessages.length - 1]!.timestamp
     if (typeof latestTs === 'number' && Number.isFinite(latestTs)) {
       await personaDb.setMemorySummaryCursorTimestamp(ck, latestTs)
     }
   }
 
-  if (hadOffline && offlinePlots.length) {
+  const plotsCursor = opts.offlinePlotsForCursorAdvance
+  if (
+    !defer &&
+    plotsCursor.length > 0 &&
+    (gather.hadOfflinePrior || opts.tagOfflineIncludesNewAiTurn)
+  ) {
     const maxPlotTs = Math.max(
-      ...offlinePlots.map((p) =>
+      ...plotsCursor.map((p) =>
         typeof p.timestamp === 'number' && Number.isFinite(p.timestamp) ? p.timestamp : 1,
       ),
     )
     if (maxPlotTs > 0) {
-      await personaDb.setDatingPlotSummaryCursor(cid, maxPlotTs)
+      await personaDb.setDatingPlotSummaryCursor(gather.plotsArchiveId, maxPlotTs)
     }
+  }
+
+  if (skipBump) {
+    await personaDb.resetMemoryAiRoundCountForConversation(ck)
+  }
+
+  return wroteAny
+}
+
+/** 解析约会同一 HTTP 返回尾部的合并记忆 JSON 并落库；失败返回 false（调用方可改跑独立总结）。 */
+export async function tryApplyDatingCombinedMemoryJsonTail(params: {
+  memoryJsonText: string
+  gather: UnifiedMemoryGatherResult
+  offlinePlotsForCursorAdvance: DatingPlotSnapshotItem[]
+  /**
+   * true：本已达「自动总结间隔」，写主角 primary 并推进私聊/约会游标（与私聊一致）。
+   * false：仅写入校验通过的 linked，不写 primary、不推进游标。
+   */
+  writePrimaryAndAdvanceCursors: boolean
+  /** 当前 AI 剧情气泡 id；重新生成同一段时会先删掉该轮旧关联记忆 */
+  datingAiPlotId?: string | null
+}): Promise<boolean> {
+  try {
+    const summary = parseUnifiedMemorySummaryWithLinkedModelOutput(params.memoryJsonText)
+    const full = params.writePrimaryAndAdvanceCursors === true
+    return await applyUnifiedMemoryFromParsedSummary(summary, params.gather, {
+      offlinePlotsForCursorAdvance: params.offlinePlotsForCursorAdvance,
+      tagOfflineIncludesNewAiTurn: true,
+      skipConversationRoundBump: false,
+      deferPrimaryAndUnifiedCursors: !full,
+      datingAiPlotId: params.datingAiPlotId,
+    })
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 在「已达到自动总结间隔」之后调用（调用方须先 `bumpMemoryAiRoundCount` 且得到 `shouldSummarize: true`）。
+ * 合并未游标覆盖的微信消息与约会线下剧情，写入一条长期记忆，并分别推进两条游标。
+ * 若线上与线下均无新材料，则回滚计数，避免白消耗一次间隔。
+ */
+export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
+  apiConfig: ApiConfig | null
+  /** 保留兼容；回滚与游标一律使用 gather 内解析的会话键（与私聊列表/ChatRoom 一致） */
+  conversationKey?: string
+  characterId: string
+  characterRealName: string
+  /** 约会页刚写入、KV 可能尚未同步时，传入当前完整 plots */
+  datingPlotsSnapshot?: DatingPlotSnapshotItem[] | null
+  /** 与 ChatRoom 传入的 `playerIdentityId`（chatRoute 会话身份）对齐，避免未绑身份时错用 `__none__` 键 */
+  sessionPlayerIdentityId?: string | null
+  /**
+   * 约会页在每段剧情生成后触发：不消耗「私聊 N 轮一条总结」计数，失败时也不回滚该计数；
+   * 成功后清零该会话计数，避免与已合并进总结的私聊气泡错位。
+   */
+  skipConversationRoundBump?: boolean
+  /** 约会补跑总结时传入，用于覆盖该 AI 轮次旧关联记忆 */
+  datingAiPlotId?: string | null
+}): Promise<void> {
+  const cid = params.characterId.trim()
+  const skipBump = params.skipConversationRoundBump === true
+  if (!cid) return
+
+  const gather = await gatherUnifiedMemoryInputsForDatingTurn({
+    characterId: cid,
+    characterRealName: params.characterRealName,
+    datingPlotsSnapshot: params.datingPlotsSnapshot ?? null,
+    sessionPlayerIdentityId: params.sessionPlayerIdentityId ?? null,
+  })
+  if (!gather) return
+  const ck = gather.conversationKey
+
+  if (!gather.hadOnline && !gather.hadOfflinePrior) {
+    if (!skipBump) await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    return
+  }
+
+  const summary = await requestUnifiedMemorySummaryWithLinked({
+    apiConfig: params.apiConfig,
+    onlineTranscript: gather.onlineTranscript,
+    offlineTextBlock: gather.hadOfflinePrior ? gather.offlineBlock : '',
+    npcLinkedExcerptsBlock: gather.npcLinked.block,
+  })
+
+  const ok = await applyUnifiedMemoryFromParsedSummary(summary, gather, {
+    offlinePlotsForCursorAdvance: gather.offlinePlotsPrior,
+    tagOfflineIncludesNewAiTurn: false,
+    skipConversationRoundBump: skipBump,
+    datingAiPlotId: params.datingAiPlotId,
+  })
+
+  if (!ok && !skipBump) {
+    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
   }
 }
 
@@ -298,9 +615,15 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
     apiConfig: params.apiConfig,
     onlineTranscript,
     groupArchiveBlock: hadArchive ? archiveBlock : '',
+    group,
   })
 
-  const body = summary.content.trim().slice(0, 2000)
+  let body = summary.content.trim().slice(0, 2000)
+  try {
+    body = (await sanitizeGroupMemorySummaryBody(body, group, pid)).slice(0, 2000)
+  } catch {
+    /* 保持原文 */
+  }
   if (!body) {
     await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
     return

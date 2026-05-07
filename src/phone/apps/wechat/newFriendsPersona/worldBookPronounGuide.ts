@@ -1,60 +1,44 @@
 import type { WorldBookPronounGuide } from './types'
 
-/** 注入世界书全文时：角色卡 vs 玩家身份卡（同 struct，人称默认不同） */
+/** 注入世界书全文时：角色卡 vs 玩家身份卡（历史字段名保留） */
 export type WorldBookPromptVoice = 'character_card' | 'player_identity'
 
 export function normalizeWorldBookPronounGuide(v: unknown): WorldBookPronounGuide {
   if (v === 'user_as_i' || v === 'third_person') return v
-  // 旧版「混杂」已移除，读库时归入常规视角
   if (v === 'mixed_explicit') return 'default'
   return 'default'
 }
 
-function safeSubjectName(name: string, fallback: string): string {
-  const t = String(name ?? '').trim()
-  return t || fallback
-}
+/** 角色人设世界书：占位符在注入前按「当前绑定人设 + 该人设绑定的玩家身份」展开 */
+const CHARACTER_WB_PLACEHOLDER_NOTE =
+  '（占位符「{{char}}」=当前会话绑定人设的真实姓名，「{{user}}」=该人设绑定的玩家身份姓名；注入前替换，避免与角色设定混淆。）'
+
+/** 玩家身份世界书：条目即本人设定，不作占位符与人称约定 */
+const PLAYER_IDENTITY_WB_NOTE = '（玩家身份条目：正文均指玩家本人，与聊天中的虚构人设设定无关。）'
 
 /**
- * 附在单条世界书条目后，明确「我/你/他」在**本条正文**中的解读，减少模型把用户口吻误读成角色。
+ * 附在条目后；`voice` 区分身份卡条目与角色人设条目。
  */
 export function worldBookPronounGuideAnnotation(
-  guide: WorldBookPronounGuide | undefined,
-  subjectName: string,
-  voice: WorldBookPromptVoice,
+  _guide?: WorldBookPronounGuide,
+  _subjectName?: string,
+  voice?: WorldBookPromptVoice,
 ): string {
-  const g = normalizeWorldBookPronounGuide(guide)
-
-  if (voice === 'player_identity') {
-    const name = safeSubjectName(subjectName, '用户')
-    if (g === 'third_person') {
-      return `（本条代词：以第三人称描写用户「${name}」为主；勿把文内「我」默认解成其他虚构角色。）`
-    }
-    return `（本条代词：「我」=身份卡用户「${name}」本人；「你」多指对话中的对方角色。）`
-  }
-
-  const charName = safeSubjectName(subjectName, '该角色')
-  switch (g) {
-    case 'user_as_i':
-      return `（本条代词：「我」=用户/操作者本人，≠角色「${charName}」；「你」多指该角色或语境对象。理解职务、情感线、谁暗恋谁时必须先应用此条，勿将「我」误当作该角色。）`
-    case 'third_person':
-      return `（本条代词：以第三人称描写「${charName}」为主；文中「我」若出现勿一律视为该角色，须依句意判断。）`
-    case 'default':
-    default:
-      return `（本条代词：「我」=角色「${charName}」；「你」=进行对话的真人用户/操作者。）`
-  }
+  return voice === 'player_identity' ? PLAYER_IDENTITY_WB_NOTE : CHARACTER_WB_PLACEHOLDER_NOTE
 }
 
 export function formatWorldBookItemLineForPrompt(params: {
   priority: 'before' | 'after'
   name: string
   content: string
+  /** @deprecated 读库兼容；注入逻辑不再区分 */
   pronounGuide?: WorldBookPronounGuide
-  subjectName: string
-  voice: WorldBookPromptVoice
+  /** @deprecated 注入逻辑不再区分 */
+  subjectName?: string
+  voice?: WorldBookPromptVoice
 }): string {
   const pr = params.priority === 'before' ? '聊天之前' : '聊天之后'
   const body = String(params.content ?? '').trim()
-  const ann = worldBookPronounGuideAnnotation(params.pronounGuide, params.subjectName, params.voice)
-  return `- [${pr}] ${params.name}：${body}${ann ? ` ${ann}` : ''}`
+  const voice = params.voice ?? 'character_card'
+  return `- [${pr}] ${params.name}：${body} ${worldBookPronounGuideAnnotation(undefined, undefined, voice)}`
 }

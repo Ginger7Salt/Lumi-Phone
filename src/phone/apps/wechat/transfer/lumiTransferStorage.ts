@@ -2,6 +2,8 @@
  * Lumi 转账持久化：localStorage + 时间戳驱动 24h 自动退还（不依赖定时器持久化）。
  */
 
+import { parsePrivateWeChatConversationCharacterAndSession } from '../wechatConversationKey'
+
 export type LumiTransferStatus = 'pending' | 'accepted' | 'returned'
 
 export interface LumiTransferRecord {
@@ -19,8 +21,59 @@ export interface LumiTransferRecord {
 }
 
 const LS_KEY = 'wechat-lumi-transfers-v1'
+/** 一次性：把「角色→用户」旧记录里与 conversationKey 不一致的 receiverId 改回会话身份，修复详情页不显示收款按钮 */
+const RECEIVER_FIX_FLAG_KEY = 'wechat-lumi-transfers-receiver-fix-v1'
+
+function markReceiverFixMigrationDone(): void {
+  try {
+    localStorage.setItem(RECEIVER_FIX_FLAG_KEY, '1')
+  } catch {
+    /* ignore */
+  }
+}
+
+function migratePendingReceiverIdFromConversationKeyOnce(): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (localStorage.getItem(RECEIVER_FIX_FLAG_KEY) === '1') return
+  } catch {
+    return
+  }
+  let list: LumiTransferRecord[] = []
+  try {
+    const raw = localStorage.getItem(LS_KEY)
+    if (!raw) {
+      markReceiverFixMigrationDone()
+      return
+    }
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) {
+      markReceiverFixMigrationDone()
+      return
+    }
+    list = parsed.filter((x): x is LumiTransferRecord => isRecord(x))
+  } catch {
+    markReceiverFixMigrationDone()
+    return
+  }
+  let changed = false
+  for (const t of list) {
+    if (t.status !== 'pending') continue
+    const parts = parsePrivateWeChatConversationCharacterAndSession(t.conversationKey)
+    if (!parts) continue
+    if (t.senderId === parts.characterId && t.receiverId !== parts.sessionPlayerId) {
+      t.receiverId = parts.sessionPlayerId
+      changed = true
+    }
+  }
+  if (changed) {
+    writeAll(list)
+  }
+  markReceiverFixMigrationDone()
+}
 
 function readAll(): LumiTransferRecord[] {
+  migratePendingReceiverIdFromConversationKeyOnce()
   try {
     const raw = localStorage.getItem(LS_KEY)
     if (!raw) return []

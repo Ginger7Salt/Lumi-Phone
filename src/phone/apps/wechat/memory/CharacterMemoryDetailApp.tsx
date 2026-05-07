@@ -1,15 +1,20 @@
 import { ArrowLeft, BookOpen, Edit, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { WECHAT_LUMI_ASSISTANT_CONTACT } from '../../../../components/WeChatContactsInstagram'
 import { Pressable } from '../../../components/Pressable'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterMemory, CharacterMemoryTriggerMode } from '../newFriendsPersona/types'
 import { formatMemoryTriggerSummaryLine, flattenMemoryTriggerKeywords } from './memoryTriggerUtils'
+import {
+  MemoryManualPlaceholderToolbar,
+  useMemoryDraftPlaceholderPreview,
+} from './MemoryManualPlaceholderToolbar'
 import { MemoryManualKeywordEditor } from './MemoryManualKeywordEditor'
 import { MemoryTriggerModeBadge } from './MemoryTriggerModeBadge'
 import { uid } from '../newFriendsPersona/utils'
 import { WECHAT_LUMI_PEER_CHARACTER_ID } from '../wechatConversationKey'
-import { MemoryContentWithSourceBadges } from './memorySourceBadges'
+import { MemoryContentWithSourceBadgesFromRow } from './memoryContentExpanded'
 
 const COLORS = {
   bg: '#f5f5f5',
@@ -59,17 +64,24 @@ function TopBar({
 }
 
 function ModalBackdrop({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  return (
+  if (typeof document === 'undefined') return null
+  return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center px-4"
+      className="fixed inset-0 z-[50000] flex min-h-0 items-center justify-center overflow-y-auto overscroll-contain px-4 py-10 sm:py-14"
       style={{ background: 'rgba(0,0,0,0.5)' }}
       role="presentation"
       onClick={onClose}
     >
-      <div role="dialog" aria-modal className="w-full max-w-[400px]" onClick={(e) => e.stopPropagation()}>
+      <div
+        role="dialog"
+        aria-modal
+        className="my-auto w-full max-w-[400px] max-h-[min(90dvh,720px)] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -101,6 +113,20 @@ export function CharacterMemoryDetailApp({
   const [viewRow, setViewRow] = useState<CharacterMemory | null>(null)
 
   const [deleteTarget, setDeleteTarget] = useState<CharacterMemory | null>(null)
+
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const previewRowForDraft = useMemo(() => {
+    if (!editingId) return null
+    return list.find((x) => x.id === editingId) ?? null
+  }, [editingId, list])
+
+  const draftPlaceholderPreview = useMemoryDraftPlaceholderPreview({
+    draft: editDraft,
+    characterId: editOpen ? characterId : null,
+    memoryScope: previewRowForDraft?.memoryScope === 'linked' ? 'linked' : 'private',
+    linkedFromCharacterId: previewRowForDraft?.linkedFromCharacterId,
+    involvedCharIds: previewRowForDraft?.involvedCharIds,
+  })
 
   const reload = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent === true
@@ -270,7 +296,7 @@ export function CharacterMemoryDetailApp({
                             <MemoryTriggerModeBadge mode={m.memoryTriggerMode} className="mt-0.5 shrink-0 self-start" />
                             <div className="min-w-0 flex-1">
                               <p className="line-clamp-2 text-[16px] leading-snug" style={{ color: COLORS.text }}>
-                                <MemoryContentWithSourceBadges content={m.content} bodyClassName="break-words" />
+                                <MemoryContentWithSourceBadgesFromRow memory={m} bodyClassName="break-words" />
                               </p>
                               <p className="mt-1 line-clamp-2 text-[12px] leading-snug" style={{ color: COLORS.sub }}>
                                 {formatMemoryTriggerSummaryLine(m)}
@@ -315,12 +341,24 @@ export function CharacterMemoryDetailApp({
               {editingId ? '编辑记忆' : '添加记忆'}
             </p>
             <textarea
+              ref={editTextareaRef}
               value={editDraft}
               onChange={(e) => setEditDraft(e.target.value)}
               placeholder="输入记忆内容"
               rows={5}
               className="mt-4 w-full resize-none rounded-[12px] border px-4 py-3 text-[16px] leading-relaxed outline-none transition-all duration-200 ease-out focus:border-black"
               style={{ borderColor: COLORS.border, background: COLORS.card, color: COLORS.text, minHeight: 120 }}
+            />
+            <MemoryManualPlaceholderToolbar
+              textareaRef={editTextareaRef}
+              value={editDraft}
+              onChange={setEditDraft}
+              previewExpanded={draftPlaceholderPreview.expanded}
+              previewLoading={draftPlaceholderPreview.loading}
+              variant="themed"
+              placeholderCharacterId={editOpen ? characterId : null}
+              memoryScope={previewRowForDraft?.memoryScope === 'linked' ? 'linked' : 'private'}
+              involvedCharIds={previewRowForDraft?.involvedCharIds ?? null}
             />
             <MemoryManualKeywordEditor
               key={editKwEditorKey}
@@ -376,8 +414,8 @@ export function CharacterMemoryDetailApp({
               </p>
             </div>
             <p className="mt-5 px-1 text-[16px] leading-[1.6]" style={{ color: COLORS.text }}>
-              <MemoryContentWithSourceBadges
-                content={viewRow.content}
+              <MemoryContentWithSourceBadgesFromRow
+                memory={viewRow}
                 size="md"
                 bodyClassName="whitespace-pre-wrap break-words"
               />

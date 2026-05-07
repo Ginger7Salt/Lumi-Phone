@@ -57,7 +57,7 @@ import { WeChatConsoleFloatingPanel } from './WeChatConsoleFloatingPanel'
 import { WeChatConsoleProvider, useWeChatConsole } from './WeChatConsoleContext'
 import { MemoryManagementApp } from './memory/MemoryManagementApp'
 import { emitWeChatStorageChanged, personaDb } from './newFriendsPersona/idb'
-import { stripWechatGroupEventNoticePrefix } from './groupChatEventNotice'
+import { formatWeChatMessagesTabPreviewFromStoredMessageContent } from './wechatThreadPreviewText'
 import {
   WECHAT_LUMI_PEER_CHARACTER_ID,
   resolvePrivateChatSessionPlayerIdentityId,
@@ -73,6 +73,7 @@ import { useMuteStatus } from './hooks/useMuteStatus'
 import { setWeChatForegroundConversationKey } from './wechatSystemNotify'
 import { useCurrentApiConfig } from '../api/ApiSettingsContext'
 import { requestWeChatMemorySummary, requestWeChatPeerReplyBubbles, type ChatTranscriptTurn } from './wechatChatAi'
+import { sanitizePrivateMemorySummaryBody } from './memory/autoSummaryPlaceholderSanitize'
 import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtils'
 import { uid } from './newFriendsPersona/utils'
 import { formatWorldBackgroundForPrompt } from './newFriendsPersona/worldBackgroundFormat'
@@ -3717,10 +3718,19 @@ function WeChatAppInner({ onBack }: Props) {
    * - Lumi/未绑定：回退当前全局身份。
    */
   const [chatRouteIdentityId, setChatRouteIdentityId] = useState<string | null>(null)
+  /** 与 ChatRoom 入账一致：私聊用「角色绑定身份 ∪ 当前身份」，用于转账/红包等与 route.chat 绑定的子页 */
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      if (route.name !== 'chat') {
+      const chat =
+        route.name === 'chat' ||
+        route.name === 'transfer-detail' ||
+        route.name === 'lumi-transfer' ||
+        route.name === 'red-packet-send' ||
+        route.name === 'affection-pay'
+          ? route.chat
+          : null
+      if (!chat) {
         if (!cancelled) setChatRouteIdentityId(null)
         return
       }
@@ -3728,11 +3738,11 @@ function WeChatAppInner({ onBack }: Props) {
         if (!cancelled) setChatRouteIdentityId(null)
         return
       }
-      if (route.chat.kind !== 'persona') {
+      if (chat.kind !== 'persona') {
         if (!cancelled) setChatRouteIdentityId(playerIdentityId)
         return
       }
-      const ch = await personaDb.getCharacter(route.chat.characterId)
+      const ch = await personaDb.getCharacter(chat.characterId)
       const bound = ch?.playerIdentityId?.trim()
       if (!cancelled) setChatRouteIdentityId(bound || playerIdentityId)
     })()
@@ -3830,8 +3840,8 @@ function WeChatAppInner({ onBack }: Props) {
       const msgTs = last ? last.timestamp : 0
       const sortTs = Math.max(msgTs, st?.lastMessageTime ?? 0)
       if (last) {
-        const pc = stripWechatGroupEventNoticePrefix(last.content.trim())
-        preview = pc.slice(0, 48) + (pc.length > 48 ? '…' : '')
+        const pv = formatWeChatMessagesTabPreviewFromStoredMessageContent(last.content)
+        preview = pv.slice(0, 48) + (pv.length > 48 ? '…' : '')
         const d = new Date(last.timestamp)
         time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
       }
@@ -3892,8 +3902,8 @@ function WeChatAppInner({ onBack }: Props) {
         const msgTs = last ? last.timestamp : 0
         const sortTs = Math.max(msgTs, st?.lastMessageTime ?? 0)
         if (last) {
-          const pc = stripWechatGroupEventNoticePrefix(last.content.trim())
-          preview = pc.slice(0, 48) + (pc.length > 48 ? '…' : '')
+          const pv = formatWeChatMessagesTabPreviewFromStoredMessageContent(last.content)
+          preview = pv.slice(0, 48) + (pv.length > 48 ? '…' : '')
           const d = new Date(last.timestamp)
           time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
         }
@@ -3987,11 +3997,9 @@ function WeChatAppInner({ onBack }: Props) {
   const [busyDetailOpen, setBusyDetailOpen] = useState(false)
   const [chatSkipBusySignal, setChatSkipBusySignal] = useState(0)
   const routeTimeCharacterId =
-    route.name === 'red-packet-send' || route.name === 'lumi-transfer'
+    route.name === 'red-packet-send' || route.name === 'lumi-transfer' || route.name === 'transfer-detail'
       ? wxWalletPeerCharacterId(route.chat)
-      : route.name === 'transfer-detail'
-        ? WECHAT_LUMI_PEER_CHARACTER_ID
-        : null
+      : null
   const { getCurrentTimeMs } = useWeChatCurrentTime({
     characterId:
       route.name === 'chat'
@@ -4629,7 +4637,14 @@ function WeChatAppInner({ onBack }: Props) {
           }
           try {
             const memParsed = await requestWeChatMemorySummary({ apiConfig, transcript: roundTranscript })
-            const memText = memParsed.content.trim()
+            let memText = memParsed.content.trim()
+            if (memText) {
+              try {
+                memText = (await sanitizePrivateMemorySummaryBody(memText, target.characterId)).trim().slice(0, 2000)
+              } catch {
+                /* 保持模型原文 */
+              }
+            }
             if (memText) {
               const now = Date.now()
               const memSettings = await personaDb.getMemorySettings()
@@ -5136,7 +5151,7 @@ function WeChatAppInner({ onBack }: Props) {
             </motion.div>
           ) : route.name === 'transfer-detail' ? (
             <motion.div key="transfer-detail" className="flex min-h-0 flex-1 flex-col" {...pageProps}>
-              {playerIdentityId === null ? (
+              {playerIdentityId === null || chatRouteIdentityId === null ? (
                 <div
                   className="flex flex-1 items-center justify-center px-4 text-[14px]"
                   style={{ color: 'var(--wx-text-muted)' }}
@@ -5146,7 +5161,7 @@ function WeChatAppInner({ onBack }: Props) {
               ) : (
                 <TransferDetailPage
                   transferId={route.transferId}
-                  playerIdentityId={playerIdentityId}
+                  playerIdentityId={chatRouteIdentityId}
                   getCurrentTime={getCurrentTimeMs}
                   peerName={(chatPeerContact?.remarkName ?? '').trim() || (route.chat.kind === 'lumi' ? 'Lumi' : '对方')}
                   onBack={() => setRoute({ name: 'chat', chat: route.chat })}

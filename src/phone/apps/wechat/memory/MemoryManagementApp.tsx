@@ -94,6 +94,9 @@ export function MemoryManagementApp({
   const [autoSummaryDefaultTrigger, setAutoSummaryDefaultTrigger] =
     useState<CharacterMemoryTriggerMode>('keyword')
   const [intervalN, setIntervalN] = useState(10)
+  const [linkedMemoryAutoSummaryEnabled, setLinkedMemoryAutoSummaryEnabled] = useState(true)
+  const [datingAutoSummaryEnabled, setDatingAutoSummaryEnabled] = useState(true)
+  const [linkedMemExplainExpanded, setLinkedMemExplainExpanded] = useState(false)
   const [vectorRecallEnabled, setVectorRecallEnabled] = useState(true)
   const [embeddingModelDraft, setEmbeddingModelDraft] = useState('')
   const [embeddingApiUrlDraft, setEmbeddingApiUrlDraft] = useState('')
@@ -124,6 +127,8 @@ export function MemoryManagementApp({
         settings.autoSummaryDefaultMemoryTriggerMode === 'always' ? 'always' : 'keyword',
       )
       setIntervalN(settings.autoSummaryInterval)
+      setLinkedMemoryAutoSummaryEnabled(settings.linkedMemoryAutoSummaryEnabled !== false)
+      setDatingAutoSummaryEnabled(settings.datingAutoSummaryEnabled !== false)
       setVectorRecallEnabled(settings.memoryVectorRecallEnabled !== false)
       setEmbeddingModelDraft(settings.memoryEmbeddingModelId?.trim() || '')
       setEmbeddingApiUrlDraft(settings.memoryEmbeddingApiUrl?.trim() || '')
@@ -164,6 +169,18 @@ export function MemoryManagementApp({
     const next = !autoSummaryEnabled
     setAutoSummaryEnabled(next)
     await personaDb.putMemorySettings({ autoSummaryEnabled: next })
+  }
+
+  const toggleLinkedMemoryAutoSummary = async () => {
+    const next = !linkedMemoryAutoSummaryEnabled
+    setLinkedMemoryAutoSummaryEnabled(next)
+    await personaDb.putMemorySettings({ linkedMemoryAutoSummaryEnabled: next })
+  }
+
+  const toggleDatingAutoSummary = async () => {
+    const next = !datingAutoSummaryEnabled
+    setDatingAutoSummaryEnabled(next)
+    await personaDb.putMemorySettings({ datingAutoSummaryEnabled: next })
   }
 
   const commitAutoSummaryDefaultTrigger = async (mode: CharacterMemoryTriggerMode) => {
@@ -271,6 +288,8 @@ export function MemoryManagementApp({
         autoSummaryEnabled,
         autoSummaryInterval: n,
         autoSummaryDefaultMemoryTriggerMode: autoSummaryDefaultTrigger,
+        linkedMemoryAutoSummaryEnabled,
+        datingAutoSummaryEnabled,
         memoryVectorRecallEnabled: vectorRecallEnabled,
         memoryEmbeddingModelId: model ? model.slice(0, 120) : undefined,
         memoryEmbeddingApiUrl: url ? url.slice(0, 512) : undefined,
@@ -401,6 +420,44 @@ export function MemoryManagementApp({
             <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
               新记忆默认选「始终」或「关键词」；每次自动总结仍会在后台写入模型提炼的触发词（含合并备份），之后改为「关键词」不会丢词。
             </p>
+            <div className="mt-3 border-t border-neutral-100 pt-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[15px]" style={{ color: COLORS.text }}>
+                  关联记忆总结
+                </span>
+                <WxSwitch on={linkedMemoryAutoSummaryEnabled} onToggle={() => void toggleLinkedMemoryAutoSummary()} />
+              </div>
+              <Pressable
+                type="button"
+                onClick={() => setLinkedMemExplainExpanded((v) => !v)}
+                className="mt-2 flex w-full items-center justify-between gap-2 rounded-[10px] border border-neutral-200 bg-white px-3 py-2.5 text-left text-[13px] font-medium text-neutral-800 transition-colors hover:bg-neutral-50"
+                aria-expanded={linkedMemExplainExpanded}
+              >
+                <span>{linkedMemExplainExpanded ? '收起' : '这是啥？点我看看'}</span>
+                <ChevronDown
+                  className={`size-4 shrink-0 text-neutral-500 transition-transform duration-200 ${
+                    linkedMemExplainExpanded ? 'rotate-180' : 'rotate-0'
+                  }`}
+                  aria-hidden
+                />
+              </Pressable>
+              {linkedMemExplainExpanded ? (
+                <div className="mt-2 space-y-2 rounded-[10px] border border-neutral-100 bg-[#fafafa] px-3 py-2.5 text-[11px] leading-relaxed text-neutral-600">
+                  <p>
+                    你在主角的约会里推进剧情时，系统有时会顺手给通讯录里「沾边」的配角也记一小条，方便他们之后私聊能接上话。这个就是「关联记忆」。
+                  </p>
+                  <p>
+                    关掉：配角那边不会再自动记这种小纸条；你跟主角微信聊几句才总结一次，那个照旧，不受影响。
+                  </p>
+                  <p>
+                    约会每写出一段新剧情，会顺带处理一次（所以感觉上「跟得很紧」）；微信这边还是看你下面设的「隔几轮」才总结，两码事。
+                  </p>
+                  <p>
+                    放心，不会为了配角再多问一遍模型——跟写这段约会剧情是同一次问完的，不多收你一轮对话钱。
+                  </p>
+                </div>
+              ) : null}
+            </div>
             <div className="mt-3 border-t border-neutral-100 pt-3">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[15px] font-semibold" style={{ color: COLORS.text }}>
@@ -590,6 +647,26 @@ export function MemoryManagementApp({
                   color: COLORS.text,
                 }}
                 aria-label="自动总结间隔轮数"
+              />
+            </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
+              这个数字只管<strong className="font-medium text-neutral-600">微信里你俩聊了几轮 AI</strong>才总结一次。如果你在「约会」里推剧情，那边是<strong className="font-medium text-neutral-600">另有一条线</strong>，默认每写一段就可能总结，和这里几轮不是同一个计数。
+            </p>
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-neutral-100 pt-3">
+              <div className="min-w-0 flex-1 pr-2">
+                <span className="text-[15px]" style={{ color: COLORS.text }}>
+                  约会推剧情时也自动记记忆
+                </span>
+                <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+                  关掉后：只有微信聊满上面的间隔轮数才会跑合并总结（含线下未总结片段）；约会里怎么写都不会自动往长期记忆里塞。
+                </p>
+              </div>
+              <WxSwitch
+                on={datingAutoSummaryEnabled && autoSummaryEnabled}
+                onToggle={() => {
+                  if (!autoSummaryEnabled) return
+                  void toggleDatingAutoSummary()
+                }}
               />
             </div>
             <div className="mt-3 border-t border-neutral-100 pt-3">

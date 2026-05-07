@@ -1,6 +1,6 @@
 import type { Character, PlayerIdentity, WorldBook, WorldBookItem } from './types'
 import { genderLabelZh } from './utils'
-import { formatWorldBookItemLineForPrompt, normalizeWorldBookPronounGuide, worldBookPronounGuideAnnotation } from './worldBookPronounGuide'
+import { formatWorldBookItemLineForPrompt, worldBookPronounGuideAnnotation } from './worldBookPronounGuide'
 import type { ApiConfig } from '../../api/types'
 import { LUMI_SYS_TOKENS_TOTAL_KEY } from '../../dataArchive/constants'
 import { clampWbItemGenTargetChars } from './worldBookItemGenConstants'
@@ -944,18 +944,9 @@ export async function generateWorldBookItemContent(params: {
   const npcBlock =
     !forId && params.linkedNpcsContext?.trim() ? `\n${params.linkedNpcsContext.trim()}\n` : ''
 
-  const pronounWriterNote = (() => {
-    if (forId) return ''
-    const g = normalizeWorldBookPronounGuide(params.item.pronounGuide)
-    const cn = String(params.character.name ?? '').trim() || '该角色'
-    if (g === 'user_as_i') {
-      return `\n【本条人称标记】编辑者已选择「我=用户/操作者」：本条正文里的「我」指用户本人，≠角色「${cn}」；生成或续写必须保持该约定，勿改回「我=角色」。\n`
-    }
-    if (g === 'third_person') {
-      return `\n【本条人称标记】编辑者已选择「第三人称描写角色为主」：续写时勿把「我」默认写成该角色的第一人称独白。\n`
-    }
-    return ''
-  })()
+  const pronounWriterNote = forId
+    ? `\n【本条说明】只写玩家本人的经历、习惯、偏好等；不要写入对面人设角色的设定；可用第一人称「我」指自己。\n`
+    : `\n【本条占位符】须使用「{{char}}」指该人设角色本人、「{{user}}」指该人设绑定的玩家身份本人；勿把角色设定与玩家身份混写；生成后注入会话时会替换为姓名。\n`
 
   const existingEntriesContext = buildExistingWorldBookEntriesContext({
     character: params.character,

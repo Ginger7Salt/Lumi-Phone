@@ -1,4 +1,8 @@
 import { openAiCompatibleChat } from '../newFriendsPersona/ai'
+import {
+  buildDatingCharUserPerspectiveDirective,
+  expandCharUserPlaceholders,
+} from '../charUserPlaceholders'
 import { buildWorldbookContext } from '../../../worldbook/buildWorldbookContext'
 import { getWorldbookLoreEntriesSnapshot } from '../../../worldbook/worldbookLoreStore'
 import type { ApiConfig } from '../../api/types'
@@ -213,14 +217,20 @@ ${formatBlock}
 - 格式示例：我靠近一步。「别躲。」`
 
   const archiveBlock = buildWorldbookContext([], getWorldbookLoreEntriesSnapshot(), 'offline_plot').trim()
-  const system = `${archiveBlock ? `${archiveBlock}\n\n` : ''}你是线下约会剧情「分支选项」策划。**只输出合法 UTF-8 JSON 数组**，禁止 Markdown 代码围栏、禁止数组前后的解释文字、禁止注释。
+  const branchCharName = character.realName.trim() || '对方'
+  const branchUserName = idPlayerName || '用户'
+  const cuNames = { charName: branchCharName, userName: branchUserName }
+  const cuDirective = buildDatingCharUserPerspectiveDirective(branchCharName, branchUserName)
+  const systemRaw = `${cuDirective}${archiveBlock ? `${archiveBlock}\n\n` : ''}你是线下约会剧情「分支选项」策划。**只输出合法 UTF-8 JSON 数组**，禁止 Markdown 代码围栏、禁止数组前后的解释文字、禁止注释。
 【JSON 语法铁律】style/card/director 为 JSON 字符串时：内部若需要引号，对白只用「」，不要用英文 "；反斜杠按需转义；不要尾随逗号。
 【分支卡片硬约束】card 字段：每条 **≤20 个字**；**禁止**任何内心活动（禁止 **...**）；尽量一句话表达可选行动/可说出口的话。指向玩家须用「你」（上帝视角）或「我」（玩家视角），禁止写身份卡上的玩家大名。
 数组长度必须为 4，且按顺序对应风格标签（style 字段必须与之一致）：
 ${STYLE_ORDER.map((s) => `「${s}」`).join('、')}
 每项形如：{"style":"顺水推舟","card":"……","director":"……"}；card 内对白用「」，但不要写内心OS。`
 
-  const user =
+  const system = expandCharUserPlaceholders(systemRaw, cuNames)
+
+  const userRaw =
     `角色：${character.realName}\n标签：${character.identityTags.join('、') || '无'}\n人设摘要：${character.prompt.slice(0, 800)}\n\n` +
     `【最近剧情摘录】\n${tailContext.slice(0, 2200)}\n\n` +
     `【当前段剧情正文（分支锚点）】\n${latestAiPlotBody.slice(0, 3200)}\n\n` +
@@ -229,6 +239,8 @@ ${STYLE_ORDER.map((s) => `「${s}」`).join('、')}
     `四条 card 中至少两条须出现「」对白（但禁止内心OS），避免四条全是干巴巴无对白的纯叙述。\n` +
     `四条 director 应彼此区分：顺水推舟偏顺势温情；趣味性偏轻松梗与反差；转折性偏意外信息与关系张力；恶搞性偏夸张喜感但**不侮辱角色与玩家**、不低俗。\n` +
     `【最后重申】你的整条回复必须以字符 [ 开头、以字符 ] 结尾；中间不要输出思考过程。`
+
+  const user = expandCharUserPlaceholders(userRaw, cuNames)
 
   const messagesBase = { role: 'system' as const, content: system }
   let parsed: unknown = null
