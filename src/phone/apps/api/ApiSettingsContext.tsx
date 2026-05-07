@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../wechat/newFriendsPersona/idb'
-import { createEmptyApiConfig, createEmptyPreset } from './mock'
+import { createEmptyApiConfig, createEmptyPreset, newPresetId } from './mock'
 import { SILICONFLOW_ASR_DEFAULT_BASE_URL } from '../wechat/voiceCall/siliconflowAsr'
 import type { ApiConfig, ApiPreset, ApiStore, SubApiType } from './types'
 
@@ -87,6 +87,8 @@ type Ctx = {
   createPreset: () => ApiPreset
   upsertPreset: (preset: ApiPreset) => void
   deletePreset: (id: string) => void
+  /** 复制预设为新条目（新 id，名称加「（副本）」），返回新预设 id；失败返回 null */
+  duplicatePreset: (sourceId: string) => string | null
   getResolvedConfig: (subType?: SubApiType) => ApiConfig | null
   isSubApiEnabled: (subType: SubApiType) => boolean
 }
@@ -164,6 +166,24 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const duplicatePreset = useCallback((sourceId: string): string | null => {
+    let outId: string | null = null
+    setStore((s) => {
+      const src = s.presets.find((p) => p.id === sourceId)
+      if (!src) return s
+      const now = Date.now()
+      const clone = JSON.parse(JSON.stringify(src)) as ApiPreset
+      clone.id = newPresetId()
+      const baseName = src.name.trim() || '未命名预设'
+      clone.name = `${baseName}（副本）`
+      clone.createdAt = now
+      clone.updatedAt = now
+      outId = clone.id
+      return { ...s, presets: [clone, ...s.presets], currentPresetId: clone.id }
+    })
+    return outId
+  }, [])
+
   const getResolvedConfig = useCallback(
     (subType?: SubApiType): ApiConfig | null => {
       const preset = currentPreset
@@ -197,6 +217,7 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
     createPreset,
     upsertPreset,
     deletePreset,
+    duplicatePreset,
     getResolvedConfig,
     isSubApiEnabled,
   }

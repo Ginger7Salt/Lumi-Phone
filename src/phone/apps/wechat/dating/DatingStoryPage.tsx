@@ -297,7 +297,89 @@ type VnSplitBubble = {
   shouldShake: boolean
 }
 
-/** 一行即一个气泡；不在此按字数/标点切段，边界完全由模型正文换行决定（见 DatingContext VN 格式说明）。 */
+/** VN 旁白单行目标约 25 字（略浮动）；超长时在客户端按句号→逗号→硬切顺序拆开，避免一整屏一段 */
+const VN_PROSE_BUBBLE_SOFT_MAX = 30
+
+function vnProseGraphemeLen(s: string): number {
+  return Array.from(String(s || '')).length
+}
+
+function vnHardSliceProse(text: string, maxChars: number): string[] {
+  const chars = Array.from(text.trim())
+  if (!chars.length) return []
+  const out: string[] = []
+  for (let i = 0; i < chars.length; i += maxChars) {
+    out.push(chars.slice(i, i + maxChars).join(''))
+  }
+  return out
+}
+
+/** 将一条旁白正文拆成多条气泡文案：优先句末，其次逗号，仍超长则按字数切（最后手段） */
+function splitVnNarrationBodyIntoBubbleChunks(body: string): string[] {
+  const raw = String(body || '').trim()
+  if (!raw) return []
+  const SOFT = VN_PROSE_BUBBLE_SOFT_MAX
+  if (vnProseGraphemeLen(raw) <= SOFT) return [raw]
+
+  const sentences = raw.split(/(?<=[。！？!?…])/u).map((x) => x.trim()).filter(Boolean)
+  const segs = sentences.length ? sentences : [raw]
+
+  const packOversizedSegment = (text: string): string[] => {
+    if (vnProseGraphemeLen(text) <= SOFT) return [text]
+    const commaParts = text.split(/(?<=[，、,])/u).map((x) => x.trim()).filter(Boolean)
+    if (commaParts.length <= 1) return vnHardSliceProse(text, SOFT)
+    const packed: string[] = []
+    let buf = ''
+    const flush = () => {
+      const t = buf.trim()
+      if (t) packed.push(t)
+      buf = ''
+    }
+    for (const p of commaParts) {
+      const next = buf ? buf + p : p
+      if (vnProseGraphemeLen(next) <= SOFT) buf = next
+      else {
+        flush()
+        if (vnProseGraphemeLen(p) <= SOFT) buf = p
+        else {
+          flush()
+          packed.push(...vnHardSliceProse(p, SOFT))
+        }
+      }
+    }
+    flush()
+    return packed.length ? packed : vnHardSliceProse(text, SOFT)
+  }
+
+  const chunks: string[] = []
+  let buf = ''
+  const flushBuf = () => {
+    const t = buf.trim()
+    if (t) chunks.push(t)
+    buf = ''
+  }
+
+  for (const seg of segs) {
+    if (vnProseGraphemeLen(seg) <= SOFT) {
+      const merged = buf ? buf + seg : seg
+      if (vnProseGraphemeLen(merged) <= SOFT) buf = merged
+      else {
+        flushBuf()
+        buf = seg
+      }
+    } else {
+      flushBuf()
+      chunks.push(...packOversizedSegment(seg))
+    }
+  }
+  flushBuf()
+  return chunks.length ? chunks : [raw]
+}
+
+/**
+ * 模型一行一条气泡；若单行【旁白】或旧稿无标签旁白过长，在此按约 25～30 字拆成多条旁白气泡。
+ * 【对白】【内心】不拆，以免切断台词或 OS。
+ */
 function splitVnContentToBubbles(
   raw: string,
   defaultSpeaker: string,
@@ -389,14 +471,23 @@ function splitVnContentToBubbles(
       }
     }
     if (!clean) continue
-    out.push({
-      text: clean,
-      speaker,
-      isInnerThought: isInnerThoughtLine,
-      bgmCueName: pendingBgmCue,
-      backgroundCueName: pendingBgCue,
-      isFlashback: flashbackMode,
-      shouldShake: pendingShakeNext,
+
+    const shouldChunkNarration =
+      tagged.mode === 'tagged-narration' || (tagged.mode === 'legacy' && !speaker && !isInnerThoughtLine)
+    const textChunks = shouldChunkNarration ? splitVnNarrationBodyIntoBubbleChunks(clean) : [clean]
+
+    textChunks.forEach((chunk, chunkIdx) => {
+      const t = chunk.trim()
+      if (!t) return
+      out.push({
+        text: t,
+        speaker,
+        isInnerThought: isInnerThoughtLine,
+        bgmCueName: chunkIdx === 0 ? pendingBgmCue : null,
+        backgroundCueName: chunkIdx === 0 ? pendingBgCue : null,
+        isFlashback: flashbackMode,
+        shouldShake: chunkIdx === 0 ? pendingShakeNext : false,
+      })
     })
     pendingShakeNext = false
     pendingBgmCue = null

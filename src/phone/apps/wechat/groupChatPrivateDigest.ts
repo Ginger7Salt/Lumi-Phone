@@ -1,9 +1,8 @@
 import type { GroupChatRow, WeChatChatMessage } from './newFriendsPersona/types'
 import { personaDb } from './newFriendsPersona/idb'
-import { findGroupMember } from './groupChatUtils'
 import { stripWechatGroupEventNoticePrefix } from './groupChatEventNotice'
+import { formatGroupSpeakerLabelForPrivateContext } from './wechatMemoryPromptBlocks'
 import {
-  WECHAT_GROUP_BOT_CHARACTER_ID,
   parseGroupIdFromConversationKey,
   wechatConversationKey,
   wechatGroupConversationKey,
@@ -123,20 +122,7 @@ function formatGroupMsgLineForPrivateDigest(
   }
   if (!raw) return null
 
-  let who: string
-  if (m.type === 'player') {
-    who = '用户'
-  } else {
-    const c = m.characterId?.trim() || ''
-    if (c === WECHAT_GROUP_BOT_CHARACTER_ID) who = '群管家'
-    else if (c === npcCharacterId) who = '你'
-    else if (group) {
-      const mem = findGroupMember(group, c)
-      who = (mem?.groupNickname || '').trim() || c.slice(0, 12)
-    } else {
-      who = c.slice(0, 12)
-    }
-  }
+  const who = formatGroupSpeakerLabelForPrivateContext(m, group, npcCharacterId)
   return `- [群「${gidLabel}」·${who}] ${clipOneLine(raw)}`
 }
 
@@ -209,5 +195,5 @@ export async function buildNpcGroupChatsRecentDigestForPrivatePrompt(params: {
     if (body.length > charCap) body = `${body.slice(-charCap)}\n…（更早群聊已截断）`
   }
 
-  return `${body}\n（↑ 为你们共同参与过的群聊近期摘录，时间由旧到新；私聊承接时请自然记得群中语境，勿假装群聊未发生。）`
+  return `${body}\n（↑ 为你们共同参与过的群聊近期摘录，时间由旧到新；私聊承接时请自然记得群中语境，勿假装群聊未发生。）\n【说话人｜勿混淆】前缀「用户」仅指真人玩家；「对方角色·某某」为当前私聊对象在该群的发言。**禁止**把对方角色在群里的台词误当成用户说的。\n`
 }

@@ -49,6 +49,31 @@ function formatPrivateLineUnsummarized(m: WeChatChatMessage): string | null {
   return `- [私聊・${who}] ${clipOneLine(raw)}`
 }
 
+/**
+ * 群消息写入「私聊侧」摘录时的说话人标签。
+ * 禁用「你」指代当前私聊 NPC：模型易把「你」误解成真人用户，造成「把 NPC 群发言当成用户说的」。
+ */
+export function formatGroupSpeakerLabelForPrivateContext(
+  m: WeChatChatMessage,
+  group: GroupChatRow | null,
+  /** 当前私聊会话对方的人设 characterId；仅在注入私聊 prompt 时传入 */
+  privatePeerNpcCharacterId?: string,
+): string {
+  if (m.type === 'player') return '用户'
+  const c = m.characterId?.trim() || ''
+  if (c === WECHAT_GROUP_BOT_CHARACTER_ID) return '群管家'
+  const peer = privatePeerNpcCharacterId?.trim()
+  if (peer && c === peer) {
+    const nick = group ? (findGroupMember(group, c)?.groupNickname || '').trim() : ''
+    return nick ? `对方角色·${nick}` : '对方角色（私聊对象）'
+  }
+  if (group) {
+    const mem = findGroupMember(group, c)
+    return (mem?.groupNickname || '').trim() || c.slice(0, 12)
+  }
+  return c.slice(0, 12)
+}
+
 function formatGroupLineUnsummarized(m: WeChatChatMessage, group: GroupChatRow | null, npcCharacterId?: string): string | null {
   if (m.isRecalled) return null
   const gidLabel = (group?.name || '').trim() || '群聊'
@@ -67,20 +92,7 @@ function formatGroupLineUnsummarized(m: WeChatChatMessage, group: GroupChatRow |
   }
   if (!raw) return null
 
-  let who: string
-  if (m.type === 'player') {
-    who = '用户'
-  } else {
-    const c = m.characterId?.trim() || ''
-    if (c === WECHAT_GROUP_BOT_CHARACTER_ID) who = '群管家'
-    else if (npcCharacterId && c === npcCharacterId) who = '你'
-    else if (group) {
-      const mem = findGroupMember(group, c)
-      who = (mem?.groupNickname || '').trim() || c.slice(0, 12)
-    } else {
-      who = c.slice(0, 12)
-    }
-  }
+  const who = formatGroupSpeakerLabelForPrivateContext(m, group, npcCharacterId)
   return `- [群「${gidLabel}」·${who}] ${clipOneLine(raw)}`
 }
 
@@ -227,7 +239,7 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
     body = parts.join('\n')
     if (body.length > charCap) body = `${body.slice(-charCap)}\n…（更早未总结群聊已截断）`
   }
-  return `${body}\n（↑ 各群「自动总结游标」之后尚未落库为长期记忆的片段；私聊回复时请承接群内语境。）`
+  return `${body}\n（↑ 各群「自动总结游标」之后尚未落库为长期记忆的片段；私聊回复时请承接群内语境。）\n【说话人｜勿混淆】前缀「用户」仅指真人玩家本人；「对方角色·某某」表示**当前私聊对象（会话对方角色）**在该群的发言，**不是**用户。**禁止**把对方角色在群里的原话误当成用户说的（例如不可写「你刚才在群里嚷着吃火锅」若实为对方角色发的）。其他群成员仅用群内昵称标注。\n`
 }
 
 /**

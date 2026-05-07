@@ -1,4 +1,4 @@
-import { Edit, Trash2 } from 'lucide-react'
+import { Copy, Edit, Trash2 } from 'lucide-react'
 import { apiTheme } from '../theme'
 
 export function PresetCard({
@@ -7,6 +7,7 @@ export function PresetCard({
   active,
   onClick,
   onEdit,
+  onDuplicate,
   onDelete,
 }: {
   name: string
@@ -14,6 +15,7 @@ export function PresetCard({
   active?: boolean
   onClick: () => void
   onEdit: () => void
+  onDuplicate: () => void
   onDelete: () => void
 }) {
   return (
@@ -44,6 +46,19 @@ export function PresetCard({
           </span>
         ) : null}
         <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            className="rounded-lg p-2 transition-all duration-200 ease-out hover:opacity-80"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDuplicate()
+            }}
+            style={{ color: apiTheme.subText }}
+            aria-label="复制预设"
+            title="复制为副本并编辑"
+          >
+            <Copy className="size-[18px]" />
+          </button>
           <button
             type="button"
             className="rounded-lg p-2 transition-all duration-200 ease-out hover:opacity-80"

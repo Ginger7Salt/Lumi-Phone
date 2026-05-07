@@ -5,6 +5,11 @@ function uid(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+/** 新建或复制预设时生成唯一 id */
+export function newPresetId(): string {
+  return uid('preset')
+}
+
 export function createEmptyApiConfig(): ApiConfig {
   return {
     apiUrl: '',
@@ -24,7 +29,7 @@ export function createEmptyPreset(): ApiPreset {
     voiceAsr: { enabled: true, useMainApi: false, apiConfig: { ...createEmptyApiConfig(), apiUrl: SILICONFLOW_ASR_DEFAULT_BASE_URL } },
   }
   return {
-    id: uid('preset'),
+    id: newPresetId(),
     name: '',
     description: '',
     main: createEmptyApiConfig(),

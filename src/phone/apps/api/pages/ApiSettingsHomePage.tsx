@@ -8,7 +8,7 @@ import { TopNav } from '../components/TopNav'
 
 export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
   const nav = useNavigate()
-  const { presets, currentPresetId, currentPreset, setCurrentPresetId, deletePreset } = useApiSettings()
+  const { presets, currentPresetId, currentPreset, setCurrentPresetId, deletePreset, duplicatePreset } = useApiSettings()
   const [deleteId, setDeleteId] = useState<string | null>(null)
 
   const mainConfigured = useMemo(() => {
@@ -60,14 +60,29 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
                 </p>
               ) : null}
             </div>
-            <button
-              type="button"
-              onClick={() => (currentPreset ? nav(`/edit/${currentPresetId}`) : nav('/new'))}
-              className="shrink-0 text-[14px] font-medium transition-all duration-200 ease-out hover:opacity-80"
-              style={{ color: apiTheme.accent }}
-            >
-              {currentPreset ? '编辑' : '新建'}
-            </button>
+            <div className="flex shrink-0 items-center gap-3">
+              {currentPreset ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nid = duplicatePreset(currentPresetId)
+                    if (nid) nav(`/edit/${nid}`)
+                  }}
+                  className="text-[14px] font-medium transition-all duration-200 ease-out hover:opacity-80"
+                  style={{ color: apiTheme.subText }}
+                >
+                  复制
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => (currentPreset ? nav(`/edit/${currentPresetId}`) : nav('/new'))}
+                className="text-[14px] font-medium transition-all duration-200 ease-out hover:opacity-80"
+                style={{ color: apiTheme.accent }}
+              >
+                {currentPreset ? '编辑' : '新建'}
+              </button>
+            </div>
           </div>
         </section>
 
@@ -84,6 +99,10 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
               active={p.id === currentPresetId}
               onClick={() => setCurrentPresetId(p.id)}
               onEdit={() => nav(`/edit/${p.id}`)}
+              onDuplicate={() => {
+                const nid = duplicatePreset(p.id)
+                if (nid) nav(`/edit/${nid}`)
+              }}
               onDelete={() => setDeleteId(p.id)}
             />
           ))
