@@ -1,4 +1,4 @@
-import type { ApiConfig } from '../../api/types'
+import type { ApiConfig } from '../api/types'
 import { buildWorldbookContext } from '../../worldbook/buildWorldbookContext'
 import { getWorldbookLoreEntriesSnapshot } from '../../worldbook/worldbookLoreStore'
 import type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
@@ -11,6 +11,16 @@ import { setLastMemoryTrace } from './memoryTraceStore'
 import type { ChatTranscriptTurn } from './wechatChatAi'
 import { WECHAT_HISTORY_MAX_MESSAGES, buildCharacterCard, buildWorldBookText } from './wechatChatAi'
 import { splitDatingAssistantOutput } from './dating/plotCoT'
+
+function pickTrimmedApiUrlKey(
+  raw: { apiUrl?: string | null; apiKey?: string | null } | null | undefined,
+): Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null {
+  if (!raw) return null
+  const apiUrl = String(raw.apiUrl ?? '').trim()
+  const apiKey = String(raw.apiKey ?? '').trim()
+  if (!apiUrl || !apiKey) return null
+  return { apiUrl, apiKey }
+}
 
 /** 思维溯源不做客户端字数截断；人设世界书与模型注入同源，仅放宽 maxChars */
 const TRACE_WORLD_BOOK_MAX_CHARS = Number.MAX_SAFE_INTEGER
@@ -90,7 +100,7 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
     params.biasText,
   ])
   const deep = await personaDb.getCharacterMemoryRelevanceTraceByRelevance(cid, hay, {
-    apiConfig: params.apiConfig?.apiUrl?.trim() && params.apiConfig?.apiKey?.trim() ? params.apiConfig : null,
+    apiConfig: pickTrimmedApiUrlKey(params.apiConfig),
   })
 
   const personaDetail = buildFullPersonaDetailForMemoryTrace(params.character)
@@ -188,7 +198,7 @@ export async function publishWeChatGroupMemoryTrace(params: {
     params.offlinePlotsCombined,
   ])
   const deep = await personaDb.getCharacterMemoryRelevanceTraceByRelevance(cid, hay, {
-    apiConfig: params.apiConfig?.apiUrl?.trim() && params.apiConfig?.apiKey?.trim() ? params.apiConfig : null,
+    apiConfig: pickTrimmedApiUrlKey(params.apiConfig),
   })
 
   const primaryChar = await personaDb.getCharacter(cid)
@@ -269,7 +279,7 @@ export async function publishDatingOfflineMemoryTrace(params: {
 
   const hay = buildMemoryRelevanceHaystack([params.userText, params.unsPrivateBlock, params.unsGroupBlock])
   const deep = await personaDb.getCharacterMemoryRelevanceTraceByRelevance(cid, hay, {
-    apiConfig: params.apiConfig?.apiUrl?.trim() && params.apiConfig?.apiKey?.trim() ? params.apiConfig : null,
+    apiConfig: pickTrimmedApiUrlKey(params.apiConfig),
   })
 
   const plate = params.isVnMode ? ('vn' as const) : ('offline_plot' as const)

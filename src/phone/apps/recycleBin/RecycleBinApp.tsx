@@ -52,7 +52,6 @@ export function RecycleBinApp({ onBack }: Props) {
     }
   }, [refresh])
 
-  const now = Date.now()
   const rows = useMemo(() => {
     void clock
     const t = Date.now()

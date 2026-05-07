@@ -4571,7 +4571,11 @@ function WeChatAppInner({ onBack }: Props) {
           const chRow = await personaDb.getCharacter(target.characterId)
           const sessionPid = resolvePrivateChatSessionPlayerIdentityId(chRow, playerIdentityId)
           const convKey = resolvePrivateWeChatConversationKey(target.characterId, chRow, playerIdentityId)
-          const verificationEpochMs = frMeta ? (frMeta.verificationEpochMs ?? frMeta.createdAt) : target.requestTimeMs
+          const verificationEpochRaw = frMeta
+            ? (frMeta.verificationEpochMs ?? frMeta.createdAt)
+            : target.requestTimeMs
+          if (verificationEpochRaw == null) return
+          const verificationEpochMs = verificationEpochRaw
           const recent = await personaDb.listWeChatChatMessagesRecent({ conversationKey: convKey, limit: 200 })
           const messages: FriendRequest['messages'] = recent
             .filter((m) => m.timestamp >= verificationEpochMs)
