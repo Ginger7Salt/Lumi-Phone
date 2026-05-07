@@ -1,5 +1,5 @@
 import type { Character } from '../newFriendsPersona/types'
-import { collectCharacterMentionSearchTokens, textMentionsAnyToken } from './offlineDatingArchiveResolve'
+import { textMentionsAnyToken } from './offlineDatingArchiveResolve'
 
 /** 用于「姓名：」对白行的说话人前缀匹配（不含【名】占位，避免与旁白误配） */
 function collectNpcDialogueSpeakerTokens(ch: Character | null): string[] {
