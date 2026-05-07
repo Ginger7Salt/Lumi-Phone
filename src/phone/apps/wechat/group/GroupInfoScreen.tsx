@@ -1114,9 +1114,18 @@ export function GroupInfoScreen({
           <div className="flex w-full items-center justify-between bg-white px-4 py-3">
             <div className="min-w-0 flex-1 pr-3">
               <p className="text-[16px] text-[#111827]">弹幕模式</p>
-              <p className="mt-0.5 text-[12px] text-[#9CA3AF]">群内弹幕即将开放，开关暂不可用</p>
+              <p className="mt-0.5 text-[12px] text-[#9CA3AF]">
+                与私聊一致：每轮群内 AI 回复后可生成弹幕；条数、样式与副接口见「我」-设置-弹幕配置
+              </p>
             </div>
-            <WxSwitch on={!!convSettings?.isDanmakuMode} disabled onToggle={() => {}} />
+            <WxSwitch
+              on={!!convSettings?.isDanmakuMode}
+              onToggle={() =>
+                void patchConvSettings({
+                  isDanmakuMode: !(convSettings?.isDanmakuMode ?? false),
+                })
+              }
+            />
           </div>
         </div>
 
