@@ -527,6 +527,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     setGodPerspective,
     setVnVoiceDisabled,
     setVnCustomInputParaphrase,
+    setDatingLengthTargetChars,
     sendPlayerInput,
     stageBranchChoice,
     branchesLoading,
@@ -552,6 +553,26 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [perspective, setPerspective] = useState<NarrativePerspective>('second')
   const [lengthOpen, setLengthOpen] = useState(false)
   const [lengthTargetChars, setLengthTargetChars] = useState('500')
+
+  useEffect(() => {
+    const v = currentArchive.datingLengthTargetChars
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      const c = Math.max(DATING_AI_LENGTH_TARGET_MIN, Math.min(DATING_AI_LENGTH_TARGET_MAX, Math.round(v)))
+      setLengthTargetChars(String(c))
+    } else {
+      setLengthTargetChars('500')
+    }
+  }, [currentCharacter.id])
+
+  const blurPersistLengthTarget = useCallback(() => {
+    const n = Number(lengthTargetChars)
+    const clamped = Math.max(
+      DATING_AI_LENGTH_TARGET_MIN,
+      Math.min(DATING_AI_LENGTH_TARGET_MAX, Math.round(Number.isFinite(n) ? n : 500)),
+    )
+    setLengthTargetChars(String(clamped))
+    setDatingLengthTargetChars(clamped)
+  }, [lengthTargetChars, setDatingLengthTargetChars])
   const [autoUserOpen, setAutoUserOpen] = useState(false)
   const [autoUserReaction, setAutoUserReaction] = useState(false)
   const [initialBiasOpen, setInitialBiasOpen] = useState(false)
@@ -3094,10 +3115,13 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                         step={10}
                         value={lengthTargetChars}
                         onChange={(e) => setLengthTargetChars(e.target.value)}
+                        onBlur={blurPersistLengthTarget}
                         className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-[12px] text-[#262626] outline-none focus:border-stone-400"
                         placeholder="如 180"
                       />
-                      <p className="mt-1 px-1 text-[10px] leading-snug text-[#9a9a9a]">不含思维链；模型会尽量落在区间内，仍受模型与 API 影响</p>
+                      <p className="mt-1 px-1 text-[10px] leading-snug text-[#9a9a9a]">
+                        不含思维链与 VN 语音参数块；已随当前角色存档。模型会尽量落在区间内，仍受模型与 API 影响。
+                      </p>
                     </div>
                   ) : null}
                 </div>
@@ -3679,11 +3703,12 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   step={10}
                   value={lengthTargetChars}
                   onChange={(e) => setLengthTargetChars(e.target.value)}
+                  onBlur={blurPersistLengthTarget}
                   className="w-full rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-[13px] text-[#262626] outline-none focus:border-stone-400"
                   placeholder="如 500"
                 />
                 <p className="mt-1 text-[10px] leading-snug text-[#9a9a9a]">
-                  范围 {DATING_AI_LENGTH_TARGET_MIN} - {DATING_AI_LENGTH_TARGET_MAX}，模型会尽量控制在目标区间附近。
+                  范围 {DATING_AI_LENGTH_TARGET_MIN} - {DATING_AI_LENGTH_TARGET_MAX}；失焦后写入当前角色存档。VN 下「汉字」含各气泡标签后的对白与旁白，不含语音参数 JSON。
                 </p>
               </div>
               <textarea

@@ -12,6 +12,45 @@ import type { ChatTranscriptTurn } from './wechatChatAi'
 import { WECHAT_HISTORY_MAX_MESSAGES, buildCharacterCard, buildWorldBookText } from './wechatChatAi'
 import { splitDatingAssistantOutput } from './dating/plotCoT'
 
+/** 与 DatingStoryPage 一致：剔除漏出的 VN 语音 JSON 碎片行，避免进思维溯源 */
+function isLikelyVnVoiceParamsArtifactLine(rawLine: string): boolean {
+  const line = String(rawLine || '').trim()
+  if (!line) return false
+  if (/【\s*VN语音参数(?:结束)?\s*】/u.test(line)) return true
+  if (/(?:^|[{"\s,])idx(?:\s*["'}\],]|:)|emotion\s*:|tone\s*:/i.test(line)) {
+    const reduced = line.replace(/[\u4e00-\u9fa5]/g, '').trim()
+    if (/^[\[\]\{\}",:a-z0-9_\-\s.]+$/i.test(reduced)) return true
+  }
+  return false
+}
+
+/** 思维溯源「本轮模型输出」：只保留对白/旁白/内心等剧情正文，去掉 VN 语音合成参数块 */
+function stripDatingVnVoiceParamsForMemoryTrace(text: string): string {
+  const source = String(text ?? '')
+  const startMatch = /【\s*VN语音参数\s*】/u.exec(source)
+  if (!startMatch || startMatch.index < 0) {
+    return source
+      .split(/\r?\n/)
+      .map((x) => x.trim())
+      .filter((x) => x && !isLikelyVnVoiceParamsArtifactLine(x))
+      .join('\n')
+      .trim()
+  }
+  const start = startMatch.index
+  const endRegex = /【\s*VN语音参数结束\s*】/gu
+  endRegex.lastIndex = start + startMatch[0].length
+  const endMatch = endRegex.exec(source)
+  const end = endMatch ? endMatch.index : -1
+  const rawCut =
+    end >= 0 && endMatch ? source.slice(0, start) + source.slice(end + endMatch[0].length) : source.slice(0, start)
+  return rawCut
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter((x) => x && !isLikelyVnVoiceParamsArtifactLine(x))
+    .join('\n')
+    .trim()
+}
+
 function pickTrimmedApiUrlKey(
   raw: { apiUrl?: string | null; apiKey?: string | null } | null | undefined,
 ): Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null {
@@ -303,7 +342,8 @@ export async function publishDatingOfflineMemoryTrace(params: {
     unsChats.push({ type: 'group', source: '尚未总结 · 群聊', snippet: params.unsGroupBlock.trim() })
   }
 
-  const lastReply = splitDatingAssistantOutput(params.rawAssistantOutput).content.trim()
+  const body = splitDatingAssistantOutput(params.rawAssistantOutput).content
+  const lastReply = stripDatingVnVoiceParamsForMemoryTrace(body).trim()
 
   const data: MemoryTraceData = {
     lastReply: lastReply || '（本轮无正文）',

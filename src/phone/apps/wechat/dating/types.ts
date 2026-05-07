@@ -134,5 +134,7 @@ export type CharacterArchive = {
   branchNodeHistory: number[]
   /** 选中分支卡片后、待发送时注入续写执导（发送后清空） */
   branchContinuationHint?: string
+  /** 线下/VN 剧情生成：目标正文字数（汉字），与界面「目标字数」同步落盘，避免切换角色后仍用默认 500 */
+  datingLengthTargetChars?: number
 }
 
