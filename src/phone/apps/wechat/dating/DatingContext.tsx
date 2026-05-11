@@ -29,6 +29,7 @@ import type {
   NarrativeGenOptions,
   NarrativePerspective,
   PlotItem,
+  WorldBookAfterRevertEntry,
 } from './types'
 import {
   DATING_AI_LENGTH_TARGET_MAX,
@@ -36,8 +37,15 @@ import {
   DATING_AI_MAX_OUTPUT_TOKENS,
   DATING_AI_REFERENCE_SECTION_CHAR_CAP,
 } from './types'
+import { formatOfflineUnsummarizedBlockFromPlotSnapshots } from './loadOfflineDatingPlotsForWechatPrompt'
 import { loadDatingNpcNetworkPromptBlock } from './datingNpcNetworkPrompt'
 import { splitDatingAssistantOutput } from './plotCoT'
+import { extractVnVoiceParamsBlock } from './vnVoiceParamsStrip'
+import {
+  PROSE_FORBIDDEN_LEXICON_PROMPT,
+  buildProseForbiddenRepairUserPrompt,
+  findProseForbiddenHits,
+} from '../proseForbiddenLexiconPrompt'
 import { DATING_STYLE_SYSTEM_PROMPT } from './lumiThinkingChainRules'
 import { appendAiRegenerateVersion, initialAiPlotVersions, plotWithVersionIndex } from './plotVersions'
 import { buildDatingStyleSystemAppend } from './datingStylePrompt'
@@ -57,15 +65,36 @@ import {
   splitDatingAiResponseAndUnifiedMemoryJson,
   type ChatTranscriptTurn,
 } from '../wechatChatAi'
+import {
+  applyWorldBookAfterPatchesToCharacter,
+  applyWorldBookAfterRevertEntries,
+  buildChatAfterWorldBookDynamicSection,
+  buildWorldBookAfterPatchOutputAppendix,
+  collectWorldBookAfterRevertSnapshot,
+  extractWorldBookAfterPatchBlock,
+  hasChatAfterWorldBookItems,
+  sanitizeWorldBookAfterRevertEntries,
+  WORLD_BOOK_AFTER_PATCH_UPDATED_EVENT,
+} from '../newFriendsPersona/worldBookAfterPatch'
 import { emitDatingOfflineDanmakuLines } from './datingOfflineDanmakuBridge'
 import { buildUnsummarizedOfflineDatingText, loadOfflineDatingPlotsPromptBlock } from './loadOfflineDatingPlotsForWechatPrompt'
-import { publishDatingOfflineMemoryTrace } from '../memoryTracePublisher'
+import {
+  buildWorldBookAfterChatTrace,
+  buildWorldBookAfterPatchRowsFromSingleCharacter,
+  publishDatingOfflineMemoryTrace,
+} from '../memoryTracePublisher'
 import {
   buildDatingCharUserPerspectiveDirective,
   expandCharUserPlaceholders,
   resolveCharUserNamesForPrompt,
   type CharUserNames,
 } from '../charUserPlaceholders'
+
+/** 约会 AI 单次生成返回值：`text` 与剧情存档一致（已去尾声延展 JSON 块）；`worldBookAfterRevertEntries` 仅当本轮成功写库补丁时非空 */
+type DatingAiGenResult = {
+  text: string
+  worldBookAfterRevertEntries?: WorldBookAfterRevertEntry[]
+}
 
 const STORAGE_KEY = 'wechat-dating-archives-v1'
 const CHARACTERS_KEY = 'wechat-dating-characters-v1'
@@ -122,7 +151,9 @@ async function buildEligibleLinkedNpcRosterForDatingAppendix(
 function stripPlotBodyForPrompt(plot: PlotItem): string {
   const raw = String(plot.content || '').trim()
   if (plot.type === 'player') return raw
-  return splitDatingAssistantOutput(raw).content.trim()
+  const prose = splitDatingAssistantOutput(raw).content.trim()
+  /** VN 轮次存盘的正文后常带语音参数 JSON；拼进「最近剧情」会巨幅膨胀 prompt（尤其 VN→普通 续写时） */
+  return extractVnVoiceParamsBlock(prose).cleanedText.trim()
 }
 
 function formatRecentPlotsForPrompt(history: PlotItem[], characterRealName: string, maxTotalChars: number): string {
@@ -489,6 +520,9 @@ function uid(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
+/** 禁词程序扫描：最多 3 次模型调用（首轮 + 2 次复检重写） */
+const DATING_LEXICON_RETRY_MAX = 2
+
 const STYLE_HINT =
   '旁白直写；对白只能用双引号"..."；内心OS：**仅**用一对英文半角 ** 包裹**一整句**可读心思（与界面渲染一致）；**禁止**星号内只有「我……」「我…」占位；**禁止**在 ** 外单独缀一行「我……」；上帝视角时旁白用他/她写约会对象与 NPC，他人心念/视线指向玩家须用「你」勿用身份卡姓名；OS 内「我」仍指约会对象且须语义连贯，勿在 OS 里写第三人称评价串戏。' +
   '对白口吻与微信私聊同角色对齐：口语短句、活人感；对白里勿用（）堆神态。'
@@ -688,12 +722,12 @@ async function generateDatingAi(
   },
   playerIdentity?: PlayerIdentity | null,
   genOptions?: NarrativeGenOptions,
-  datingExtras?: { unifiedMemoryAppendix?: string },
-): Promise<string> {
+  datingExtras?: { unifiedMemoryAppendix?: string; regeneratingWorldBookBaseline?: boolean },
+): Promise<DatingAiGenResult> {
   if (!apiConfig?.apiUrl || !apiConfig?.apiKey || !apiConfig?.modelId) {
     await new Promise((r) => window.setTimeout(r, 240))
     const seed = userText?.trim() || prompt.slice(0, 28)
-    return `<thinking>
+    const text = `<thinking>
 【Lumi总控台】占位续写；承接玩家意图与人设边界。本分册·必查：是。
 【时空场记卡】当场时间/地点一笔。本分册·必查：无瞬移：是。
 【互动主轴卡】意图摘要一句（非复读原文）。本分册·必查：是。
@@ -702,11 +736,12 @@ async function generateDatingAi(
 【文句风控卡】拟用首句类型：对白起笔；非比喻。本分册·必查：是。
 【推进落点卡】锚点+衔接；动作→连锁；内心 OS 可有可无，若有须为 **整句** 勿占位。本分册·必查：是。
 【代写边界卡】与本轮模式一致。本分册·必查：无抢话：是。
-【Lumi终检单】预检维度1～22：占位均「该项：无」
+【Lumi终检单】预检维度1～23：占位均「该项：无」
 自检结论：通过
 </thinking>
 ${character.realName}把步子放慢半拍，先看了一眼门口，再把手机扣在桌面上。
 "${seed.slice(0, 24)}。"他低声接住这个话题，语气平稳。`
+    return { text }
   }
   const { godPerspective, perspective, isVnMode = false, vnVoiceDisabled = false } = opts
   const userDisplayName =
@@ -845,6 +880,14 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
       `下方「最近剧情」按时间顺序排列，**越靠后越新**；**最后一条**中的场所（室内/户外/具体空间）、时段（昼/夜/睡前术后）、人物相对位置与姿态即当场锚点，本轮正文必须**直接承接**，禁止无因果的「状态清零」。` +
       `禁止无过渡的瞬移（例如上文已关灯就寝，下文突然户外路边）；若必须换场，至少用一行旁白交代「间隔多久 / 为何出门 / 如何抵达」。` +
       `禁止在近 ${DATING_AI_PLOT_HISTORY_MAX} 条已发生剧情中，把**同一核心桥段**改头换面再演一遍（重复接吻拉扯、同梗吃醋质问、已收束的回忆又当新情节）；须推进**新的**动作、对白信息或矛盾。\n`
+    : ''
+  /** 普通模式：历史里常混入曾用 VN 写的条目，模型会照抄标签；须明文禁止 */
+  const normalPlotFormatRule = !isVnMode
+    ? `【普通剧情模式·输出格式（最高优先级｜与 VN 互斥）】
+- 当前为**普通剧情**，**禁止**使用任何 VN 行首标签与控制行，包括但不限于：【旁白】、【对白】、【内心】、【内心｜…】、【背景】、【插叙开始】/【闪回开始】/【回忆开始】及对应结束行、【插叙闪回】、【正常剧情】、【VN雨】、【VN抖】、【VN语音参数】…【VN语音参数结束】及同构写法。
+- **禁止**把正文写成「一行一个气泡」的 VN 稿；请用**连续自然段**叙述，**对白**用弯引号 “…” 或半角直引号 "..." 写在段落内（与旁白同一排版，**不要**用日式直角引号「…」包裹整句台词）；内心 OS 仅用一对英文 **…** 包裹整句（与界面普通模式一致）。
+- 下方「最近剧情」摘录**可能**含旧稿中的 VN 标签，**仅供理解情节与时间线**，**不得模仿该版式**；本轮输出必须是普通段落体。
+`
     : ''
   /** 上帝视角只写屏外旁白，与「代写玩家」天然冲突，强制等同不抢话 */
   const autoUserReaction = !godPerspective && genOptions?.autoUserReaction === true
@@ -992,12 +1035,16 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
   const charUserDirective = buildDatingCharUserPerspectiveDirective(charUserNames.charName, charUserNames.userName)
   const worldBookRoleLockReminder =
     `【世界书职务与关系（须与条文一致）】条目中凡涉及「${charUserNames.charName}」（约会对象 / AI）与「${charUserNames.userName}」（玩家身份）的社团职务、职级、远近关系、单恋方向等，续写必须与原文逐项一致，**禁止**将一方的设定挪到另一方或对调二人身份。**即使用户身份卡未写同一职务**，只要条文已写明归属「${charUserNames.userName}」或「${charUserNames.charName}」，正文须按条文执行，**禁止**以「身份卡没写」为由把玩家侧职务默认套到约会对象上。\n`
+  const wbAfterBlock =
+    mainCharRow && hasChatAfterWorldBookItems(mainCharRow)
+      ? `\n\n${buildChatAfterWorldBookDynamicSection(mainCharRow)}\n\n${buildWorldBookAfterPatchOutputAppendix()}`
+      : ''
   const systemPromptRaw =
     `${charUserDirective}${DATING_STYLE_SYSTEM_PROMPT}${styleAppend}${
       datingArchiveBlock
         ? `\n\n${datingArchiveBlock}\n\n${worldBookRoleLockReminder}\n`
         : '\n'
-    }\n${combinedMemNote}${FICTIONAL_COT_APPENDIX}`
+    }\n${combinedMemNote}${wbAfterBlock}${FICTIONAL_COT_APPENDIX}\n\n${PROSE_FORBIDDEN_LEXICON_PROMPT}`
   const userPromptRaw =
         `角色信息：姓名=${character.realName}；标签=${character.identityTags.join('、') || '无'}；座右铭=${character.motto || '无'}；设定摘要=${character.prompt}\n` +
         datingPhysiqueBlock +
@@ -1017,6 +1064,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
         `${dialogueDrivenPlotRule}\n` +
         `${npcRealNameRule}\n` +
         (vnFormatRule ? `${vnFormatRule}\n` : '') +
+        (normalPlotFormatRule ? `${normalPlotFormatRule}\n` : '') +
         (vnContinuityRule ? `${vnContinuityRule}` : '') +
         `${userReactionRule}\n` +
         `${autoUserRoleplaySpaceRule}\n` +
@@ -1034,8 +1082,19 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
         `尚未总结·私聊（记忆总结游标之后、尚未写入长期记忆的原文摘录）：\n${unsPrivClipped || '（暂无）'}\n\n` +
         `尚未总结·群聊（游标后）：\n${unsGrpClipped || '（暂无）'}\n\n` +
         `尚未总结·线下剧情（约会 plot 游标后）：\n${unsOffClipped || '（暂无）'}\n\n` +
+        `【历史摘录·文风隔离（最高优先级）】「场景人物线索」与下条「最近剧情」**只**供提取：**事实、关系、未收束点、人物在场与空间关系**；**禁止**把旧稿的措辞、节奏、修辞习惯、网文腔或油腻句式当作续写模板。若上文显八股、堆砌感官词、触犯禁词表或与 system 白描要求相悖，本轮仍须按 **system 统一文风与禁词表** 落笔，**不得**「贴着旧稿语感滑下去」。重新生成同段时亦适用本条。\n` +
         `场景人物线索（取最近 ${DATING_AI_PLOT_HISTORY_MAX} 条剧情**正文**拼接，尾部优先；用于在场人物与空间关系）：\n${sceneHintsClipped || '（暂无）'}\n\n` +
         `最近剧情（最近 ${DATING_AI_PLOT_HISTORY_MAX} 条，**含本轮玩家输入**；按时间先后排列，**末尾最新**；超长时保留末尾；正文已去思维链）：\n${historyClipped || '（暂无历史）'}\n\n` +
+        (datingExtras?.regeneratingWorldBookBaseline
+          ? `【重新生成】本条为对**某一旧 AI 气泡**的重写请求。\n` +
+            `1）**上下文边界**：你只拥有「最近剧情」里**在该条之前的**内容与玩家输入；**切勿**假定或复述你已写过的上一版本条正文——上一版已从本轮材料中剔除，**禁止**对其洗稿、同义复述或微调后交差。\n` +
+            `2）**重写目标**：在满足人设与连续性前提下，须有**可与旧稿区分开**的推进：**新的对白钩子、动作顺序、信息披露或交涉策略**至少占明显比重；若无玩家新指令，也不得把旧稿换一种说法再输出一遍。\n` +
+            `3）「尾声延展」：若该条自上次成功落库后**未被你在人设里手改、也未被后续剧情覆盖**，客户端会将其恢复为**该次补丁写入前**的快照，避免旧稿补丁牵着走；**若你已编辑人设或条目正文已与当轮补丁结果不一致，则保持当前库内最新正文**，你必须以 **system 中注入的当前尾声延展** 为准，勿假定仍是首次生成时的旧条。\n`
+            +
+            (!isVnMode
+              ? `4）**格式**：当前为普通剧情模式，**禁止**输出 VN 标签稿（【旁白】等），仅输出普通段落体。\n\n`
+              : '\n')
+          : '') +
         `请续写下一段剧情。` +
         (datingExtras?.unifiedMemoryAppendix?.trim() ? `\n\n${datingExtras.unifiedMemoryAppendix.trim()}` : '')
   const messages = [
@@ -1054,13 +1113,93 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
     DATING_AI_MAX_OUTPUT_TOKENS,
     Math.max(1800, Math.round(targetChars * 14)) + memTok,
   )
-  const requestPromise = openAiCompatibleChat(apiConfig as any, messages, { temperature: 0.68, max_tokens: maxTokens })
+  /** 固定 120s 在「思维链 + 长正文 + 尾段合并记忆 JSON」时极易误杀；按输出上限与是否带记忆附录放宽（顶 10 分钟） */
+  const memoryHeavy = Boolean(datingExtras?.unifiedMemoryAppendix?.trim())
+  const tokForTimeout = Math.min(maxTokens, 24000)
+  const timeoutMs = Math.min(
+    600_000,
+    Math.max(memoryHeavy ? 180_000 : 120_000, 72_000 + tokForTimeout * (memoryHeavy ? 38 : 26)),
+  )
   const timeoutPromise = new Promise<string>((_, reject) => {
-    window.setTimeout(() => reject(new Error('剧情生成超时（>120s），请重试或降低字数目标。')), 120000)
+    window.setTimeout(
+      () =>
+        reject(
+          new Error(
+            `剧情生成超时（>${Math.round(timeoutMs / 1000)}s）。可尝试：降低「目标字数」、关闭本轮合并记忆要求、或换更快线路/模型后重试。`,
+          ),
+        ),
+      timeoutMs,
+    )
   })
-  const out = await Promise.race([requestPromise, timeoutPromise])
-  const trimmed = expandCharUserPlaceholders(out.trim(), charUserNames)
-  const traceBody = splitDatingAiResponseAndUnifiedMemoryJson(trimmed).plotRaw
+  const requestChatMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [...messages]
+  let out = ''
+  let trimmed = ''
+  let wbExtract: ReturnType<typeof extractWorldBookAfterPatchBlock>
+  let trimmedForPlot = ''
+
+  for (let lexAttempt = 0; ; lexAttempt++) {
+    const requestPromise = openAiCompatibleChat(apiConfig as any, requestChatMessages, {
+      temperature: 0.68,
+      max_tokens: maxTokens,
+    })
+    out = await Promise.race([requestPromise, timeoutPromise])
+    trimmed = expandCharUserPlaceholders(out.trim(), charUserNames)
+    wbExtract = extractWorldBookAfterPatchBlock(trimmed)
+    trimmedForPlot = wbExtract.rest
+    const plotRaw = splitDatingAiResponseAndUnifiedMemoryJson(trimmedForPlot).plotRaw
+    const proseForScan = extractVnVoiceParamsBlock(splitDatingAssistantOutput(plotRaw).content).cleanedText
+    const lexHits = findProseForbiddenHits(proseForScan)
+    if (lexHits.length === 0) break
+    if (lexAttempt >= DATING_LEXICON_RETRY_MAX) {
+      throw new Error(
+        `正文仍含写作禁词（${lexHits.length} 类命中）。可换模型或稍后再试。命中示例：${lexHits.slice(0, 22).join('、')}${lexHits.length > 22 ? '…' : ''}`,
+      )
+    }
+    requestChatMessages.push(
+      { role: 'assistant', content: out.trim() },
+      {
+        role: 'user',
+        content: expandCharUserPlaceholders(buildProseForbiddenRepairUserPrompt(lexHits), charUserNames),
+      },
+    )
+  }
+  let wbAfterAppliedToDb = false
+  let worldBookAfterRevertEntries: WorldBookAfterRevertEntry[] | undefined
+  if (mainCharRow && wbExtract.patches.length) {
+    const snapshot = collectWorldBookAfterRevertSnapshot(mainCharRow, wbExtract.patches)
+    try {
+      const nextCh = applyWorldBookAfterPatchesToCharacter(mainCharRow, wbExtract.patches)
+      if (nextCh) {
+        wbAfterAppliedToDb = true
+        await personaDb.upsertCharacter(nextCh)
+        if (snapshot.length) worldBookAfterRevertEntries = snapshot
+        window.dispatchEvent(
+          new CustomEvent(WORLD_BOOK_AFTER_PATCH_UPDATED_EVENT, {
+            detail: { appliedPatchCount: wbExtract.patches.length },
+          }),
+        )
+      }
+    } catch {
+      /* 约会剧情：世界书补丁写库失败不影响正文落档 */
+    }
+  }
+  const traceBody = splitDatingAiResponseAndUnifiedMemoryJson(trimmedForPlot).plotRaw
+  const chatAfterProtocol = !!(mainCharRow && hasChatAfterWorldBookItems(mainCharRow))
+  const chatAfterDynExpanded =
+    chatAfterProtocol && mainCharRow
+      ? expandCharUserPlaceholders(buildChatAfterWorldBookDynamicSection(mainCharRow), charUserNames).trim()
+      : ''
+  const patchRowsForTrace = buildWorldBookAfterPatchRowsFromSingleCharacter(mainCharRow, wbExtract.patches)
+  const worldBookAfterChatTrace =
+    chatAfterProtocol || wbExtract.patches.length
+      ? buildWorldBookAfterChatTrace({
+          protocolInPrompt: chatAfterProtocol,
+          injectedDynamicSection: chatAfterDynExpanded,
+          patchOutputRulesIncluded: chatAfterProtocol,
+          parsedPatches: patchRowsForTrace,
+          appliedToDb: wbAfterAppliedToDb,
+        })
+      : null
   try {
     void publishDatingOfflineMemoryTrace({
       characterId: character.id,
@@ -1077,11 +1216,12 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
       unsOfflineBlock: unsOffClipped,
       apiConfig,
       rawAssistantOutput: traceBody,
+      worldBookAfterChat: worldBookAfterChatTrace,
     })
   } catch {
     /* 思维溯源写入失败不影响剧情 */
   }
-  return trimmed
+  return { text: trimmedForPlot, worldBookAfterRevertEntries }
 }
 
 export function DatingProvider({ children }: { children: ReactNode }) {
@@ -1220,7 +1360,14 @@ export function DatingProvider({ children }: { children: ReactNode }) {
   const getOnlineMemoryContext = useCallback(
     async (
       characterId: string,
-      relevance?: { userText?: string; plotTail?: string },
+      relevance?: {
+        userText?: string
+        plotTail?: string
+        /**
+         * 重新生成 AI 气泡时传入：仅以该快照拼「尚未总结·线下」，**不要**再从 KV 拉游标后全量（否则会含待重写旧稿）。
+         */
+        offlineUnsummarizedPlotSnapshot?: DatingPlotSnapshotItem[]
+      },
     ): Promise<{
       recentMessages: string
       longTermMemory: string
@@ -1276,13 +1423,21 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       })
 
       let unsummarizedOfflineBlock = ''
-      try {
-        unsummarizedOfflineBlock = await buildUnsummarizedOfflineDatingText(
-          cid,
+      const offlineSnap = relevance?.offlineUnsummarizedPlotSnapshot
+      if (offlineSnap != null) {
+        unsummarizedOfflineBlock = formatOfflineUnsummarizedBlockFromPlotSnapshots(
+          offlineSnap,
           chRow?.name?.trim() || chRow?.wechatNickname?.trim() || null,
         )
-      } catch {
-        unsummarizedOfflineBlock = ''
+      } else {
+        try {
+          unsummarizedOfflineBlock = await buildUnsummarizedOfflineDatingText(
+            cid,
+            chRow?.name?.trim() || chRow?.wechatNickname?.trim() || null,
+          )
+        } catch {
+          unsummarizedOfflineBlock = ''
+        }
       }
 
       return {
@@ -1502,7 +1657,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             }
           }
         }
-        const aiTextRaw = await generateDatingAi(
+        const aiGen = await generateDatingAi(
           char,
           apiConfig,
           plotsForModel,
@@ -1514,14 +1669,17 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           mergedGen,
           datingExtras,
         )
+        const aiTextRaw = aiGen.text
         const plotRawOnly = splitDatingAiResponseAndUnifiedMemoryJson(aiTextRaw).plotRaw
         const parsed = extractAiPlotSections(plotRawOnly)
+        const wbRevertNew = sanitizeWorldBookAfterRevertEntries(aiGen.worldBookAfterRevertEntries)
         const aiPlot: PlotItem = {
           id: uid('ai'),
           type: 'ai',
           timestamp: Date.now(),
           highlightText: char.realName,
           ...initialAiPlotVersions(parsed.content, parsed.logicPass || undefined, parsed.planSummary),
+          worldBookAfterRevertEntries: wbRevertNew.length ? wbRevertNew : undefined,
         }
         const plotsWithAi = [...plotsForModel, aiPlot]
         const archAfter: CharacterArchive = {
@@ -1549,7 +1707,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           plotsSnapshotAfterAi: plotItemsToSnapshots(plotsWithAi),
           char,
           memoryTurnAiPlotId: aiPlot.id,
-        })
+        }).catch(() => {})
         return true
       } catch (e) {
         if (!aiAppended) {
@@ -1646,7 +1804,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             }
           }
         }
-        const aiTextRaw = await generateDatingAi(
+        const aiGenInit = await generateDatingAi(
           char,
           apiConfig,
           [],
@@ -1663,14 +1821,17 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           mergedInitOpts,
           datingExtrasInit,
         )
+        const aiTextRaw = aiGenInit.text
         const plotRawInit = splitDatingAiResponseAndUnifiedMemoryJson(aiTextRaw).plotRaw
         const parsed = extractAiPlotSections(plotRawInit)
+        const wbRevertInit = sanitizeWorldBookAfterRevertEntries(aiGenInit.worldBookAfterRevertEntries)
         const aiPlot: PlotItem = {
           id: uid('init'),
           type: 'ai',
           timestamp: Date.now(),
           highlightText: char.realName,
           ...initialAiPlotVersions(parsed.content, parsed.logicPass || undefined, parsed.planSummary),
+          worldBookAfterRevertEntries: wbRevertInit.length ? wbRevertInit : undefined,
         }
         patchArchive(char.id, (p) => ({
           ...p,
@@ -1696,7 +1857,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           plotsSnapshotAfterAi: plotItemsToSnapshots([aiPlot]),
           char,
           memoryTurnAiPlotId: aiPlot.id,
-        })
+        }).catch(() => {})
       } catch (e) {
         window.alert(e instanceof Error ? e.message : '剧情生成失败')
       } finally {
@@ -1844,7 +2005,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       if (!currentCharacter.id || regeneratingPlotId || loading) return
       const charId = currentCharacter.id
       const char = currentCharacter
-      const archive = allArchives[charId] ?? createDefaultArchive(char)
+      const archive = currentArchive
       const idx = archive.plots.findIndex((p) => p.id === plotId)
       if (idx < 0 || archive.plots[idx]!.type !== 'ai') return
 
@@ -1857,7 +2018,11 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           ? char.prompt
           : `${char.realName}的线下剧情开场（请重写本段 AI：勿复读旧稿，保持人设与硬性输出格式含 <thinking>）`
         const plotTail = formatRecentPlotsForPrompt(before, char.realName, 1600)
-        const onlineCtx = await getOnlineMemoryContext(char.id, { userText: userMsg ?? '', plotTail })
+        const onlineCtx = await getOnlineMemoryContext(char.id, {
+          userText: userMsg ?? '',
+          plotTail,
+          offlineUnsummarizedPlotSnapshot: plotItemsToSnapshots(before),
+        })
         const playerIdentity = await loadPlayerIdentityForDating(char.id)
         if (typeof genOptions?.lengthTargetChars === 'number' && Number.isFinite(genOptions.lengthTargetChars)) {
           const n = Math.max(
@@ -1884,13 +2049,27 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           vnVoiceDisabled: !!archive.vnVoiceDisabled,
         }
         let memoryGatherRegen: UnifiedMemoryGatherResult | null = null
-        let datingExtrasRegen: { unifiedMemoryAppendix?: string } | undefined
+        let datingExtrasRegen: { unifiedMemoryAppendix?: string; regeneratingWorldBookBaseline?: boolean } | undefined
+        const plotSlot = archive.plots[idx]!
+        const wbRevertForRegen = sanitizeWorldBookAfterRevertEntries(plotSlot.worldBookAfterRevertEntries)
+        if (wbRevertForRegen.length) {
+          try {
+            const chRow = await personaDb.getCharacter(char.id)
+            if (chRow) {
+              const restored = applyWorldBookAfterRevertEntries(chRow, wbRevertForRegen)
+              if (restored) await personaDb.upsertCharacter(restored)
+            }
+          } catch {
+            /* 恢复失败则仍用当前人设尝试生成 */
+          }
+        }
         const chatCfgRegen = apiConfig as ApiConfig | null
         if (chatCfgRegen?.apiUrl?.trim() && chatCfgRegen?.apiKey?.trim() && chatCfgRegen?.modelId?.trim()) {
+          /** 须与传给 generateDatingAi 的 history=`before` 一致：不能把本条待重写的旧 AI（及之后剧情）塞进合并记忆摘录，否则会洗稿雷同 */
           memoryGatherRegen = await gatherUnifiedMemoryInputsForDatingTurn({
             characterId: char.id,
             characterRealName: char.realName,
-            datingPlotsSnapshot: plotItemsToSnapshots(archive.plots),
+            datingPlotsSnapshot: plotItemsToSnapshots(before),
             sessionPlayerIdentityId: playerIdentity?.id ?? null,
           })
           if (memoryGatherRegen) {
@@ -1907,10 +2086,16 @@ export function DatingProvider({ children }: { children: ReactNode }) {
                 datingPeerCharacterId: char.id,
                 eligibleLinkedNpcRoster: rosterRegen,
               }),
+              regeneratingWorldBookBaseline: true,
             }
           }
         }
-        const aiTextRaw = await generateDatingAi(
+        if (!datingExtrasRegen) {
+          datingExtrasRegen = { regeneratingWorldBookBaseline: true }
+        } else if (!datingExtrasRegen.regeneratingWorldBookBaseline) {
+          datingExtrasRegen = { ...datingExtrasRegen, regeneratingWorldBookBaseline: true }
+        }
+        const aiGenRegen = await generateDatingAi(
           char,
           apiConfig,
           before,
@@ -1922,14 +2107,19 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           mergedRegenOpts,
           datingExtrasRegen,
         )
+        const aiTextRaw = String(aiGenRegen?.text ?? '')
         const plotRawRegen = splitDatingAiResponseAndUnifiedMemoryJson(aiTextRaw).plotRaw
         const parsed = extractAiPlotSections(plotRawRegen)
-        const nextPlot = appendAiRegenerateVersion(
-          archive.plots[idx]!,
-          parsed.content,
-          parsed.logicPass || undefined,
-          parsed.planSummary,
-        )
+        const nextRevert = sanitizeWorldBookAfterRevertEntries(aiGenRegen.worldBookAfterRevertEntries)
+        const nextPlot: PlotItem = {
+          ...appendAiRegenerateVersion(
+            plotSlot,
+            parsed.content,
+            parsed.logicPass || undefined,
+            parsed.planSummary,
+          ),
+          worldBookAfterRevertEntries: nextRevert.length ? nextRevert : undefined,
+        }
         patchArchive(charId, (p) => ({
           ...p,
           plots: p.plots.map((x, i) => (i === idx ? nextPlot : x)),
@@ -1948,7 +2138,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           plotsSnapshotAfterAi: plotItemsToSnapshots(nextPlots),
           char,
           memoryTurnAiPlotId: plotId,
-        })
+        }).catch(() => {})
       } catch (e) {
         window.alert(e instanceof Error ? e.message : '重新生成失败')
       } finally {
@@ -1956,8 +2146,8 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       }
     },
     [
-      allArchives,
       apiConfig,
+      currentArchive,
       currentCharacter,
       getOnlineMemoryContext,
       loading,

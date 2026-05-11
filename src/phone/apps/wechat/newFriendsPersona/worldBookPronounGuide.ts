@@ -37,7 +37,7 @@ export function formatWorldBookItemLineForPrompt(params: {
   subjectName?: string
   voice?: WorldBookPromptVoice
 }): string {
-  const pr = params.priority === 'before' ? '聊天之前' : '聊天之后'
+  const pr = params.priority === 'before' ? '序言介入' : '尾声延展'
   const body = String(params.content ?? '').trim()
   const voice = params.voice ?? 'character_card'
   return `- [${pr}] ${params.name}：${body} ${worldBookPronounGuideAnnotation(undefined, undefined, voice)}`

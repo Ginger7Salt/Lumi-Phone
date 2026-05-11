@@ -102,6 +102,7 @@ export type AppSlot = {
     | 'wechat'
     | 'takeout'
     | 'weibo'
+    | 'lumiMeet'
     | 'api'
     | 'voiceprint'
     | 'dataArchive'
@@ -431,6 +432,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     { id: 'takeout', label: '外卖', iconImageUrl: '', iconRadius: 18 },
     { id: 'weibo', label: '微博', iconImageUrl: '', iconRadius: 18 },
     { id: 'api', label: 'API设置', iconImageUrl: '', iconRadius: 18 },
+    { id: 'lumiMeet', label: '遇见', iconImageUrl: '', iconRadius: 18 },
     { id: 'voiceprint', label: '声纹档案', iconImageUrl: '', iconRadius: 18 },
     { id: 'dataArchive', label: '数据中心', iconImageUrl: '', iconRadius: 18 },
     { id: 'loreArchive', label: '档案室', iconImageUrl: '', iconRadius: 18 },
@@ -456,6 +458,14 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     },
     takeout: { ...DEFAULT_APP_PAGE_STYLE },
     weibo: { ...DEFAULT_APP_PAGE_STYLE },
+    lumiMeet: {
+      ...DEFAULT_APP_PAGE_STYLE,
+      pageBg: '#f7f6f3',
+      headerBg: 'rgba(255,255,255,0.92)',
+      cardBg: '#ffffff',
+      fontFamily:
+        '"Inter", "Noto Sans SC", system-ui, -apple-system, "PingFang SC", sans-serif',
+    },
     api: { ...DEFAULT_APP_PAGE_STYLE },
     voiceprint: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#ffffff' },
     dataArchive: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#f3efea' },

@@ -29,7 +29,7 @@ type MbtiPersonality = {
   romance: string
 }
 
-// 依据用户提供的“人格世界书”内容，拆成 5 个条目（均放在“聊天之前”）。
+// 依据用户提供的“人格世界书”内容，拆成 5 个条目（均放在「序言介入」/ priority=before）。
 const MBTI_PERSONALITY: Record<MbtiType, MbtiPersonality> = {
   INTJ: {
     title: '建筑师型人格',
@@ -242,7 +242,7 @@ export function buildMbtiPersonalityWorldBookText(mbti?: string | null): string 
     { name: '积极面与阴暗面', content: p.lightDark },
     { name: '恋爱中的表现', content: p.romance },
   ]
-  const lines = items.map((it) => `- [${priority === 'before' ? '聊天之前' : '聊天之后'}] ${it.name}：${String(it.content || '').trim()}`).join('\n')
+  const lines = items.map((it) => `- [${priority === 'before' ? '序言介入' : '尾声延展'}] ${it.name}：${String(it.content || '').trim()}`).join('\n')
   // 只输出 “INFP人格设定” 这种标题文本，避免使用中文书名号影响用户观感/匹配
   return `${bookName}\n${lines}`
 }

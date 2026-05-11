@@ -1,6 +1,7 @@
 import { offlinePlotBodyRelevantToNpcForLinkedExcerpt } from '../dating/offlineDatingNpcSpeakerDetect'
 import { collectCharacterMentionSearchTokens } from '../dating/offlineDatingArchiveResolve'
 import { splitDatingAssistantOutput } from '../dating/plotCoT'
+import { extractVnVoiceParamsBlock } from '../dating/vnVoiceParamsStrip'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { Character } from '../newFriendsPersona/types'
 
@@ -13,7 +14,10 @@ type PlotSnap = { type: string; content: string; timestamp?: number }
 function plotBodyForExcerpt(p: PlotSnap): string {
   const raw = String(p.content || '').trim()
   if (!raw) return ''
-  if (p.type === 'ai') return splitDatingAssistantOutput(raw).content.trim()
+  if (p.type === 'ai') {
+    const prose = splitDatingAssistantOutput(raw).content.trim()
+    return extractVnVoiceParamsBlock(prose).cleanedText.trim()
+  }
   return raw
 }
 

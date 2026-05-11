@@ -38,7 +38,14 @@ import {
 import { buildWorldbookContext } from '../../worldbook/buildWorldbookContext'
 import type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
 import { getWorldbookLoreEntriesSnapshot } from '../../worldbook/worldbookLoreStore'
-import { expandCharUserPlaceholders, resolveCharUserNamesForPrompt } from './charUserPlaceholders'
+import { expandLinkedMemoryPlaceholders, resolveCharUserNamesForPrompt } from './charUserPlaceholders'
+import {
+  buildChatAfterWorldBookDynamicSection,
+  buildWorldBookAfterPatchOutputAppendix,
+  extractWorldBookAfterPatchBlock,
+  hasChatAfterWorldBookItems,
+  type WorldBookAfterPatch,
+} from './newFriendsPersona/worldBookAfterPatch'
 
 export { buildWorldbookContext } from '../../worldbook/buildWorldbookContext'
 export type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
@@ -440,6 +447,11 @@ export function buildSystemContent(params: {
   chatMemberIds?: string[]
   /** 全局微信世界书生效板块；不传则仅注入「全部场景」类世界书 */
   globalWechatPlate?: GlobalWechatPlate
+  /**
+   * 人脉 NPC 世界书中的 `{{id:<人设UUID>}}`：注入前替换为展示名（键为主角 id，值为根人设姓名）。
+   * 不含条目时仍走 char/user 展开；无 id 映射时占位符保留原文。
+   */
+  worldBookPlaceholderIdMap?: Readonly<Record<string, string>>
 }): string {
   const expandNames = resolveCharUserNamesForPrompt({
     character: params.character,
@@ -477,10 +489,17 @@ export function buildSystemContent(params: {
   const pi = buildPlayerIdentitySection(params.playerIdentity)
   const fictionCot = `\n\n${FICTIONAL_COT_APPENDIX}\n`
 
+  const linkedExpand = (raw: string) =>
+    expandLinkedMemoryPlaceholders(raw, {
+      charName: expandNames.charName,
+      userName: expandNames.userName,
+      idToDisplayName: params.worldBookPlaceholderIdMap ?? {},
+    })
+
   if (isLumiAssistant) {
     // 助手模式：不注入「虚构沙盒」免责声明，避免诱导沉浸式扮演。
     const raw = `${LUMI_ASSISTANT_SYSTEM_PROMPT}${loreBlock}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
-    return expandCharUserPlaceholders(raw, expandNames)
+    return linkedExpand(raw)
   }
 
   const wb = buildWorldBookText(params.character)
@@ -495,12 +514,16 @@ export function buildSystemContent(params: {
     if (wb.trim()) {
       extra += `\n---\n【世界书条目（与人设绑定；与上文「档案与世界书」同级、均优先于通用协议；条目间若有冲突以最新或标注为准）】\n${wb}\n`
     }
+    const chatAfterDyn = buildChatAfterWorldBookDynamicSection(params.character)
+    if (chatAfterDyn.trim()) {
+      extra += `\n\n${chatAfterDyn}\n`
+    }
   } else {
     extra += `\n\n---\n【当前状态】未绑定完整人设档案（无世界书）。请以友善、有分寸的微信好友身份交谈，仍须遵守上述通用铁则，且绝不暴露非人类身份。\n`
   }
 
   const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
-  return expandCharUserPlaceholders(rawMain, expandNames)
+  return linkedExpand(rawMain)
 }
 
 function transcriptToMessages(turns: ChatTranscriptTurn[], opts?: { groupChat?: boolean }): OpenAiCompatibleMessage[] {
@@ -673,6 +696,8 @@ export type WeChatPeerReplyResult = {
   bubbles: string[]
   thinking?: string
   danmakuLines?: string[]
+  /** 模型在本轮末尾提交的「尾声延展」世界书覆盖（若有；priority=after） */
+  worldBookPatches?: WorldBookAfterPatch[]
 }
 export const WECHAT_RECALL_ACTION_TOKEN = '[__RECALL__]'
 
@@ -699,12 +724,13 @@ export function parseWeChatPeerPlainReply(raw: string): string[] {
 
 export function parseWeChatPeerReplyWithThinking(raw: string): WeChatPeerReplyResult {
   const t0 = stripAssistantFence(raw)
-  if (!t0) return { bubbles: [] }
+  if (!t0) return { bubbles: [], worldBookPatches: undefined }
   const { visible: noThinking, thinking } = extractThinkingBlock(t0)
-  const { visible, danmakuLines } = extractDanmakuBlock(noThinking)
+  const { rest: afterWbPatch, patches: worldBookPatches } = extractWorldBookAfterPatchBlock(noThinking)
+  const { visible, danmakuLines } = extractDanmakuBlock(afterWbPatch)
   // 兼容模型把换行输出成转义文本 "\\n"，避免多条消息/指令被粘成一行。
   const t = visible.replace(/\\n/g, '\n').trim()
-  if (!t) return { bubbles: [], thinking, danmakuLines }
+  if (!t) return { bubbles: [], thinking, danmakuLines, worldBookPatches }
   const lines = t
     .split(/\r?\n/)
     .flatMap((rawLine) => {
@@ -723,7 +749,7 @@ export function parseWeChatPeerReplyWithThinking(raw: string): WeChatPeerReplyRe
       : source[0] === WECHAT_RECALL_ACTION_TOKEN
         ? [WECHAT_RECALL_ACTION_TOKEN]
         : splitSingleLineWechatBubble(source[0]!)
-  return { bubbles, thinking, danmakuLines }
+  return { bubbles, thinking, danmakuLines, worldBookPatches }
 }
 
 function extractDanmakuBlock(raw: string): { visible: string; danmakuLines: string[] } {
@@ -784,6 +810,15 @@ function expandRecallProtocolLine(line: string): string[] {
 /** @deprecated 请使用 `parseWeChatPeerPlainReply` */
 export const parsePersonaWeChatPlainReply = parseWeChatPeerPlainReply
 
+function appendWorldBookAfterPatchOutputRules(
+  character: Character | null,
+  isLumi: boolean,
+  baseAppendix: string,
+): string {
+  if (isLumi || !character || !hasChatAfterWorldBookItems(character)) return baseAppendix
+  return `${baseAppendix}\n\n${buildWorldBookAfterPatchOutputAppendix()}`
+}
+
 /**
  * 根据当前聊天记录请求对方回复，解析为多条气泡（纯文本换行；与模型输出一致）。
  */
@@ -810,6 +845,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
   /** 档案室法则：当前场景成员 ID（未传时默认仅绑定对方角色） */
   chatMemberIds?: string[]
   globalWechatPlate?: GlobalWechatPlate
+  worldBookPlaceholderIdMap?: Readonly<Record<string, string>>
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -837,6 +873,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
     currentTimeMs: params.currentTimeMs,
     chatMemberIds: wbMemberIds,
     globalWechatPlate: params.globalWechatPlate,
+    worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
   })
   const isLumi = params.promptMode === 'lumi-assistant'
   const busyPrefix = buildBusyPrefix(params.busyContext)
@@ -857,7 +894,11 @@ export async function requestWeChatPeerReplyBubbles(params: {
     : WECHAT_CHARACTER_RECALL_GUIDE
   const outputAppendix = isLumi
     ? WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX
-    : `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`
+    : appendWorldBookAfterPatchOutputRules(
+        params.character,
+        isLumi,
+        `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`,
+      )
   const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${recallGuide}\n\n${outputAppendix}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
 
   const history = transcriptToMessages(params.transcript, { groupChat: params.groupChatTranscript })
@@ -871,7 +912,12 @@ export async function requestWeChatPeerReplyBubbles(params: {
   // 线上已切换为“后台内隐 CoT”，不再要求可见思维链重试。
   const bubbles = parsed.bubbles
   logWeChatAiReplyDebug('text', text, bubbles)
-  return { bubbles: bubbles.length ? bubbles : ['收到。'], thinking: parsed.thinking, danmakuLines: parsed.danmakuLines }
+  return {
+    bubbles: bubbles.length ? bubbles : ['收到。'],
+    thinking: parsed.thinking,
+    danmakuLines: parsed.danmakuLines,
+    worldBookPatches: parsed.worldBookPatches,
+  }
 }
 
 /**
@@ -894,6 +940,7 @@ export async function requestWeChatVoiceCallReplyText(params: {
   currentTimeMs?: number
   chatMemberIds?: string[]
   globalWechatPlate?: GlobalWechatPlate
+  worldBookPlaceholderIdMap?: Readonly<Record<string, string>>
 }): Promise<string> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -913,6 +960,7 @@ export async function requestWeChatVoiceCallReplyText(params: {
     currentTimeMs: params.currentTimeMs,
     chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
     globalWechatPlate: params.globalWechatPlate,
+    worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
   })
   const system = `${base}\n\n---\n【语音通话场景规则】\n${VOICE_CALL_SYSTEM_PROMPT}\n`
   const history = transcriptToMessages(params.transcript)
@@ -1074,6 +1122,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   groupChatTranscript?: boolean
   chatMemberIds?: string[]
   globalWechatPlate?: GlobalWechatPlate
+  worldBookPlaceholderIdMap?: Readonly<Record<string, string>>
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1100,6 +1149,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     currentTimeMs: params.currentTimeMs,
     chatMemberIds: wbMemberIds,
     globalWechatPlate: params.globalWechatPlate,
+    worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
   })
   const isLumi = params.promptMode === 'lumi-assistant'
   const roleName = params.character?.name?.trim() || (isLumi ? 'Lumi' : '对方')
@@ -1125,7 +1175,11 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     : WECHAT_CHARACTER_RECALL_GUIDE
   const outputAppendix = isLumi
     ? WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX
-    : `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`
+    : appendWorldBookAfterPatchOutputRules(
+        params.character,
+        isLumi,
+        `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`,
+      )
   const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${recallGuide}\n\n---\n【图片消息附加要求】\n${imgRules}\n\n${outputAppendix}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
 
   const history = transcriptToMessages(params.transcript, { groupChat: params.groupChatTranscript })
@@ -1157,7 +1211,12 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     const p0 = parseWeChatPeerReplyWithThinking(text)
     const b0 = p0.bubbles
     logWeChatAiReplyDebug('vision-main', text, b0)
-    return { bubbles: b0.length ? b0 : ['收到。'], thinking: p0.thinking, danmakuLines: p0.danmakuLines }
+    return {
+      bubbles: b0.length ? b0 : ['收到。'],
+      thinking: p0.thinking,
+      danmakuLines: p0.danmakuLines,
+      worldBookPatches: p0.worldBookPatches,
+    }
   } catch {
     logConsole(
       'ai',
@@ -1173,7 +1232,12 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
       const p1 = parseWeChatPeerReplyWithThinking(text)
       const b1 = p1.bubbles
       logWeChatAiReplyDebug('vision-alt', text, b1)
-      return { bubbles: b1.length ? b1 : ['收到。'], thinking: p1.thinking, danmakuLines: p1.danmakuLines }
+      return {
+        bubbles: b1.length ? b1 : ['收到。'],
+        thinking: p1.thinking,
+        danmakuLines: p1.danmakuLines,
+        worldBookPatches: p1.worldBookPatches,
+      }
     }
     try {
       // 变体 1：image_url 直接为字符串
@@ -1229,7 +1293,12 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     const p2 = parseWeChatPeerReplyWithThinking(text.trim() ? text : '收到。')
     const b2 = p2.bubbles
     logWeChatAiReplyDebug('vision-fallback-text', text, b2)
-    return { bubbles: b2.length ? b2 : [text.trim() || '收到。'], thinking: p2.thinking, danmakuLines: p2.danmakuLines }
+    return {
+      bubbles: b2.length ? b2 : [text.trim() || '收到。'],
+      thinking: p2.thinking,
+      danmakuLines: p2.danmakuLines,
+      worldBookPatches: p2.worldBookPatches,
+    }
   }
 }
 
@@ -1253,6 +1322,7 @@ export async function requestWeChatPeerReply(params: {
   promptMode?: WeChatChatPromptMode
   chatMemberIds?: string[]
   globalWechatPlate?: GlobalWechatPlate
+  worldBookPlaceholderIdMap?: Readonly<Record<string, string>>
 }): Promise<string> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1274,6 +1344,7 @@ export async function requestWeChatPeerReply(params: {
     currentTimeMs: params.currentTimeMs,
     chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
     globalWechatPlate: params.globalWechatPlate,
+    worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
   })
   const history = transcriptToMessages(params.transcript)
   const messages: OpenAiCompatibleMessage[] = [{ role: 'system', content: system }, ...history]
@@ -1581,6 +1652,7 @@ export async function requestWeChatHeartWhisper(params: {
   unsummarizedGroupNotes?: string
   chatMemberIds?: string[]
   globalWechatPlate?: GlobalWechatPlate
+  worldBookPlaceholderIdMap?: Readonly<Record<string, string>>
 }): Promise<HeartWhisper> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1600,6 +1672,7 @@ export async function requestWeChatHeartWhisper(params: {
     currentTimeMs: params.nowMs,
     chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
     globalWechatPlate: params.globalWechatPlate ?? 'private_chat',
+    worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
   })
   const history = transcriptToMessages(params.transcript.slice(-24))
   const userPronoun = resolveUserPronoun(params.playerIdentity)
@@ -2543,6 +2616,7 @@ export type WeChatGroupMultiSpeakerResult = {
   segments: WeChatGroupMultiSpeakerSegment[]
   thinking?: string
   danmakuLines?: string[]
+  worldBookPatches?: WorldBookAfterPatch[]
 }
 
 export function buildWeChatGroupMultiSpeakerSystem(params: {
@@ -2637,7 +2711,7 @@ export function buildWeChatGroupMultiSpeakerSystem(params: {
     return `${LUMI_ASSISTANT_SYSTEM_PROMPT}\n\n${loreLead}${core}${groupUnsum}${offline}${bias}${time}\n${params.playerSection}${recallGuide ? `\n\n${recallGuide}` : ''}\n\n${outputAppendix}${danmakuInstr ? `\n\n${danmakuInstr}` : ''}\n\n${stickerCat}`
   }
   const fictionCot = `\n\n${FICTIONAL_COT_APPENDIX}\n`
-  return `${loreLead}【群聊多角色输出协议（多角色与 SPEAKER 格式；与上文「档案与世界书」冲突时以档案为准）】\n${core}${groupUnsum}${offline}${bias}\n\n----------\n${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${fictionCot}${params.playerSection}${time}\n\n${recallGuide}\n\n${outputAppendix}${danmakuInstr ? `\n\n${danmakuInstr}` : ''}\n\n${stickerCat}`
+  return `${loreLead}【群聊多角色输出协议（多角色与 SPEAKER 格式；与上文「档案与世界书」冲突时以档案为准）】\n${core}${groupUnsum}${offline}${bias}\n\n----------\n${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${fictionCot}\n${params.playerSection}${time}\n\n${recallGuide}\n\n${outputAppendix}${danmakuInstr ? `\n\n${danmakuInstr}` : ''}\n\n${stickerCat}`
 }
 
 /** 单行是否以群管家/群助手名义开头（与 ChatRoom emit 推断一致） */
@@ -2736,9 +2810,10 @@ export function parseWeChatGroupMultiSpeakerModelText(
 ): WeChatGroupMultiSpeakerResult {
   const t0 = stripAssistantFence(raw)
   const { visible: noThinking, thinking } = extractThinkingBlock(t0)
-  const { visible, danmakuLines } = extractDanmakuBlock(noThinking)
+  const { rest: afterWbPatch, patches: wbPatches } = extractWorldBookAfterPatchBlock(noThinking)
+  const { visible, danmakuLines } = extractDanmakuBlock(afterWbPatch)
   const normalized = visible.replace(/\\n/g, '\n').trim()
-  if (!normalized) return { orderedItems: [], segments: [], thinking, danmakuLines }
+  if (!normalized) return { orderedItems: [], segments: [], thinking, danmakuLines, worldBookPatches: wbPatches }
 
   const lines = normalized
     .split(/\r?\n/)
@@ -2869,7 +2944,7 @@ export function parseWeChatGroupMultiSpeakerModelText(
   const hasMeta = orderedItems.some((x) => x.kind === 'meta')
   if (!segments.length) {
     if (hasMeta) {
-      return { orderedItems, segments: [], thinking, danmakuLines }
+      return { orderedItems, segments: [], thinking, danmakuLines, worldBookPatches: wbPatches }
     }
     const plain = parseWeChatPeerReplyWithThinking(normalized)
     const id = fallbackId
@@ -2892,12 +2967,13 @@ export function parseWeChatGroupMultiSpeakerModelText(
       segments,
       thinking: plain.thinking ?? thinking,
       danmakuLines: plain.danmakuLines?.length ? plain.danmakuLines : danmakuLines,
+      worldBookPatches: wbPatches,
     }
   }
 
   const dbgBubbles = orderedItems.filter((x) => x.kind === 'bubble').map((x) => `<<SPEAKER:${x.characterId}>>${x.text}`)
   logWeChatAiReplyDebug('group-multi', normalized, dbgBubbles)
-  return { orderedItems, segments, thinking, danmakuLines }
+  return { orderedItems, segments, thinking, danmakuLines, worldBookPatches: wbPatches }
 }
 
 export async function requestWeChatGroupMultiSpeakerReplyBubbles(params: {

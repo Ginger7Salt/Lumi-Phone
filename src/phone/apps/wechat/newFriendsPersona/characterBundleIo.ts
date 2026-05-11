@@ -73,6 +73,145 @@ function migrateBundlePublicUrls(bundle: CharacterBundleV5): CharacterBundleV5 {
   }
 }
 
+/**
+ * 导入为「新副本」时角色 id 全部换新，但简介/世界书等处的 `{{id:旧UUID}}` 仍指向导出方 id，
+ * IndexedDB 展开占位符时查不到旧 id，约会列表等会直接显示原串。按 old→new 整包替换。
+ */
+function remapIdPlaceholdersInText(text: string, oldToNew: Map<string, string>): string {
+  if (!text.includes('{{id:')) return text
+  let out = text
+  const pairs = [...oldToNew.entries()]
+    .filter(([o, n]) => o && o !== n)
+    .sort((a, b) => b[0].length - a[0].length)
+  for (const [oldId, newId] of pairs) {
+    const ph = `{{id:${oldId}}}`
+    if (out.includes(ph)) out = out.split(ph).join(`{{id:${newId}}}`)
+  }
+  return out
+}
+
+function remapIfIdPlaceholderString(s: string | undefined, oldToNew: Map<string, string>): string | undefined {
+  if (s == null) return s
+  if (!s.includes('{{id:')) return s
+  return remapIdPlaceholdersInText(s, oldToNew)
+}
+
+function remapCharacterIdPlaceholders(ch: Character, oldToNew: Map<string, string>): Character {
+  const r = (x: string | undefined) => remapIfIdPlaceholderString(x, oldToNew)
+  const out: Character = { ...ch }
+  out.name = r(out.name) ?? out.name
+  out.identity = r(out.identity) ?? out.identity
+  out.mbti = r(out.mbti) ?? out.mbti
+  out.bio = r(out.bio) ?? out.bio
+  out.motto = r(out.motto) ?? out.motto
+  out.openingLines = r(out.openingLines) ?? out.openingLines
+  out.wechatNickname = r(out.wechatNickname) ?? out.wechatNickname
+  out.wechatId = r(out.wechatId) ?? out.wechatId
+  out.wechatSignature = r(out.wechatSignature) ?? out.wechatSignature
+  out.wechatRegion = r(out.wechatRegion) ?? out.wechatRegion
+  out.remark = r(out.remark) ?? out.remark
+  out.height = r(out.height) ?? out.height
+  out.weight = r(out.weight) ?? out.weight
+  out.birthdayMD = r(out.birthdayMD) ?? out.birthdayMD
+  out.zodiac = r(out.zodiac) ?? out.zodiac
+  if (out.interests?.length) out.interests = out.interests.map((x) => r(x) ?? x)
+  if (out.painPoints?.length) out.painPoints = out.painPoints.map((x) => r(x) ?? x)
+  out.worldBooks = (ch.worldBooks ?? []).map((wb) => ({
+    ...wb,
+    name: r(wb.name) ?? wb.name,
+    items: (wb.items ?? []).map((it) => ({
+      ...it,
+      name: r(it.name) ?? it.name,
+      keywords: r(it.keywords) ?? it.keywords,
+      content: r(it.content) ?? it.content,
+    })),
+  }))
+  if (ch.schedule) {
+    out.schedule = {
+      ...ch.schedule,
+      name: r(ch.schedule.name) ?? ch.schedule.name,
+      headers: ch.schedule.headers.map((h) => r(h) ?? h),
+      rows: ch.schedule.rows.map((row) =>
+        row.map((cell) => ({
+          ...cell,
+          content: r(cell.content) ?? cell.content,
+        })),
+      ),
+    }
+  }
+  return out
+}
+
+function remapRelationshipIdPlaceholders(r: Relationship, oldToNew: Map<string, string>): Relationship {
+  const rf = (x: string) => remapIfIdPlaceholderString(x, oldToNew) ?? x
+  return {
+    ...r,
+    relation: rf(r.relation),
+    fromPerspective: rf(r.fromPerspective),
+    toPerspective: rf(r.toPerspective),
+    fromCallsTo: rf(r.fromCallsTo),
+  }
+}
+
+function remapPlayerNetworkLinkIdPlaceholders(l: PlayerNetworkLink, oldToNew: Map<string, string>): PlayerNetworkLink {
+  const rf = (x: string) => remapIfIdPlaceholderString(x, oldToNew) ?? x
+  return {
+    ...l,
+    relationYouToThem: rf(l.relationYouToThem),
+    relationThemToYou: rf(l.relationThemToYou),
+    youSeeThem: rf(l.youSeeThem),
+    theySeeYou: rf(l.theySeeYou),
+    youCallThem: rf(l.youCallThem),
+    theyCallYou: rf(l.theyCallYou),
+  }
+}
+
+function remapWorldBackgroundIdPlaceholders(bg: WorldBackground, oldToNew: Map<string, string>): WorldBackground {
+  const r = (x: string | undefined) => remapIfIdPlaceholderString(x, oldToNew)
+  const rs = (arr: string[]) => arr.map((x) => r(x) ?? x)
+  const s = bg.settings
+  const settings = {
+    worldType: rs(s.worldType),
+    era: rs(s.era),
+    technology: rs(s.technology),
+    supernatural: rs(s.supernatural),
+    geography: rs(s.geography),
+    politics: rs(s.politics),
+    society: rs(s.society),
+    economy: rs(s.economy),
+    religion: rs(s.religion),
+    races: rs(s.races),
+    conflicts: rs(s.conflicts),
+    rules: rs(s.rules),
+    customRuleLines: rs(s.customRuleLines),
+  }
+  const map = bg.map
+  return {
+    ...bg,
+    name: r(bg.name) ?? bg.name,
+    description: r(bg.description) ?? bg.description,
+    settings,
+    map: {
+      ...map,
+      markers: (map.markers ?? []).map((mk) => ({
+        ...mk,
+        name: r(mk.name) ?? mk.name,
+        description: r(mk.description) ?? mk.description,
+      })),
+      regions: (map.regions ?? []).map((reg) => ({
+        ...reg,
+        name: r(reg.name) ?? reg.name,
+      })),
+    },
+    timeline: (bg.timeline ?? []).map((e) => ({
+      ...e,
+      time: r(e.time) ?? e.time,
+      title: r(e.title) ?? e.title,
+      description: r(e.description) ?? e.description,
+    })),
+  }
+}
+
 /** 分享用：去掉角色上导出的「绑定玩家身份」字段，由导入方使用当时选中的身份。 */
 function stripExportedPlayerIdentityBinding(ch: Character): Character {
   const out: Character = { ...ch }
@@ -315,13 +454,19 @@ function cloneBundleWithNewIds(
     })
     .filter((x): x is PlayerNetworkLink => !!x)
 
+  const mainOut = remapCharacterIdPlaceholders(main, oldToNew)
+  const npcsOut = npcs.map((n) => remapCharacterIdPlaceholders(n, oldToNew))
+  const relationshipsOut = relationships.map((rel) => remapRelationshipIdPlaceholders(rel, oldToNew))
+  const linksOut = links.map((lnk) => remapPlayerNetworkLinkIdPlaceholders(lnk, oldToNew))
+  const worldBackgroundOut = worldBackground ? remapWorldBackgroundIdPlaceholders(worldBackground, oldToNew) : null
+
   return {
-    main,
-    npcs,
-    relationships,
+    main: mainOut,
+    npcs: npcsOut,
+    relationships: relationshipsOut,
     graphs,
-    links,
-    worldBackground,
+    links: linksOut,
+    worldBackground: worldBackgroundOut,
     newRootId,
   }
 }

@@ -395,6 +395,7 @@ function normalizeAppPageStyles(parsed: unknown): CustomizationState['appPageSty
     loreArchive: migrateAppPage({ ...def.loreArchive, ...record.loreArchive }),
     recycleBin: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...def.recycleBin, ...record.recycleBin }),
     appearance: migrateAppPage(appearanceMerged),
+    lumiMeet: migrateAppPage({ ...def.lumiMeet, ...record.lumiMeet }),
   }
 }
 

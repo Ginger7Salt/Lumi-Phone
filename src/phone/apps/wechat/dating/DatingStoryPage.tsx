@@ -21,6 +21,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useAnimation } from 'framer-motion'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { personaDb } from '../newFriendsPersona/idb'
@@ -33,6 +34,7 @@ import { formatHeartWhisperGenerateError, HeartWhisperModal } from '../HeartWhis
 import { useDating, vnRollbackJumpStorageKey } from './DatingContext'
 import { splitDatingAssistantOutput } from './plotCoT'
 import { StoryFeed } from './StoryFeed'
+import { extractVnVoiceParamsBlock } from './vnVoiceParamsStrip'
 import { StyleSettingsDrawer } from './StyleSettingsDrawer'
 import { loadDatingStyleTuning, type DatingStyleTuning } from './styleTuningStorage'
 import { DATING_AI_LENGTH_TARGET_MAX, DATING_AI_LENGTH_TARGET_MIN } from './types'
@@ -83,59 +85,6 @@ function vnLineVoiceCacheKvKey(characterId: string) {
 
 function vnLineTtsReqKvKey(characterId: string) {
   return `${VN_LINE_TTS_REQ_KV_PREFIX}${String(characterId || '').trim()}`
-}
-
-function isLikelyVnVoiceParamsArtifactLine(rawLine: string): boolean {
-  const line = String(rawLine || '').trim()
-  if (!line) return false
-  if (/【\s*VN语音参数(?:结束)?\s*】/u.test(line)) return true
-  if (/(?:^|[{"\s,])idx(?:\s*["'}\],]|:)|emotion\s*:|tone\s*:/i.test(line)) {
-    // 仅当行整体看起来像 JSON/参数碎片时才剔除，避免误伤正常剧情。
-    const reduced = line.replace(/[\u4e00-\u9fa5]/g, '').trim()
-    if (/^[\[\]\{\}",:a-z0-9_\-\s.]+$/i.test(reduced)) return true
-  }
-  return false
-}
-
-function extractVnVoiceParamsBlock(raw: string): { cleanedText: string; items: Array<{ idx: number; emotion: string; tone: string }> } {
-  const source = String(raw || '')
-  const startMatch = /【\s*VN语音参数\s*】/u.exec(source)
-  if (!startMatch || startMatch.index < 0) {
-    const cleanedText = source
-      .split(/\r?\n/)
-      .map((x) => x.trim())
-      .filter((x) => x && !isLikelyVnVoiceParamsArtifactLine(x))
-      .join('\n')
-      .trim()
-    return { cleanedText, items: [] }
-  }
-  const start = startMatch.index
-  const endRegex = /【\s*VN语音参数结束\s*】/gu
-  endRegex.lastIndex = start + startMatch[0].length
-  const endMatch = endRegex.exec(source)
-  const end = endMatch ? endMatch.index : -1
-  const block = end >= 0 ? source.slice(start, end + endMatch![0].length) : source.slice(start)
-  const cleanedTextRaw = source.slice(0, start) + (end >= 0 ? source.slice(end + endMatch![0].length) : '')
-  const cleanedText = cleanedTextRaw
-    .split(/\r?\n/)
-    .map((x) => x.trim())
-    .filter((x) => x && !isLikelyVnVoiceParamsArtifactLine(x))
-    .join('\n')
-    .trim()
-  const jsonText = block.match(/\[[\s\S]*?\]/)?.[0] || '[]'
-  try {
-    const arr = JSON.parse(jsonText) as Array<{ idx?: unknown; emotion?: unknown; tone?: unknown }>
-    const items = (Array.isArray(arr) ? arr : [])
-      .map((x) => ({
-        idx: Number((x as any)?.idx),
-        emotion: String((x as any)?.emotion ?? '').trim(),
-        tone: String((x as any)?.tone ?? '').trim(),
-      }))
-      .filter((x) => Number.isFinite(x.idx) && x.idx >= 0 && !!x.emotion && !!x.tone)
-    return { cleanedText, items }
-  } catch {
-    return { cleanedText, items: [] }
-  }
 }
 
 function parseIdentityTag(tag: string): { text: string; isPainPoint: boolean } {
@@ -1157,6 +1106,24 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const VN_MENU_H = 320
 
   const isVn = currentArchive.modePreference === 'vn'
+
+  const offlinePlotGenBlocking =
+    !isVn && (loading || Boolean(regeneratingPlotId) || branchesLoading)
+  const offlinePlotGenCaption = useMemo(() => {
+    if (!offlinePlotGenBlocking) return ''
+    if (regeneratingPlotId) return '正在重新生成剧情…'
+    if (loading) return '正在生成剧情…'
+    return '正在准备分支选项…'
+  }, [offlinePlotGenBlocking, loading, regeneratingPlotId])
+
+  useEffect(() => {
+    if (!offlinePlotGenBlocking) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [offlinePlotGenBlocking])
 
   const [storyGlobalDm, setStoryGlobalDm] = useState<WeChatGlobalSettingsRow | null>(null)
   const [storyPeerDmRow, setStoryPeerDmRow] = useState<CharacterDanmakuSettingsRow | null>(null)
@@ -4566,6 +4533,29 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           void generateHeartWhisper()
         }}
       />
+
+      {offlinePlotGenBlocking
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[9500] flex items-center justify-center bg-black/45 p-6 backdrop-blur-[2px]"
+              role="alertdialog"
+              aria-modal="true"
+              aria-busy="true"
+              aria-labelledby="offline-plot-gen-title"
+            >
+              <div className="w-full max-w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-stone-200/90 bg-white px-5 py-6 text-center shadow-2xl">
+                <div className="mx-auto flex size-11 items-center justify-center rounded-full bg-stone-100">
+                  <Loader2 className="size-6 animate-spin text-stone-700" strokeWidth={1.75} aria-hidden />
+                </div>
+                <p id="offline-plot-gen-title" className="mt-4 text-[15px] font-semibold text-stone-900">
+                  {offlinePlotGenCaption}
+                </p>
+                <p className="mt-2 text-[12px] leading-relaxed text-stone-500">生成完成前请勿操作本页</p>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

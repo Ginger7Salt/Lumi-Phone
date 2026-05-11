@@ -7,8 +7,10 @@ type Page = 'select' | 'story'
 
 function DatingSystemInner({
   onVnChromeChange,
+  onOpenPersonaManager,
 }: {
   onVnChromeChange?: (hidden: boolean) => void
+  onOpenPersonaManager?: () => void
 }) {
   const [page, setPage] = useState<Page>('select')
 
@@ -21,7 +23,7 @@ function DatingSystemInner({
   }, [onVnChromeChange, page])
 
   return page === 'select' ? (
-    <DatingRoleSelectPage onEnterStory={() => setPage('story')} />
+    <DatingRoleSelectPage onEnterStory={() => setPage('story')} onOpenPersonaManager={onOpenPersonaManager} />
   ) : (
     <DatingStoryPage onBackToSelect={() => setPage('select')} />
   )
@@ -29,12 +31,14 @@ function DatingSystemInner({
 
 export function DatingSystem({
   onVnChromeChange,
+  onOpenPersonaManager,
 }: {
   onVnChromeChange?: (hidden: boolean) => void
+  onOpenPersonaManager?: () => void
 }) {
   return (
     <DatingProvider>
-      <DatingSystemInner onVnChromeChange={onVnChromeChange} />
+      <DatingSystemInner onVnChromeChange={onVnChromeChange} onOpenPersonaManager={onOpenPersonaManager} />
     </DatingProvider>
   )
 }

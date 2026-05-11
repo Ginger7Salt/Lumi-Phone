@@ -1,7 +1,40 @@
+/** 单条「尾声延展」补丁在溯源中的展示（写库前从人设解析旧文，写库后正文为模型提交的 newContent；priority=after） */
+export type MemoryTraceWorldBookAfterPatchRow = {
+  characterId?: string
+  worldBookId: string
+  itemId: string
+  /** 解析到的世界书名称（写库前自人设） */
+  bookName?: string
+  /** 解析到的条目名称 */
+  itemName?: string
+  /** 写库前该条目正文（未匹配到条目时为空） */
+  previousContent: string
+  /** 模型提交的替换后正文（与写库一致，过长时发布端已截断） */
+  newContentFull: string
+}
+
+/** 思维溯源：本回合「尾声延展」世界书快照是否进 prompt、模型是否回传覆盖 JSON、是否写库 */
+export type MemoryTraceWorldBookAfterChat = {
+  /** 已向模型注入「尾声延展」可变条目快照（在场角色有已启用的 priority=after 条目） */
+  protocolInPrompt: boolean
+  /** 与 system 中注入的快照同源（占位符已展开；无则空串） */
+  injectedDynamicSection: string
+  /** 是否附带 ---WB_AFTER_PATCH--- 输出说明 */
+  patchOutputRulesIncluded: boolean
+  /** 从模型输出解析到的补丁 + 写库前旧正文对照 */
+  parsedPatches: MemoryTraceWorldBookAfterPatchRow[]
+  /** 至少一条补丁成功写入人设库 */
+  appliedToDb: boolean
+  /** 已要求输出补丁协议，但解析结果为空（模型未输出或 JSON 无效） */
+  modelOmittedPatchBlock: boolean
+}
+
 /** 思维溯源：一轮模型回复所加载的上下文矩阵（与注入逻辑对齐） */
 export type MemoryTraceData = {
   lastReply: string
   charName: string
+  /** 可选：旧持久化记录无此字段 */
+  worldBookAfterChat?: MemoryTraceWorldBookAfterChat | null
   contextMatrix: {
     baseDirectives: {
       /** 兼容旧版：简短标签；新版以 personaDetail 全文为准 */
@@ -112,9 +145,42 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
     }
   }
 
+  let worldBookAfterChat: MemoryTraceWorldBookAfterChat | null | undefined
+  const wba = o.worldBookAfterChat
+  if (wba && typeof wba === 'object') {
+    const w = wba as Record<string, unknown>
+    const parsedPatches: MemoryTraceWorldBookAfterChat['parsedPatches'] = []
+    const pp = w.parsedPatches
+    if (Array.isArray(pp)) {
+      for (const x of pp) {
+        if (!x || typeof x !== 'object') continue
+        const p = x as Record<string, unknown>
+        const cid = p.characterId != null ? asStr(p.characterId).trim() : ''
+        parsedPatches.push({
+          characterId: cid || undefined,
+          worldBookId: asStr(p.worldBookId),
+          itemId: asStr(p.itemId),
+          bookName: asStr(p.bookName) || undefined,
+          itemName: asStr(p.itemName) || undefined,
+          previousContent: asStr(p.previousContent),
+          newContentFull: asStr(p.newContentFull) || asStr(p.newContentPreview),
+        })
+      }
+    }
+    worldBookAfterChat = {
+      protocolInPrompt: Boolean(w.protocolInPrompt),
+      injectedDynamicSection: asStr(w.injectedDynamicSection),
+      patchOutputRulesIncluded: Boolean(w.patchOutputRulesIncluded),
+      parsedPatches,
+      appliedToDb: Boolean(w.appliedToDb),
+      modelOmittedPatchBlock: Boolean(w.modelOmittedPatchBlock),
+    }
+  }
+
   return {
     lastReply,
     charName: charName || '角色',
+    worldBookAfterChat,
     contextMatrix: {
       baseDirectives: {
         persona,

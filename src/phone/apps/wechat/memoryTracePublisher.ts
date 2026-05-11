@@ -7,7 +7,16 @@ import { personaDb } from './newFriendsPersona/idb'
 import { expandCharUserPlaceholders, resolveCharUserNamesForPrompt } from './charUserPlaceholders'
 import { buildMemoryRelevanceHaystack } from './wechatMemoryPromptBlocks'
 import { listUnsummarizedOfflinePlotTraceItems } from './dating/loadOfflineDatingPlotsForWechatPrompt'
-import type { MemoryTraceData } from './memoryTraceTypes'
+import type {
+  MemoryTraceData,
+  MemoryTraceWorldBookAfterChat,
+  MemoryTraceWorldBookAfterPatchRow,
+} from './memoryTraceTypes'
+import {
+  buildChatAfterWorldBookDynamicSection,
+  hasChatAfterWorldBookItems,
+  type WorldBookAfterPatch,
+} from './newFriendsPersona/worldBookAfterPatch'
 import { setLastMemoryTrace } from './memoryTraceStore'
 import type { ChatTranscriptTurn } from './wechatChatAi'
 import { WECHAT_HISTORY_MAX_MESSAGES, buildCharacterCard, buildWorldBookText } from './wechatChatAi'
@@ -117,6 +126,105 @@ function activeSessionMessageCount(transcript: ChatTranscriptTurn[]): number {
   return Math.min(countTranscriptTurns(transcript), WECHAT_HISTORY_MAX_MESSAGES)
 }
 
+/** 与 worldBookAfterPatch 中 newContent 上限对齐，避免溯源 JSON 过大 */
+const MAX_TRACE_WB_PATCH_BODY_CHARS = 12000
+
+function clipTracePatchBody(s: string, max = MAX_TRACE_WB_PATCH_BODY_CHARS): string {
+  const t = String(s ?? '').trim()
+  if (t.length <= max) return t
+  return `${t.slice(0, max)}\n\n…【正文过长，思维溯源已截断】`
+}
+
+function findWorldBookItemMetaOnCharacter(
+  character: Character | null | undefined,
+  patch: Pick<WorldBookAfterPatch, 'worldBookId' | 'itemId'>,
+): { bookName: string; itemName: string; previousContent: string } | null {
+  if (!character?.worldBooks?.length) return null
+  const wb = character.worldBooks.find((w) => w.id === patch.worldBookId)
+  const it = wb?.items?.find((i) => i.id === patch.itemId)
+  if (!wb || !it) return null
+  return {
+    bookName: String(wb.name ?? '').trim() || '世界书',
+    itemName: String(it.name ?? '').trim() || '条目',
+    previousContent: String(it.content ?? '').trim(),
+  }
+}
+
+/** 私聊 / 约会：补丁均针对同一 `character` 快照（须为写库前内存对象） */
+export function buildWorldBookAfterPatchRowsFromSingleCharacter(
+  character: Character | null | undefined,
+  patches: WorldBookAfterPatch[],
+): MemoryTraceWorldBookAfterPatchRow[] {
+  const out: MemoryTraceWorldBookAfterPatchRow[] = []
+  for (const p of patches) {
+    const meta = findWorldBookItemMetaOnCharacter(character, p)
+    out.push({
+      characterId: p.characterId?.trim() || undefined,
+      worldBookId: p.worldBookId.trim(),
+      itemId: p.itemId.trim(),
+      bookName: meta?.bookName,
+      itemName: meta?.itemName,
+      previousContent: clipTracePatchBody(meta?.previousContent ?? ''),
+      newContentFull: clipTracePatchBody(p.newContent),
+    })
+  }
+  return out
+}
+
+/** 群聊：按每条补丁的 characterId 解析写库前人设（未带 id 时用主 NPC） */
+export async function buildWorldBookAfterPatchRowsForGroupChat(
+  patches: WorldBookAfterPatch[],
+  primaryCharacter: Character | null,
+): Promise<MemoryTraceWorldBookAfterPatchRow[]> {
+  const cache = new Map<string, Character | null>()
+  const load = async (cid: string) => {
+    const k = cid.trim()
+    if (!k) return null
+    if (cache.has(k)) return cache.get(k) ?? null
+    try {
+      const row = await personaDb.getCharacter(k)
+      cache.set(k, row)
+      return row
+    } catch {
+      cache.set(k, null)
+      return null
+    }
+  }
+  const out: MemoryTraceWorldBookAfterPatchRow[] = []
+  for (const p of patches) {
+    const explicit = p.characterId?.trim()
+    const ch = explicit ? await load(explicit) : primaryCharacter
+    const meta = findWorldBookItemMetaOnCharacter(ch, p)
+    out.push({
+      characterId: explicit || undefined,
+      worldBookId: p.worldBookId.trim(),
+      itemId: p.itemId.trim(),
+      bookName: meta?.bookName,
+      itemName: meta?.itemName,
+      previousContent: clipTracePatchBody(meta?.previousContent ?? ''),
+      newContentFull: clipTracePatchBody(p.newContent),
+    })
+  }
+  return out
+}
+
+export function buildWorldBookAfterChatTrace(params: {
+  protocolInPrompt: boolean
+  injectedDynamicSection: string
+  patchOutputRulesIncluded: boolean
+  parsedPatches: MemoryTraceWorldBookAfterPatchRow[]
+  appliedToDb: boolean
+}): MemoryTraceWorldBookAfterChat {
+  return {
+    protocolInPrompt: params.protocolInPrompt,
+    injectedDynamicSection: params.injectedDynamicSection.trim(),
+    patchOutputRulesIncluded: params.patchOutputRulesIncluded,
+    parsedPatches: params.parsedPatches,
+    appliedToDb: params.appliedToDb,
+    modelOmittedPatchBlock: params.patchOutputRulesIncluded && params.parsedPatches.length === 0,
+  }
+}
+
 /** 当前全局玩家身份展示名：人设未绑定身份或绑定记录缺省时，与记忆注入一致用于 `{{user}}` */
 async function resolvePlayerDisplayFallbackForTrace(): Promise<string> {
   try {
@@ -173,6 +281,10 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
   globalWechatPlate: GlobalWechatPlate
   apiConfig: Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null
   replyBubbles: string[]
+  /** 模型输出中解析的「尾声延展」补丁；私聊仅对当前人设 */
+  worldBookPatches?: WorldBookAfterPatch[] | null
+  /** 至少一条补丁已写入 IndexedDB 人设 */
+  worldBookAfterApplied?: boolean
 }): Promise<void> {
   const cid = params.character?.id?.trim()
   if (!cid) return
@@ -237,9 +349,26 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
 
   const lastReply = lastNonEmptyBubbleText(params.replyBubbles)
 
+  const chatAfterProtocol = hasChatAfterWorldBookItems(params.character)
+  const chatAfterDynExpanded = chatAfterProtocol
+    ? expand(buildChatAfterWorldBookDynamicSection(params.character)).trim()
+    : ''
+  const patchRows = buildWorldBookAfterPatchRowsFromSingleCharacter(
+    params.character,
+    params.worldBookPatches ?? [],
+  )
+  const worldBookAfterChat = buildWorldBookAfterChatTrace({
+    protocolInPrompt: chatAfterProtocol,
+    injectedDynamicSection: chatAfterDynExpanded,
+    patchOutputRulesIncluded: chatAfterProtocol,
+    parsedPatches: patchRows,
+    appliedToDb: params.worldBookAfterApplied === true,
+  })
+
   const data: MemoryTraceData = {
     lastReply: lastReply || '（本轮无可见文本气泡）',
     charName: params.charDisplayName.trim() || params.character?.name?.trim() || '角色',
+    worldBookAfterChat,
     contextMatrix: {
       baseDirectives: {
         persona: personaTagsFromCharacter(params.character),
@@ -276,6 +405,12 @@ export async function publishWeChatGroupMemoryTrace(params: {
   wbGroupCharIds: string[]
   apiConfig: Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null
   replyBubbles: string[]
+  /** 与群 system 追加的 `buildAggregateGroupChatAfterPatchItemsSection` 同源（未展开占位符） */
+  groupChatAfterInjectedRaw?: string | null
+  /** 已向模型追加 ---WB_AFTER_PATCH--- 说明 */
+  patchRulesIncluded?: boolean
+  worldBookPatches?: WorldBookAfterPatch[] | null
+  worldBookAfterApplied?: boolean
 }): Promise<void> {
   const cid = params.primaryNpcCharacterId.trim()
   if (!cid) return
@@ -323,9 +458,23 @@ export async function publishWeChatGroupMemoryTrace(params: {
 
   const lastReply = lastNonEmptyBubbleText(params.replyBubbles)
 
+  const patchRules = params.patchRulesIncluded === true
+  const injRaw = String(params.groupChatAfterInjectedRaw ?? '').trim()
+  const protocolGroup = patchRules || injRaw.length > 0
+  const injectedDynamicSection = injRaw ? expand(injRaw).trim() : ''
+  const patchRows = await buildWorldBookAfterPatchRowsForGroupChat(params.worldBookPatches ?? [], primaryChar)
+  const worldBookAfterChat = buildWorldBookAfterChatTrace({
+    protocolInPrompt: protocolGroup,
+    injectedDynamicSection,
+    patchOutputRulesIncluded: patchRules,
+    parsedPatches: patchRows,
+    appliedToDb: params.worldBookAfterApplied === true,
+  })
+
   const data: MemoryTraceData = {
     lastReply: lastReply || '（本轮无可见文本气泡）',
     charName: params.groupName.trim() || '群聊',
+    worldBookAfterChat,
     contextMatrix: {
       baseDirectives: {
         persona: [`多角色会话`, `主参考记忆：${params.primaryNpcDisplayName}`],
@@ -367,6 +516,7 @@ export async function publishDatingOfflineMemoryTrace(params: {
   unsOfflineBlock: string
   apiConfig: { apiUrl?: string; apiKey?: string; modelId?: string } | null
   rawAssistantOutput: string
+  worldBookAfterChat?: MemoryTraceWorldBookAfterChat | null
 }): Promise<void> {
   const cid = params.characterId.trim()
   if (!cid) return
@@ -410,6 +560,7 @@ export async function publishDatingOfflineMemoryTrace(params: {
   const data: MemoryTraceData = {
     lastReply: lastReply || '（本轮无正文）',
     charName: params.charName.trim() || '约会',
+    worldBookAfterChat: params.worldBookAfterChat ?? null,
     contextMatrix: {
       baseDirectives: {
         persona: [...params.identityTags].slice(0, 12),

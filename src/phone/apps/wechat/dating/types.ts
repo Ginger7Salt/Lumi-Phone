@@ -89,6 +89,19 @@ export type CharacterInfo = {
   prompt: string
 }
 
+/** 本段 AI 剧情曾成功写入的「尾声延展」补丁：重新生成时用于把人设条目恢复为补丁前正文，避免新稿被当轮覆写牵着走 */
+export type WorldBookAfterRevertEntry = {
+  worldBookId: string
+  itemId: string
+  /** 应用该轮补丁前该条目的正文（空串表示当时为空） */
+  contentBefore: string
+  /**
+   * 该轮补丁成功写入后的正文（与模型 newContent 对齐）。
+   * 重新生成时：若人设里当前正文与此不一致，视为用户已手改或后续剧情已覆盖，**跳过**本条回滚，以当前库为准。
+   */
+  contentAfterPatch?: string
+}
+
 export type PlotItem = {
   id: string
   type: PlotItemType
@@ -105,6 +118,11 @@ export type PlotItem = {
   versionLogicPasses?: (string | undefined)[]
   /** 当前展示版本下标，默认指向最新 */
   currentVersionIndex?: number
+  /**
+   * 本条 AI 最近一次**成功落库**的尾声延展补丁所对应的「补丁前」快照；仅用于重新生成时恢复人设。
+   * 若最近一次完成本条时模型未提交补丁，则为 undefined。
+   */
+  worldBookAfterRevertEntries?: WorldBookAfterRevertEntry[]
 }
 
 export type BranchOption = {

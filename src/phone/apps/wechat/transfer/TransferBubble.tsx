@@ -1,32 +1,149 @@
-import { ArrowLeftRight } from 'lucide-react'
+import { Check, RotateCcw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import type { LumiTransferRecord } from './lumiTransferStorage'
 import { getLumiTransferFresh } from './lumiTransferStorage'
 
-const GOLD = '#c9a76a'
-const GOLD_SOFT = 'rgba(201, 167, 106, 0.85)'
+export type TransferBubbleVisualStatus = 'pending' | 'accepted' | 'returned'
 
-function statusLabel(rec: LumiTransferRecord | null): { line: string; sub: string } {
-  if (!rec) return { line: '¥ —', sub: '…' }
-  const amt = `¥ ${rec.amount.toFixed(2)}`
-  if (rec.status === 'pending') return { line: amt, sub: '待查收 · Pending' }
-  if (rec.status === 'accepted') return { line: amt, sub: '已查收 · Accepted' }
-  return { line: amt, sub: '已退还 · Returned' }
+/** outgoing：会话里己方气泡上的转账（我发出的）；incoming：对方发来的转账 */
+export type TransferBubblePerspective = 'outgoing' | 'incoming'
+
+export type TransferBubbleFaceProps = {
+  status: TransferBubbleVisualStatus
+  /** null 表示记录未就绪，金额展示占位 */
+  amountYuan: number | null
+  remark?: string
+  perspective?: TransferBubblePerspective
+}
+
+function formatAmountLine(amountYuan: number | null): string {
+  if (amountYuan == null || !Number.isFinite(amountYuan)) return '¥ —'
+  const s = amountYuan.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return `¥ ${s}`
 }
 
 /**
- * Lumi 转账聊天气泡：白卡片 + 铂金钱标 + 金额 + 状态（状态来自 localStorage）。
+ * 转账气泡纯 UI 面：私人银行式左铂金锚线 + 金额 mono + 状态文案。
+ */
+export function TransferBubbleFace({
+  status,
+  amountYuan,
+  remark,
+  perspective = 'incoming',
+}: TransferBubbleFaceProps) {
+  const pending = status === 'pending'
+  const accepted = status === 'accepted'
+  const returned = status === 'returned'
+  const outgoing = perspective === 'outgoing'
+  const r = (remark ?? '').trim()
+
+  const leftBar =
+    pending ? 'border-l-[#D4AF37]' : accepted ? 'border-l-[#B8D4C8]' : 'border-l-[#9CA3AF]'
+  const faceShadow =
+    returned
+      ? 'shadow-[0_2px_10px_rgba(15,23,42,0.04)]'
+      : accepted
+        ? 'shadow-[0_4px_12px_rgba(15,23,42,0.05)]'
+        : 'shadow-[0_4px_15px_rgba(212,175,55,0.08)]'
+
+  return (
+    <div
+      className={`select-none text-left transition-opacity duration-150 ease-out ${
+        pending ? 'w-[min(240px,72vw)] max-w-full shrink-0' : 'max-w-[min(280px,72vw)]'
+      } ${accepted ? 'opacity-60' : 'opacity-100'}`}
+    >
+      <div
+        className={`rounded-[14px] border-l-2 pl-[14px] pr-3.5 py-3 transition-[background-color,box-shadow,border-color] duration-150 ease-out ${leftBar} ${faceShadow} ${
+          returned ? 'bg-[#F9FAFB]' : 'bg-white'
+        }`}
+      >
+        <p
+          className={`text-[17px] font-semibold tabular-nums tracking-tight transition-colors duration-300 ${
+            returned ? 'text-[#CBD5E1]' : 'text-[#0f172a]'
+          }`}
+          style={{ fontFamily: 'ui-monospace, "DIN Alternate", "Helvetica Neue", sans-serif' }}
+        >
+          {formatAmountLine(amountYuan)}
+        </p>
+        {r ? (
+          <p
+            className={`mt-1 truncate text-[11px] transition-colors duration-300 ${
+              returned ? 'text-[#CBD5E1]' : accepted ? 'text-[#94a3b8]' : 'text-[#64748B]'
+            }`}
+          >
+            {r}
+          </p>
+        ) : null}
+
+        <div
+          className={`mt-1.5 flex items-center gap-1.5 text-[11px] ${returned ? 'w-full justify-between text-[#64748B]' : 'text-[#475569]'}`}
+        >
+          {pending ? (
+            outgoing ? (
+              <>
+                <span className="font-medium">待对方收款</span>
+                <span className="text-[#94a3b8]">· Awaiting acceptance</span>
+              </>
+            ) : (
+              <>
+                <span className="font-medium">转账给您</span>
+                <span className="text-[#94a3b8]">· Transfer to you</span>
+              </>
+            )
+          ) : accepted ? (
+            outgoing ? (
+              <>
+                <span className="font-medium">对方已收款</span>
+                <span className="text-[#94a3b8]">· Received</span>
+                <Check className="size-3.5 shrink-0 text-[#94a3b8]" strokeWidth={2} aria-hidden />
+              </>
+            ) : (
+              <>
+                <span className="font-medium">已收款</span>
+                <span className="text-[#94a3b8]">· Accepted</span>
+                <Check className="size-3.5 shrink-0 text-[#94a3b8]" strokeWidth={2} aria-hidden />
+              </>
+            )
+          ) : outgoing ? (
+            <>
+              <span className="font-medium">对方已退还</span>
+              <span className="text-[#94a3b8]">· Returned</span>
+              <RotateCcw className="size-3.5 shrink-0 text-[#94a3b8]" strokeWidth={2} aria-hidden />
+            </>
+          ) : (
+            <>
+              <span className="font-medium">已退还</span>
+              <span className="text-[#94a3b8]">· Returned</span>
+              <RotateCcw className="size-3.5 shrink-0 text-[#94a3b8]" strokeWidth={2} aria-hidden />
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function recordToFace(rec: LumiTransferRecord | null): TransferBubbleFaceProps {
+  if (!rec) return { status: 'pending', amountYuan: null, remark: undefined }
+  if (rec.status === 'pending') return { status: 'pending', amountYuan: rec.amount, remark: rec.remark }
+  if (rec.status === 'accepted') return { status: 'accepted', amountYuan: rec.amount, remark: rec.remark }
+  return { status: 'returned', amountYuan: rec.amount, remark: rec.remark }
+}
+
+/**
+ * Lumi 转账聊天气泡：浅色铂金锚线 + 金额 mono；状态来自 localStorage。
  */
 export function TransferBubble({
   transferId,
   getCurrentTime,
   onRefresh,
+  perspective = 'incoming',
 }: {
   transferId: string
   getCurrentTime: () => number
-  /** 父级 tick 时递增以触发重读 */
   onRefresh?: number
+  perspective?: TransferBubblePerspective
 }) {
   const [rec, setRec] = useState<LumiTransferRecord | null>(() => getLumiTransferFresh(transferId, getCurrentTime))
 
@@ -49,61 +166,29 @@ export function TransferBubble({
     return () => window.clearInterval(id)
   }, [pending, transferId, getCurrentTime])
 
-  const { line, sub } = statusLabel(rec)
-  const remark = (rec?.remark ?? '').trim()
-  const muted = rec?.status === 'accepted' || rec?.status === 'returned'
-  const returned = rec?.status === 'returned'
+  const face = recordToFace(rec)
+  return <TransferBubbleFace {...face} perspective={perspective} />
+}
+
+/** Story / 验收：四种转账视觉（含记录未就绪占位） */
+export function TransferBubbleVisualMocks() {
+  const rows: { label: string; props: TransferBubbleFaceProps }[] = [
+    { label: 'A · 待收款', props: { status: 'pending', amountYuan: 5200, remark: '房租' } },
+    { label: 'B · 已收款', props: { status: 'accepted', amountYuan: 5200, remark: '房租' } },
+    { label: 'C · 已退还', props: { status: 'returned', amountYuan: 5200, remark: '房租' } },
+    { label: 'D · 待收款（无本地记录）', props: { status: 'pending', amountYuan: null } },
+    { label: 'E · 己方发出·待收', props: { status: 'pending', amountYuan: 88, remark: '咖啡', perspective: 'outgoing' } },
+    { label: 'F · 己方发出·对方已收', props: { status: 'accepted', amountYuan: 88, remark: '咖啡', perspective: 'outgoing' } },
+  ]
   return (
-    <div
-      className={`select-none text-left transition-opacity duration-300 ${
-        pending ? 'w-[min(220px,72vw)] max-w-full shrink-0 overflow-hidden' : 'max-w-[min(280px,72vw)]'
-      }`}
-      style={{
-        borderRadius: 14,
-        border: returned ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.10)',
-        background: returned
-          ? 'linear-gradient(180deg, #151515 0%, #0b0b0b 100%)'
-          : 'linear-gradient(180deg, #1a1a1a 0%, #0f0f0f 100%)',
-        padding: '12px 14px',
-        opacity: muted ? 0.55 : 1,
-        boxShadow: '0 10px 28px rgba(0,0,0,0.32)',
-      }}
-    >
-      <div className="flex min-w-0 items-center gap-3">
-        <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border"
-          style={{
-            borderColor: returned ? 'rgba(201, 167, 106, 0.20)' : 'rgba(201, 167, 106, 0.42)',
-            background: 'rgba(255,255,255,0.04)',
-            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06)',
-          }}
-        >
-          <ArrowLeftRight
-            className="size-[18px]"
-            strokeWidth={1.5}
-            style={{ color: returned ? 'rgba(201, 167, 106, 0.55)' : GOLD }}
-            aria-hidden
-          />
+    <div className="space-y-3 rounded-2xl bg-[#ececec] p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-500">Transfer · mock</p>
+      {rows.map((r) => (
+        <div key={r.label} className="space-y-1">
+          <p className="text-[10px] text-neutral-500">{r.label}</p>
+          <TransferBubbleFace {...r.props} />
         </div>
-        <div className="min-w-0 flex-1">
-          <p
-            className={`truncate text-[16px] font-semibold tabular-nums ${returned ? 'text-white/70' : 'text-white/90'}`}
-            style={{ fontFamily: 'ui-monospace, \"DIN Alternate\", sans-serif' }}
-          >
-            {line}
-          </p>
-          {remark ? (
-            <p className="mt-1 truncate text-[12px]" style={{ color: returned ? 'rgba(255,255,255,0.45)' : GOLD_SOFT }}>
-              {remark}
-            </p>
-          ) : null}
-          <p
-            className={`${remark ? 'mt-1' : 'mt-1'} truncate text-[11px] ${returned ? 'text-white/35' : 'text-white/45'}`}
-          >
-            {sub}
-          </p>
-        </div>
-      </div>
+      ))}
     </div>
   )
 }

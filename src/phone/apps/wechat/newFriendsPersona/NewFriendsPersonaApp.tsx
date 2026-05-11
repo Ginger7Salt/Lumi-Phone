@@ -1,12 +1,11 @@
-import { ArrowLeft, ChevronRight, Dice5, Download, Globe, Plus, Save, Upload, ChevronDown, Trash2, User, UserPlus, X } from 'lucide-react'
-import { AnimatePresence } from 'framer-motion'
+import { ArrowLeft, ChevronRight, Plus, Save, ChevronDown, Trash2, User, UserPlus, X } from 'lucide-react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { personaDb } from './idb'
-import type { Character, Gender, PlayerIdentity, Relationship } from './types'
-import { IDENTITY_POOL, daysInMonth, formatMD, genderLabelZh, randomChineseName, uid, zodiacFromMD } from './utils'
-import { formatLinkedNpcsForWorldBookPrompt, generateCharacterBio, generateCharacterOpeningLines, generateWechatProfilesForPersonaCharacters } from './ai'
-import { WorldBooksEditor } from './WorldBooksEditor'
+import type { Character, PlayerIdentity, Relationship } from './types'
+import { genderLabelZh, uid } from './utils'
+import { formatLinkedNpcsForWorldBookPrompt, generateCharacterOpeningLines, generateWechatProfilesForPersonaCharacters } from './ai'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { useCustomization } from '../../../CustomizationContext'
 import type { WeChatPersonaContact } from '../../../types'
@@ -28,53 +27,23 @@ import {
   isMbtiPersonalityWorldBookName,
   normalizeMbti,
 } from '../mbtiPersonalityWorldBook'
+import { isLargeMbtiAvatar } from './mbtiProfileUi'
+import { ArchiveIndexTabs } from './personaEditor/ArchiveIndexTabs'
+import type { PersonaEditTabId } from './personaEditor/personaEditorTabs'
+import { BasicInfoTab } from './personaEditor/BasicInfoTab'
+import { ConnectionsTab } from './personaEditor/ConnectionsTab'
+import { DataTransferTab } from './personaEditor/DataTransferTab'
+import { FirstMessageTab } from './personaEditor/FirstMessageTab'
+import { ScheduleTimelineTab } from './personaEditor/ScheduleTimelineTab'
+import { WeChatProfileTab } from './personaEditor/WeChatProfileTab'
+import { WorldBackgroundTab } from './personaEditor/WorldBackgroundTab'
+import { WorldbookTab } from './personaEditor/WorldbookTab'
 
 const bg = '#f5f5f5'
 const card = '#ffffff'
 const text = '#262626'
 const sub = '#8e8e8e'
 const border = '#dbdbdb'
-
-// 从项目根目录的 image/MBTI人格形象图 扫描图片（无需放到 public/）
-const MBTI_IMAGE_URLS = import.meta.glob('../../../../../image/MBTI人格形象图/*.{png,jpg,jpeg,webp}', {
-  eager: true,
-  import: 'default',
-}) as Record<string, string>
-
-function resolveMbtiImageUrl(mbti: string): string {
-  const key = (mbti || '').trim().toUpperCase()
-  if (!key) return ''
-  for (const [path, url] of Object.entries(MBTI_IMAGE_URLS)) {
-    const name = path.split('/').pop() || ''
-    if (name.toUpperCase().startsWith(key)) return url
-  }
-  return ''
-}
-
-/** 与「我的身份」列表一致：部分 MBTI 原图留白少，用略大缩放避免显得过小 */
-function isLargeMbtiAvatar(mbti?: string) {
-  const key = String(mbti || '').trim().toUpperCase()
-  return key === 'ISFJ' || key === 'ENTJ'
-}
-
-const MBTI_SUMMARY_4: Record<string, string> = {
-  INTJ: '冷静谋略',
-  INTP: '理性求真',
-  ENTJ: '强势统筹',
-  ENTP: '机智破局',
-  INFJ: '洞察引导',
-  INFP: '温柔理想',
-  ENFJ: '亲和领航',
-  ENFP: '热情探索',
-  ISTJ: '稳重守序',
-  ISFJ: '细致守护',
-  ESTJ: '务实管理',
-  ESFJ: '体贴社交',
-  ISTP: '冷静实干',
-  ISFP: '随性艺感',
-  ESTP: '果断冒险',
-  ESFP: '外向享乐',
-}
 
 function Card({ children }: { children: React.ReactNode }) {
   return <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)]" style={{ background: card }}>{children}</div>
@@ -85,9 +54,26 @@ function networkRootCharacterId(ch: Pick<Character, 'id' | 'generatedForCharacte
   return (ch.generatedForCharacterId || ch.id).trim()
 }
 
-function TopBar({ title, onBack, right }: { title: string; onBack: () => void; right?: React.ReactNode }) {
+function TopBar({
+  title,
+  onBack,
+  right,
+  /** 与档案 Tab 等同列一层 sticky 时：外层已处理 safe-area，此处不再重复 padding-top / sticky */
+  embedInStickyShell,
+}: {
+  title: string
+  onBack: () => void
+  right?: React.ReactNode
+  embedInStickyShell?: boolean
+}) {
   return (
-    <div className="sticky top-0 z-30 bg-white px-4" style={{ paddingTop: 'max(10px, env(safe-area-inset-top,0px))', paddingBottom: 10 }}>
+    <div
+      className={`${embedInStickyShell ? '' : 'sticky top-0 z-30 '}bg-white px-4`}
+      style={{
+        paddingTop: embedInStickyShell ? 0 : 'max(10px, env(safe-area-inset-top,0px))',
+        paddingBottom: 10,
+      }}
+    >
       <div className="flex items-center justify-between">
         <button type="button" onClick={onBack} className="rounded-xl p-2 transition-all duration-200 ease-out hover:bg-[#fafafa]">
           <ArrowLeft className="size-5" style={{ color: text }} />
@@ -477,36 +463,6 @@ function IdentityPickModal({
 }
 
 
-function parseHeightCm(raw: string): number | null {
-  const t = String(raw || '').trim().toLowerCase()
-  if (!t) return null
-  const m = t.match(/(\d+(?:\.\d+)?)/)
-  if (!m) return null
-  const n = Number(m[1])
-  if (!Number.isFinite(n) || n <= 0) return null
-  // 小于 3 视作米（如 1.72）
-  const cm = n < 3 ? n * 100 : n
-  if (cm < 80 || cm > 260) return null
-  return cm
-}
-
-function parseWeightKg(raw: string): number | null {
-  const t = String(raw || '').trim().toLowerCase()
-  if (!t) return null
-  const m = t.match(/(\d+(?:\.\d+)?)/)
-  if (!m) return null
-  const kg = Number(m[1])
-  if (!Number.isFinite(kg) || kg <= 0 || kg < 20 || kg > 300) return null
-  return kg
-}
-
-function bmiLevelLabel(bmi: number): { label: string; tone: string } {
-  if (bmi < 18.5) return { label: '偏瘦', tone: '#3b82f6' }
-  if (bmi < 24) return { label: '正常', tone: '#16a34a' }
-  if (bmi < 28) return { label: '偏胖', tone: '#f59e0b' }
-  return { label: '肥胖', tone: '#ef4444' }
-}
-
 function newCharacter(): Character {
   const now = Date.now()
   return {
@@ -543,14 +499,239 @@ function safeExportNameSegment(name: string, fallback: string): string {
   return raw.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 96) || fallback
 }
 
-function toJsonDownload(obj: unknown, filename: string) {
-  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
+/** iOS / iPadOS Safari：大 JSON 用 `<a download>` + blob: 极易整页被系统干掉或 OOM，须走 share + 紧凑序列化 */
+function isLikelyIosSafari(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent || ''
+  const iOS =
+    /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  if (!iOS) return false
+  return /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPT\//i.test(ua)
+}
+
+/** 移动设备导出：跳过多余 pretty-print，降低 stringify 内存峰值 */
+function prefersCompactExportSerialization(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent || ''
+  if (/iPad|iPhone|iPod/.test(ua)) return true
+  if (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) return true
+  if (/Android/i.test(ua) && /Mobile/i.test(ua)) return true
+  return false
+}
+
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.setTimeout(resolve, prefersCompactExportSerialization() ? 48 : 0)
+    })
+  })
+}
+
+/**
+ * 大包若再 pretty-print，会多占一份字符串内存，部分 WebView 易 OOM；小包仍格式化为可读缩进。
+ * `forceCompact`：移动 / 大导出时强制单行 JSON，避免 parse+stringify 第二份大串。
+ */
+function serializeCharacterExportJson(obj: unknown, opts?: { forceCompact?: boolean }): string {
+  let compact = ''
+  try {
+    compact = JSON.stringify(obj)
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : '导出数据无法序列化')
+  }
+  if (opts?.forceCompact) return compact
+  const maxPrettyLen = Math.floor(1.25 * 1024 * 1024)
+  if (compact.length > maxPrettyLen) return compact
+  try {
+    return JSON.stringify(JSON.parse(compact), null, 2)
+  } catch {
+    return compact
+  }
+}
+
+/** 用户勾选「加时间戳」时在主文件名与 .json 之间插入，避免静默 (1)(2) 式重命名 */
+function applyExportFilenameTimestamp(baseName: string): string {
+  const t = baseName.trim()
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  const m = t.match(/^(.+)(\.json)$/i)
+  if (m) return `${m[1]}_${stamp}${m[2]}`
+  return `${t}_${stamp}.json`
+}
+
+function sanitizeExportFilenameInput(raw: string): string {
+  const s = raw.trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+  if (!s) return 'export.json'
+  return /\.json$/i.test(s) ? s : `${s}.json`
+}
+
+type FilePickerJsonResult = 'saved' | 'aborted' | 'unavailable'
+
+async function trySaveJsonWithFilePicker(json: string, suggestedName: string): Promise<FilePickerJsonResult> {
+  const w = window as Window & {
+    showSaveFilePicker?: (options: {
+      suggestedName?: string
+      types?: Array<{ description: string; accept: Record<string, string[]> }>
+    }) => Promise<FileSystemFileHandle>
+  }
+  if (!window.isSecureContext || typeof w.showSaveFilePicker !== 'function') return 'unavailable'
+  try {
+    const handle = await w.showSaveFilePicker({
+      suggestedName: sanitizeExportFilenameInput(suggestedName),
+      types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
+    })
+    const writable = await handle.createWritable()
+    await writable.write(new Blob([json], { type: 'application/json;charset=utf-8' }))
+    await writable.close()
+    return 'saved'
+  } catch (e) {
+    const nm = (e as { name?: string }).name
+    if (nm === 'AbortError') return 'aborted'
+    return 'unavailable'
+  }
+}
+
+/**
+ * 桌面 Chrome/Edge：优先「另存为」，选同名文件时由系统询问是否替换（不会静默追加 (1)）。
+ * 其它环境：分享 / `<a download>` 兜底。
+ */
+async function exportCharacterJsonToDisk(json: string, filename: string): Promise<void> {
+  const name = sanitizeExportFilenameInput(filename)
+  const pick = await trySaveJsonWithFilePicker(json, name)
+  if (pick === 'saved' || pick === 'aborted') return
+
+  const file = new File([json], name, { type: 'application/json', lastModified: Date.now() })
+  await saveExportedCharacterFile(file)
+}
+
+/**
+ * 必须由「真实的用户点击」触发（弹窗内按钮）；不可放在无手势的 await 之后单独调 share。
+ * iOS Safari：优先 `navigator.share(files)`，避免 blob 下载导致标签页卸载 / 崩溃。
+ */
+async function saveExportedCharacterFile(file: File): Promise<void> {
+  const nav = navigator as Navigator & {
+    share?: (data: ShareData) => Promise<void>
+    canShare?: (data: ShareData) => boolean
+  }
+  if (typeof nav.share === 'function' && typeof nav.canShare === 'function') {
+    // 勿传 title/text/url：iOS 会把 title 当成第二份「纯文本」一起分享，存盘后多出一个 .txt
+    const data: ShareData = { files: [file] }
+    let can = false
+    try {
+      can = nav.canShare(data)
+    } catch {
+      can = false
+    }
+    if (can) {
+      try {
+        await nav.share(data)
+        return
+      } catch (e) {
+        const err = e as { name?: string }
+        if (err?.name === 'AbortError') return
+      }
+    }
+  }
+
+  const url = URL.createObjectURL(file)
+  try {
+    const a = document.createElement('a')
+    a.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;width:1px;height:1px'
+    a.rel = 'noopener'
+    a.href = url
+    a.download = file.name
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  } catch {
+    URL.revokeObjectURL(url)
+    window.alert('无法保存文件。若在 iPhone/iPad 上，请再试一次并选用「分享」面板里的「存储到文件」。')
+  }
+}
+
+function PersonaExportSaveDialog({
+  open,
+  suggestedName,
+  draftName,
+  addTimestamp,
+  onDraftChange,
+  onAddTimestampChange,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean
+  suggestedName: string
+  draftName: string
+  addTimestamp: boolean
+  onDraftChange: (v: string) => void
+  onAddTimestampChange: (checked: boolean) => void
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  if (!open) return null
+  const ios = isLikelyIosSafari()
+  return (
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/35 px-4">
+      <div
+        className="w-full max-w-[520px] rounded-2xl border bg-white p-4"
+        style={{ borderColor: border, boxShadow: '0 10px 30px rgba(0,0,0,0.18)' }}
+      >
+        <p className="text-center text-[16px] font-semibold" style={{ color: text }}>
+          人设包已生成
+        </p>
+        <p className="mt-2 text-[13px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
+          {ios
+            ? '请确认文件名后保存。iOS 无法在网页里检测「文件」App 是否已有同名；若同名请在存储时于系统中选择替换或改名。'
+            : '支持「另存为」的浏览器（如 Chrome / Edge）会先打开保存对话框：若选到同名文件，系统会询问是否替换，不会静默改成「(1).json」。其它浏览器将尝试分享或下载。'}
+        </p>
+        <label className="mt-3 block text-[12px] font-medium" style={{ color: text }}>
+          文件名
+        </label>
+        <input
+          type="text"
+          value={draftName}
+          onChange={(e) => onDraftChange(e.target.value)}
+          className="mt-1 w-full rounded-xl border px-3 py-2 text-[14px] outline-none ring-black/10 focus:ring-2"
+          style={{ borderColor: border, color: text }}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <label className="mt-3 flex cursor-pointer items-start gap-2 text-[13px]" style={{ color: text }}>
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={addTimestamp}
+            onChange={(e) => onAddTimestampChange(e.target.checked)}
+          />
+          <span style={{ fontWeight: 300, color: sub }}>
+            在文件名中加入时间戳（另存为新文件，避免与已有 JSON 同名）。不勾选则使用上方文件名，由你在保存步骤里自行处理是否替换。
+          </span>
+        </label>
+        <p className="mt-2 text-[11px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
+          默认名：{suggestedName}
+        </p>
+        <div className="mt-4 flex items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-xl border bg-white px-4 py-2 text-[13px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
+            style={{ borderColor: border, color: text }}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-xl px-4 py-2 text-[13px] font-semibold text-white transition-all duration-200 ease-out"
+            style={{ background: '#000000' }}
+          >
+            {ios ? '分享 / 存储' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export type PendingNewFriendRequest = FriendRequest
@@ -577,7 +758,7 @@ export function NewFriendsPersonaApp({
   onReplyRequest?: (requestId: string, replyText: string) => void | Promise<void>
   onTriggerReplyRequest?: (requestId: string) => void | Promise<void>
   replyingRequestIds?: string[]
-  entrySource?: 'contacts' | 'profile'
+  entrySource?: 'contacts' | 'profile' | 'dating'
 }) {
   const [page, setPage] = useState<
     | { name: 'list' }
@@ -612,17 +793,23 @@ export function NewFriendsPersonaApp({
   const { replaceWeChatPersonaContacts, removeWeChatPersonaContactsByCharacterIds } = useCustomization()
   const apiConfigList = useCurrentApiConfig('chatCard')
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setLoading(true)
-    const [res, ids] = await Promise.all([personaDb.listRootCharacters(), personaDb.listPlayerIdentities()])
-    setList(res)
-    setIdentityNameById(
-      Object.fromEntries(
-        ids.map((it) => [it.id, (it.name || '').trim() || '未命名身份']),
-      ),
-    )
-    setLoading(false)
-  }
+    try {
+      const [res, ids] = await Promise.all([personaDb.listRootCharacters(), personaDb.listPlayerIdentities()])
+      setList(res)
+      setIdentityNameById(
+        Object.fromEntries(
+          ids.map((it) => [it.id, (it.name || '').trim() || '未命名身份']),
+        ),
+      )
+    } catch (e) {
+      console.warn('[persona] list refresh failed', e)
+      window.alert(e instanceof Error ? e.message : '加载角色列表失败，请稍后重试')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   const refreshIdentities = async () => {
     setIdentityLoading(true)
@@ -631,11 +818,28 @@ export function NewFriendsPersonaApp({
     setIdentityLoading(false)
   }
 
+  /** 每次进入「角色人设」列表页重新拉取；避开紧跟大导出后的瞬时峰值内存（requestIdleCallback / 短时延迟） */
   useEffect(() => {
-    // 避免在 effect 同步触发 setState 的 lint 警告
-    const t = window.setTimeout(() => void refresh(), 0)
-    return () => window.clearTimeout(t)
-  }, [])
+    if (page.name !== 'list') return
+    let canceled = false
+    const run = () => {
+      if (!canceled) void refresh()
+    }
+    let idleId: number | undefined
+    let timerId: number | undefined
+    if (typeof window.requestIdleCallback === 'function') {
+      idleId = window.requestIdleCallback(run, { timeout: 1800 })
+    } else {
+      timerId = window.setTimeout(run, 150)
+    }
+    return () => {
+      canceled = true
+      if (idleId != null && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleId)
+      }
+      if (timerId != null) window.clearTimeout(timerId)
+    }
+  }, [page.name, refresh])
 
   useEffect(() => {
     if (page.name !== 'list') return
@@ -891,10 +1095,16 @@ export function NewFriendsPersonaApp({
             const id = deleteId
             setDeleteId(null)
             if (!id) return
-            const npcs = await personaDb.listNpcsFor(id)
-            removeWeChatPersonaContactsByCharacterIds([id, ...npcs.map((n) => n.id)])
-            await personaDb.deleteCharacter(id)
-            await refresh()
+            try {
+              const npcs = await personaDb.listNpcsFor(id)
+              removeWeChatPersonaContactsByCharacterIds([id, ...npcs.map((n) => n.id)])
+              await personaDb.deleteCharacter(id)
+              setList((prev) => prev.filter((c) => c.id !== id))
+              await refresh()
+            } catch (e) {
+              window.alert(e instanceof Error ? e.message : '删除失败')
+              await refresh()
+            }
           }}
         />
 
@@ -1035,13 +1245,13 @@ function PersonaEditPage({
   const openApiSettings = () => {
     window.dispatchEvent(new CustomEvent('phone:open-app', { detail: { id: 'api' } }))
   }
-  const [monthOpen, setMonthOpen] = useState(false)
-  const [dayOpen, setDayOpen] = useState(false)
-  const [identityOpen, setIdentityOpen] = useState(false)
-  const [identityCustomOpen, setIdentityCustomOpen] = useState(false)
-  const [mbtiOpen, setMbtiOpen] = useState(false)
-  const [editTab, setEditTab] = useState<'basic' | 'opening' | 'wechat' | 'worldbook' | 'network' | 'schedule' | 'io'>('basic')
+  const [editTab, setEditTab] = useState<PersonaEditTabId>('basic')
   const [ioExporting, setIoExporting] = useState(false)
+  /** JSON 只放 ref；另存为弹窗里确认文件名后再写入磁盘 */
+  const [exportSaveDialog, setExportSaveDialog] = useState<{ suggested: string } | null>(null)
+  const [exportFilenameDraft, setExportFilenameDraft] = useState('')
+  const [exportAddTimestamp, setExportAddTimestamp] = useState(false)
+  const pendingExportJsonRef = useRef<string | null>(null)
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [keyboardInset, setKeyboardInset] = useState(0)
   /** 主角在剧情/人脉中对用户的称呼（PlayerNetworkLink.theyCallYou，characterId = 根主角 id） */
@@ -1108,6 +1318,13 @@ function PersonaEditPage({
     })()
   }, [data?.id, data?.generatedForCharacterId, editTab])
 
+  /** NPC 人设无「人脉」索引：若停留在人脉 Tab 则回到基础信息 */
+  useEffect(() => {
+    if (data?.generatedForCharacterId && editTab === 'network') {
+      setEditTab('basic')
+    }
+  }, [data?.generatedForCharacterId, editTab])
+
   /** 从人脉同步「主角→用户」称呼；切回基础信息时刷新（人脉页可能已改过）；未改写过本字段时不覆盖本地输入 */
   useEffect(() => {
     if (!data?.id || editTab !== 'basic') return
@@ -1158,6 +1375,11 @@ function PersonaEditPage({
     setData((s) => (s ? { ...s, [k]: v, updatedAt: Date.now() } : s))
   }
 
+  const patchCharacter = useCallback((p: Partial<Character>) => {
+    setDirty(true)
+    setData((s) => (s ? { ...s, ...p, updatedAt: Date.now() } : s))
+  }, [])
+
   const syncMbtiPersonalityWorldBooks = (prev: Character, nextMbti: string): Character => {
     const now = Date.now()
     const k = normalizeMbti(nextMbti)
@@ -1187,52 +1409,6 @@ function PersonaEditPage({
     const books = k && !foundTarget ? [buildMbtiPersonalityWorldBook(k, now), ...nextBooks] : nextBooks
     return { ...prev, mbti: nextMbti, worldBooks: books, updatedAt: now }
   }
-
-  const birthdayParts = useMemo(() => {
-    const v = data?.birthdayMD || ''
-    const m = Number(v.slice(0, 2))
-    const d = Number(v.slice(3, 5))
-    return {
-      month: Number.isFinite(m) && m >= 1 && m <= 12 ? m : 1,
-      day: Number.isFinite(d) && d >= 1 && d <= 31 ? d : 1,
-    }
-  }, [data?.birthdayMD])
-
-  const bmiInfo = useMemo(() => {
-    const hCm = parseHeightCm(data?.height ?? '')
-    const wKg = parseWeightKg(data?.weight ?? '')
-    if (!hCm || !wKg) return null
-    const hM = hCm / 100
-    const bmi = wKg / (hM * hM)
-    if (!Number.isFinite(bmi)) return null
-    const level = bmiLevelLabel(bmi)
-    return { bmi, ...level }
-  }, [data?.height, data?.weight])
-
-  const MBTI_LIST = useMemo(
-    () =>
-      [
-        'INTJ',
-        'INTP',
-        'ENTJ',
-        'ENTP',
-        'INFJ',
-        'INFP',
-        'ENFJ',
-        'ENFP',
-        'ISTJ',
-        'ISFJ',
-        'ESTJ',
-        'ESFJ',
-        'ISTP',
-        'ISFP',
-        'ESTP',
-        'ESFP',
-      ] as const,
-    [],
-  )
-
-  const mbtiImageSrc = (mbti: string) => resolveMbtiImageUrl(mbti)
 
   const save = async () => {
     if (!data) return
@@ -1433,116 +1609,51 @@ function PersonaEditPage({
   }
 
   return (
-    <div className="relative h-full min-h-0 overflow-hidden" style={{ background: bg }}>
-      <TopBar
-        title={isNew ? '创建人设' : '编辑人设'}
-        onBack={() => {
-          if (!dirty) void performBack()
-          else setConfirmLeave(true)
-        }}
-        right={
-          <button
-            type="button"
-            onClick={() => void save()}
-            className="rounded-xl px-3 py-2 text-[13px] font-semibold transition-all duration-200 ease-out hover:bg-[#fafafa]"
-            style={{ color: text }}
-            disabled={saving}
-          >
-            <span className="inline-flex items-center gap-2">
-              <Save className="size-4" />
-              {saving ? '保存中' : '保存'}
-            </span>
-          </button>
-        }
-      />
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden" style={{ background: bg }}>
+      {/*
+        iOS PWA 全屏：safe-area-inset-top 只能加一次。原先 TopBar + ArchiveIndexTabs 各加一遍，
+        会在标题与 Tab 之间叠出「第二道刘海高度」的空白；合并为单层 sticky 后只保留一处顶距。
+      */}
+      <div
+        className="sticky top-0 z-40 shrink-0 bg-white"
+        style={{ paddingTop: 'max(10px, env(safe-area-inset-top, 0px))' }}
+      >
+        <TopBar
+          embedInStickyShell
+          title={isNew ? '创建人设' : '编辑人设'}
+          onBack={() => {
+            if (!dirty) void performBack()
+            else setConfirmLeave(true)
+          }}
+          right={
+            <button
+              type="button"
+              onClick={() => void save()}
+              className="rounded-xl px-3 py-2 text-[13px] font-semibold transition-all duration-200 ease-out hover:bg-[#fafafa]"
+              style={{ color: text }}
+              disabled={saving}
+            >
+              <span className="inline-flex items-center gap-2">
+                <Save className="size-4" />
+                {saving ? '保存中' : '保存'}
+              </span>
+            </button>
+          }
+        />
+
+        <ArchiveIndexTabs
+          activeId={editTab}
+          onChange={setEditTab}
+          hideNetwork={!!data.generatedForCharacterId}
+        />
+      </div>
 
       <div
-        className="h-full min-h-0 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none px-4 pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none px-3 pt-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         style={{
           paddingBottom: `calc(96px + env(safe-area-inset-bottom,0px) + ${Math.round(keyboardInset)}px + ${editTab === 'worldbook' ? 88 : 0}px)`,
         }}
       >
-        <Card>
-          <div className="px-3 py-3">
-            <div className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-              {(
-                [
-                  { id: 'basic' as const, label: '基础信息' },
-                  { id: 'opening' as const, label: '开场白' },
-                  { id: 'wechat' as const, label: '微信资料' },
-                  { id: 'worldbook' as const, label: '世界书' },
-                  { id: 'network' as const, label: '人脉关系' },
-                  { id: 'schedule' as const, label: '日程表' },
-                  { id: 'io' as const, label: '导入导出' },
-                ] as const
-              )
-                .filter((t) => {
-                  if (!data.generatedForCharacterId) return true
-                  // NPC：不支持人脉关系；日程表仍可编辑并作为聊天参考
-                  return t.id !== 'network'
-                })
-                .map((t) => {
-                const active = editTab === t.id
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setEditTab(t.id)}
-                    className="shrink-0 rounded-xl border px-3 py-2 text-[13px] transition-all duration-200 ease-out"
-                    style={{
-                      borderColor: border,
-                      background: active ? '#111827' : '#ffffff',
-                      color: active ? '#ffffff' : text,
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        </Card>
-
-        <div className="mt-4 rounded-[12px] border bg-white px-4 py-4" style={{ borderColor: '#e5e5e5', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-[16px] text-black">世界背景</p>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={data.worldBackgroundEnabled !== false}
-              onClick={() => setField('worldBackgroundEnabled', !(data.worldBackgroundEnabled !== false))}
-              className={`relative h-7 w-[46px] rounded-full p-1 transition-colors ${
-                data.worldBackgroundEnabled !== false ? 'bg-black' : 'bg-[#cccccc]'
-              }`}
-            >
-              <span
-                className={`block h-5 w-5 rounded-full bg-white transition-transform ${
-                  data.worldBackgroundEnabled !== false ? 'translate-x-5' : 'translate-x-0'
-                }`}
-              />
-            </button>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              if (data.worldBackgroundEnabled === false) return
-              setWbFlow('pick')
-            }}
-            disabled={data.worldBackgroundEnabled === false}
-            className="flex w-full items-center rounded-[10px] border bg-white px-3 py-3 text-left transition-all duration-200 ease-out hover:bg-[#fafafa] disabled:cursor-not-allowed disabled:opacity-60"
-            style={{ borderColor: '#e5e5e5' }}
-          >
-            <Globe className="size-5 shrink-0 text-black" strokeWidth={1.75} aria-hidden />
-            <div className="ml-3 min-w-0 flex-1">
-              <p className="text-[14px] text-black">当前世界背景</p>
-              <p className="mt-0.5 truncate text-[13px] text-[#666666]">{wbCardName}</p>
-            </div>
-            <ChevronRight className="ml-3 size-4 shrink-0 text-[#666666]" strokeWidth={1.75} aria-hidden />
-          </button>
-        </div>
-
-        <div className="mt-4" />
-
         {isNew && data.generatedForCharacterId ? (
           <p
             className="mb-3 rounded-[12px] border px-3 py-2.5 text-[12px] leading-relaxed"
@@ -1556,858 +1667,141 @@ function PersonaEditPage({
           </p>
         ) : null}
 
-        {editTab === 'basic' ? (
-          <Card>
-          <div className="border-b px-4 py-4" style={{ borderColor: border }}>
-            <p className="text-[14px] font-semibold" style={{ color: text }}>
-              基础信息
-            </p>
-          </div>
-          <div className="space-y-4 px-4 py-4">
-            <div className="flex items-center gap-3">
-              {data.avatarUrl?.trim() ? (
-                <img
-                  src={data.avatarUrl}
-                  alt=""
-                  className="h-16 w-16 shrink-0 rounded-full border object-cover"
-                  style={{ borderColor: border }}
-                />
-              ) : (
-                <div
-                  className="h-16 w-16 shrink-0 rounded-full border border-dashed bg-[#fafafa]"
-                  style={{ borderColor: border }}
-                  aria-hidden
-                />
-              )}
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="rounded-xl border bg-white px-3 py-2 text-[13px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                  style={{ borderColor: border, color: text }}
-                  onClick={() => fileRef.current?.click()}
-                >
-                  上传头像
-                </button>
-                {data.avatarUrl?.trim() ? (
-                  <button
-                    type="button"
-                    className="rounded-xl border bg-white px-3 py-2 text-[13px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                    style={{ borderColor: border, color: sub }}
-                    onClick={() => setField('avatarUrl', '')}
-                  >
-                    清除
-                  </button>
-                ) : null}
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    onPickAvatarFile(e.target.files?.[0] ?? null)
-                    e.target.value = ''
-                  }}
-                />
-              </div>
-            </div>
-
-            <label className="block">
-              <p className="text-[13px]" style={{ color: sub }}>
-                姓名
-              </p>
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  value={data.name}
-                  onChange={(e) => setField('name', e.target.value)}
-                  placeholder="输入姓名"
-                  className="flex-1 rounded-xl border bg-white px-4 py-3 text-[15px] outline-none transition-all duration-200 ease-out"
-                  style={{ borderColor: border, color: text }}
-                />
-                <button
-                  type="button"
-                  className="rounded-xl border bg-white p-3 transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                  style={{ borderColor: border, color: text }}
-                  onClick={() => setField('name', randomChineseName(data.gender))}
-                  title="骰子随机"
-                >
-                  <Dice5 className="size-5" />
-                </button>
-              </div>
-            </label>
-
-            <label className="block">
-              <p className="text-[13px]" style={{ color: sub }}>
-                {data.generatedForCharacterId ? '主角对用户的称呼' : '对用户的称呼'}
-              </p>
-              <p className="mt-1 text-[11px] leading-relaxed" style={{ color: sub }}>
-                {data.generatedForCharacterId
-                  ? '与当前主角人脉里「你↔主角」连线一致，在此修改会写回人脉并同步到主角资料页。'
-                  : '主角在剧情里如何称呼你；写入人脉「你↔本角色」连线，进入同人脉下 NPC 设定页也会显示同一数据。'}
-              </p>
-              <input
-                value={protagonistCallsUser}
-                onChange={(e) => {
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={editTab}
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 5 }}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {editTab === 'basic' ? (
+              <BasicInfoTab
+                editorId={data?.id ?? id}
+                character={data}
+                isNpcPerspective={!!data.generatedForCharacterId}
+                protagonistCallsUser={protagonistCallsUser}
+                onProtagonistCallsChange={(v) => setProtagonistCallsUser(v)}
+                onProtagonistCallsInteraction={() => {
                   protagonistCallsTouchedRef.current = true
-                  setProtagonistCallsUser(e.target.value)
                   setDirty(true)
                 }}
-                placeholder="如：老同学、姐、小哥…"
-                className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none transition-all duration-200 ease-out"
-                style={{ borderColor: border, color: text }}
+                avatarFileInputRef={fileRef}
+                onPickAvatarFile={onPickAvatarFile}
+                patchCharacter={patchCharacter}
+                onMbtiSelect={(next) => {
+                  setDirty(true)
+                  setData((prev) => (prev ? syncMbtiPersonalityWorldBooks(prev, next) : prev))
+                }}
+                apiConfig={apiConfig}
+                bioGenerating={bioGenerating}
+                setBioGenerating={setBioGenerating}
+                onBioApiMissing={() => {
+                  setApiMissingMsg('未配置 API 或未选择模型。请先前往「API设置」完成配置。')
+                  setApiMissingOpen(true)
+                }}
+                onBioWorldBookMissing={() => {
+                  setApiMissingMsg(
+                    '请先在下方「世界书」中填写条目内容（并保持世界书 / 条目为开启），再生成角色简介。',
+                  )
+                  setApiMissingOpen(true)
+                }}
+                genderLabelZh={genderLabelZh}
               />
-            </label>
+            ) : null}
 
-            <div className="grid grid-cols-3 gap-2">
-              {(['male', 'female', 'other'] as Gender[]).map((g) => (
-                <button
-                  key={g}
-                  type="button"
-                  onClick={() => setField('gender', g)}
-                  className="rounded-xl border px-3 py-2 text-[13px] transition-all duration-200 ease-out"
-                  style={{
-                    borderColor: border,
-                    background: data.gender === g ? '#f3f4f6' : '#fff',
-                    color: text,
-                  }}
-                >
-                  {genderLabelZh(g)}
-                </button>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block">
-                <p className="text-[13px]" style={{ color: sub }}>
-                  年龄
-                </p>
-                <input
-                  value={data.age ?? ''}
-                  onChange={(e) => setField('age', e.target.value ? Number(e.target.value) : null)}
-                  inputMode="numeric"
-                  className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none transition-all duration-200 ease-out"
-                  style={{ borderColor: border, color: text }}
-                />
-              </label>
-              <label className="block">
-                <p className="text-[13px]" style={{ color: sub }}>
-                  身高
-                </p>
-                <input
-                  value={data.height ?? ''}
-                  onChange={(e) => setField('height', e.target.value)}
-                  placeholder="如 170cm"
-                  className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none transition-all duration-200 ease-out"
-                  style={{ borderColor: border, color: text }}
-                />
-              </label>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block">
-                <p className="text-[13px]" style={{ color: sub }}>
-                  体重
-                </p>
-                <input
-                  value={data.weight ?? ''}
-                  onChange={(e) => setField('weight', e.target.value)}
-                  placeholder="如 55kg"
-                  className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none transition-all duration-200 ease-out"
-                  style={{ borderColor: border, color: text }}
-                />
-              </label>
-              <label className="block">
-                <p className="text-[13px]" style={{ color: sub }}>
-                  生日（月/日，自动星座）
-                </p>
-                <div className="mt-2 flex min-w-0 items-center gap-2">
-                  <InlineDropdown
-                    label="选择月份"
-                    valueText={`${birthdayParts.month} 月`}
-                    open={monthOpen}
-                    onToggle={() => {
-                      setMonthOpen((v) => !v)
-                      setDayOpen(false)
-                    }}
-                  >
-                    {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => {
-                      const active = birthdayParts.month === m
-                      return (
-                        <button
-                          key={m}
-                          type="button"
-                          className="flex w-full items-center justify-center px-3 py-2 text-[13px]"
-                          style={{
-                            color: active ? '#ffffff' : text,
-                            background: active ? '#111827' : 'transparent',
-                          }}
-                          onClick={() => {
-                            const maxD = daysInMonth(m)
-                            const d = Math.min(birthdayParts.day, maxD)
-                            const md = formatMD(m, d)
-                            setField('birthdayMD', md)
-                            setField('zodiac', zodiacFromMD(md))
-                            setMonthOpen(false)
-                          }}
-                        >
-                          {m} 月
-                        </button>
-                      )
-                    })}
-                  </InlineDropdown>
-
-                  <InlineDropdown
-                    label="选择日期"
-                    valueText={`${birthdayParts.day} 日`}
-                    open={dayOpen}
-                    onToggle={() => {
-                      setDayOpen((v) => !v)
-                      setMonthOpen(false)
-                    }}
-                  >
-                    {Array.from({ length: daysInMonth(birthdayParts.month) }, (_, i) => i + 1).map((d) => {
-                      const active = birthdayParts.day === d
-                      return (
-                        <button
-                          key={d}
-                          type="button"
-                          className="flex w-full items-center justify-center px-3 py-2 text-[13px]"
-                          style={{
-                            color: active ? '#ffffff' : text,
-                            background: active ? '#111827' : 'transparent',
-                          }}
-                          onClick={() => {
-                            const md = formatMD(birthdayParts.month, d)
-                            setField('birthdayMD', md)
-                            setField('zodiac', zodiacFromMD(md))
-                            setDayOpen(false)
-                          }}
-                        >
-                          {d} 日
-                        </button>
-                      )
-                    })}
-                  </InlineDropdown>
-                </div>
-                {data.zodiac ? (
-                  <p className="mt-1 text-[12px]" style={{ color: sub }}>
-                    星座：{data.zodiac}
-                  </p>
-                ) : null}
-              </label>
-            </div>
-
-            <div
-              className="rounded-xl border bg-[#fafafa] px-3 py-3"
-              style={{ borderColor: border }}
-            >
-              <p className="text-[13px] font-medium" style={{ color: text }}>
-                BMI 身材参考
-              </p>
-              {bmiInfo ? (
-                <p className="mt-1 text-[12px]" style={{ color: sub }}>
-                  BMI：
-                  <span className="font-semibold" style={{ color: text }}>
-                    {' '}
-                    {bmiInfo.bmi.toFixed(1)}
-                  </span>
-                  {' · '}
-                  <span className="font-semibold" style={{ color: bmiInfo.tone }}>
-                    {bmiInfo.label}
-                  </span>
-                </p>
-              ) : (
-                <p className="mt-1 text-[12px]" style={{ color: sub }}>
-                  请填写有效的身高和体重（如 170cm、55kg）以自动计算。
-                </p>
-              )}
-              <p className="mt-1 text-[11px]" style={{ color: sub, fontWeight: 300 }}>
-                分级：&lt;18.5 偏瘦，18.5~23.9 正常，24~27.9 偏胖，≥28 肥胖。
-              </p>
-            </div>
-
-            <label className="block">
-              <p className="text-[13px]" style={{ color: sub }}>
-                座右铭（可选）
-              </p>
-              <input
-                value={data.motto ?? ''}
-                onChange={(e) => setField('motto', e.target.value)}
-                placeholder="最多15字；留空可在 AI 生成资料时自动生成"
-                maxLength={15}
-                className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none transition-all duration-200 ease-out"
-                style={{ borderColor: border, color: text }}
+            {editTab === 'opening' ? (
+              <FirstMessageTab
+                editorId={data?.id ?? id}
+                openingLines={data.openingLines ?? ''}
+                onChangeOpeningLines={(v) => setField('openingLines', v)}
+                openingGenerating={openingGenerating}
+                onRequestAiGenerate={() => setOpeningBiasOpen(true)}
               />
-              <p className="mt-1 text-[11px]" style={{ color: sub }}>
-                {(data.motto ?? '').length}/15
-              </p>
-            </label>
+            ) : null}
 
-            <label className="block">
-              <p className="text-[13px]" style={{ color: sub }}>
-                身份
-              </p>
-              <div className="mt-2">
-                <InlineDropdown
-                  label="选择身份"
-                  valueText={data.identity || '请选择'}
-                  open={identityOpen}
-                  onToggle={() => {
-                    setIdentityOpen((v) => !v)
-                    if (!identityOpen) {
-                      // 展开时默认不强制打开自定义输入
-                      setIdentityCustomOpen(false)
-                    }
+            {editTab === 'wechat' ? (
+              <WeChatProfileTab
+                data={data}
+                editorId={data?.id ?? id}
+                momentsCoverFileRef={momentsCoverFileRef}
+                onPickMomentsCoverFile={onPickMomentsCoverFile}
+                setField={setField}
+              />
+            ) : null}
+
+            {editTab === 'worldbook' ? (
+              <WorldbookTab
+                apiConfig={apiConfig}
+                character={data}
+                worldBackgroundPrompt={characterWbPrompt}
+                identityContext={wbIdentityCtx}
+                linkedNpcsContext={linkedNpcsWbContext}
+                onChange={(next: Character) => {
+                  setDirty(true)
+                  setData(next)
+                }}
+              />
+            ) : null}
+
+            {editTab === 'network' && !data.generatedForCharacterId ? (
+              <ConnectionsTab>
+                <PersonaNetworkSection
+                  main={data}
+                  apiConfig={apiConfig}
+                  onApiMissing={() => {
+                    setApiMissingMsg('未配置 API 或未选择模型。请先前往「API设置」完成配置。')
+                    setApiMissingOpen(true)
                   }}
-                >
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-center px-3 py-2 text-[13px]"
-                    style={{
-                      color: identityCustomOpen ? '#ffffff' : text,
-                      background: identityCustomOpen ? '#111827' : 'transparent',
-                    }}
-                    onClick={() => {
-                      setIdentityCustomOpen(true)
-                    }}
-                  >
-                    自定义…
-                  </button>
-                  {identityCustomOpen ? (
-                    <div className="px-3 py-2">
-                      <input
-                        value={data.identity}
-                        onChange={(e) => setField('identity', e.target.value)}
-                        className="w-full rounded-xl border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
-                        style={{ borderColor: border, color: text }}
-                        placeholder="输入自定义身份"
-                        autoFocus
-                      />
-                      <div className="mt-2 flex items-center justify-center gap-2">
-                        <button
-                          type="button"
-                          className="rounded-xl border bg-white px-3 py-2 text-[12px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                          style={{ borderColor: border, color: text }}
-                          onClick={() => {
-                            setIdentityCustomOpen(false)
-                          }}
-                        >
-                          收起输入
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-xl bg-[#111827] px-3 py-2 text-[12px] font-semibold text-white transition-all duration-200 ease-out hover:bg-[#0b1220]"
-                          onClick={() => {
-                            setIdentityOpen(false)
-                            setIdentityCustomOpen(false)
-                          }}
-                        >
-                          确定
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
+                  onOpenNpcEdit={onNavigateToCharacter}
+                />
+              </ConnectionsTab>
+            ) : null}
 
-                  <div className="my-1 h-px bg-black/5" />
-                  {IDENTITY_POOL.map((x) => {
-                    const active = data.identity === x && !identityCustomOpen
-                    return (
-                      <button
-                        key={x}
-                        type="button"
-                        className="flex w-full items-center justify-center px-3 py-2 text-[13px]"
-                        style={{
-                          color: active ? '#ffffff' : text,
-                          background: active ? '#111827' : 'transparent',
-                        }}
-                        onClick={() => {
-                          setField('identity', x)
-                          setIdentityOpen(false)
-                          setIdentityCustomOpen(false)
-                        }}
-                      >
-                        <span className="truncate">{x}</span>
-                      </button>
-                    )
-                  })}
-                </InlineDropdown>
-              </div>
-            </label>
+            {editTab === 'schedule' ? (
+              <ScheduleTimelineTab schedule={data.schedule} onEdit={() => setScheduleOpen(true)} />
+            ) : null}
 
-            <label className="block">
-              <p className="text-[13px]" style={{ color: sub }}>
-                MBTI（可选）
-              </p>
-              <div className="mt-2">
-                <InlineDropdown
-                  label="选择 MBTI"
-                  valueText={data.mbti?.trim() ? data.mbti : '未选择'}
-                  open={mbtiOpen}
-                  onToggle={() => setMbtiOpen((v) => !v)}
-                >
-                  <div className="grid grid-cols-2 gap-2 px-3 py-2">
-                    {MBTI_LIST.map((m) => {
-                      const active = data.mbti === m
-                      const big = m === 'ENTJ' || m === 'ESFJ'
-                      return (
-                        <button
-                          key={m}
-                          type="button"
-                          className="flex items-center gap-2 rounded-xl border px-3 py-2 text-left transition-all duration-200 ease-out"
-                          style={{
-                            borderColor: border,
-                            background: active ? '#111827' : '#ffffff',
-                            color: active ? '#ffffff' : text,
-                          }}
-                          onClick={() => {
-                            if (!data) return
-                            setDirty(true)
-                            setData((prev) => (prev ? syncMbtiPersonalityWorldBooks(prev, m) : prev))
-                            setMbtiOpen(false)
-                          }}
-                        >
-                          <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg">
-                            <img
-                              src={mbtiImageSrc(m)}
-                              alt=""
-                              className={`${big ? 'h-9 w-9' : 'h-[36px] w-[36px]'} border object-contain`}
-                              style={{ borderColor: active ? 'rgba(255,255,255,0.25)' : border }}
-                              onError={(e) => {
-                                ;(e.currentTarget as HTMLImageElement).style.display = 'none'
-                              }}
-                            />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-[13px] font-semibold">{m}</p>
-                            <p className="mt-0.5 text-[11px]" style={{ color: active ? 'rgba(255,255,255,0.72)' : sub }}>
-                              {MBTI_SUMMARY_4[m] ?? '人格概括'}
-                            </p>
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <div className="px-3 pb-2">
-                    <button
-                      type="button"
-                      className="w-full rounded-xl border bg-white px-3 py-2 text-[12px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                      style={{ borderColor: border, color: sub }}
-                      onClick={() => {
-                        if (!data) return
-                        setDirty(true)
-                        setData((prev) => (prev ? syncMbtiPersonalityWorldBooks(prev, '') : prev))
-                        setMbtiOpen(false)
-                      }}
-                    >
-                      清空选择
-                    </button>
-                  </div>
-                </InlineDropdown>
-              </div>
-            </label>
+            {editTab === 'worldbackground' ? (
+              <WorldBackgroundTab
+                wbCardName={wbCardName}
+                enabled={data.worldBackgroundEnabled !== false}
+                onToggleEnabled={() => setField('worldBackgroundEnabled', !(data.worldBackgroundEnabled !== false))}
+                onOpenPicker={() => {
+                  if (data.worldBackgroundEnabled === false) return
+                  setWbFlow('pick')
+                }}
+                literaturePreview={characterWbPrompt}
+              />
+            ) : null}
 
-            <label className="block">
-              <div className="flex items-center justify-between">
-                <p className="text-[13px]" style={{ color: sub }}>
-                  角色简介（可选）
-                </p>
-                <button
-                  type="button"
-                  className="rounded-xl border bg-white px-3 py-2 text-[13px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                  style={{ borderColor: border, color: text }}
-                  disabled={bioGenerating}
-                  onClick={async () => {
+            {editTab === 'io' ? (
+              <DataTransferTab
+                ioExporting={ioExporting}
+                onExport={() => {
+                  void (async () => {
+                    setIoExporting(true)
                     try {
-                      setBioGenerating(true)
-                      if (!apiConfig?.apiUrl || !apiConfig?.apiKey || !apiConfig?.modelId) {
-                        setApiMissingMsg('未配置 API 或未选择模型。请先前往「API设置」完成配置。')
-                        setApiMissingOpen(true)
-                        return
-                      }
-                      const identityContext =
-                        data.playerIdentityId && data.playerIdentityId.trim()
-                          ? await personaDb.getPlayerIdentity(data.playerIdentityId)
-                          : await personaDb.getCurrentIdentity()
-                      const wbRow =
-                        data.worldBackgroundEnabled === false
-                          ? null
-                          : await personaDb.getWorldBackground(data.worldBackgroundId ?? DEFAULT_WORLD_BACKGROUND_ID)
-                      const worldBackgroundPrompt = formatWorldBackgroundForPrompt(wbRow)
-                      const v = await generateCharacterBio({
-                        apiConfig,
-                        character: data,
-                        identityContext,
-                        worldBackgroundPrompt,
+                      await yieldToMain()
+                      const payload = await buildCharacterExportBundle(data)
+                      await yieldToMain()
+                      const json = serializeCharacterExportJson(payload, {
+                        forceCompact: prefersCompactExportSerialization(),
                       })
-                      setField('bio', v)
+                      await yieldToMain()
+                      const filename = `【Lumi Phone】-人设-${safeExportNameSegment(payload.mainCharacter.name, '未命名')}.json`
+                      pendingExportJsonRef.current = json
+                      setExportAddTimestamp(false)
+                      setExportFilenameDraft(filename)
+                      setExportSaveDialog({ suggested: filename })
                     } catch (e) {
-                      if (e instanceof Error && /缺少世界书内容/i.test(e.message)) {
-                        setApiMissingMsg('请先在下方“世界书”中填写条目内容（并保持世界书/条目为开启），再生成角色简介。')
-                        setApiMissingOpen(true)
-                      } else if (e instanceof Error && /未配置 AI API/i.test(e.message)) {
-                        setApiMissingMsg('未配置 API 或未选择模型。请先前往「API设置」完成配置。')
-                        setApiMissingOpen(true)
-                      }
+                      window.alert(e instanceof Error ? e.message : '导出失败')
                     } finally {
-                      setBioGenerating(false)
+                      setIoExporting(false)
                     }
-                  }}
-                >
-                  {bioGenerating ? '生成中…' : 'AI 生成'}
-                </button>
-              </div>
-              <textarea
-                value={data.bio ?? ''}
-                onChange={(e) => setField('bio', e.target.value)}
-                className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[14px] leading-relaxed outline-none transition-all duration-200 ease-out"
-                style={{ borderColor: border, color: text }}
-                rows={4}
-                placeholder="约120~180字"
-              />
-            </label>
-
-          </div>
-          </Card>
-        ) : null}
-
-        {editTab === 'opening' ? (
-          <Card>
-            <div className="border-b px-4 py-4" style={{ borderColor: border }}>
-              <p className="text-[14px] font-semibold" style={{ color: text }}>
-                开场白
-              </p>
-              <p className="mt-1 text-[12px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
-                角色首次进入聊天且无历史消息时，会按行自动发送开场白（每行一个气泡）。
-              </p>
-            </div>
-            <div className="space-y-4 px-4 py-4">
-              <label className="block">
-                <div className="flex items-center justify-between">
-                  <p className="text-[13px]" style={{ color: sub }}>
-                    开场白（角色侧）
-                  </p>
-                  <button
-                    type="button"
-                    className="rounded-xl border bg-white px-3 py-2 text-[13px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                    style={{ borderColor: border, color: text }}
-                    disabled={openingGenerating}
-                    onClick={() => setOpeningBiasOpen(true)}
-                  >
-                    {openingGenerating ? '生成中…' : 'AI 生成'}
-                  </button>
-                </div>
-                <textarea
-                  value={data.openingLines ?? ''}
-                  onChange={(e) => setField('openingLines', e.target.value)}
-                  className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[14px] leading-relaxed outline-none transition-all duration-200 ease-out"
-                  style={{ borderColor: border, color: text }}
-                  rows={5}
-                  placeholder={'每行一个气泡消息。\n按一次回车就是一条消息。'}
-                />
-                <p className="mt-1 text-[11px]" style={{ color: sub }}>
-                  每回车一次即一条气泡；首次进入聊天且无历史消息时会自动按行发送。
-                </p>
-              </label>
-
-              <div className="rounded-xl border bg-[#fafafa] px-3 py-3" style={{ borderColor: border }}>
-                <p className="text-[13px] font-medium" style={{ color: text }}>
-                  开场白预览
-                </p>
-                <div className="mt-2 space-y-2">
-                  {(data.openingLines || '')
-                    .split(/\r?\n/)
-                    .map((s) => s.trim())
-                    .filter(Boolean)
-                    .slice(0, 8)
-                    .map((line, idx) => (
-                      <div key={`${idx}-${line}`} className="flex justify-start">
-                        <div
-                          className="max-w-[82%] rounded-2xl px-3 py-2 text-[13px] leading-relaxed"
-                          style={{ background: '#ffffff', border: `1px solid ${border}`, color: text }}
-                        >
-                          {line}
-                        </div>
-                      </div>
-                    ))}
-                  {!String(data.openingLines || '').trim() ? (
-                    <p className="text-[12px]" style={{ color: sub }}>
-                      暂无开场白内容。可手动填写，或点击上方 AI 生成。
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          </Card>
-        ) : null}
-
-        {editTab === 'wechat' ? (
-          <Card>
-            <div className="border-b px-4 py-4" style={{ borderColor: border }}>
-              <p className="text-[14px] font-semibold" style={{ color: text }}>
-                微信资料
-              </p>
-              <p className="mt-1 text-[12px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
-                昵称、微信号、个性签名与朋友圈封面将用于微信内对该角色的展示（若后续界面已接入）。
-              </p>
-            </div>
-            <div className="space-y-4 px-4 py-4">
-              <label className="block">
-                <p className="text-[13px]" style={{ color: sub }}>
-                  微信昵称
-                </p>
-                <input
-                  value={data.wechatNickname ?? ''}
-                  onChange={(e) => setField('wechatNickname', e.target.value)}
-                  placeholder="展示在微信里的昵称"
-                  maxLength={32}
-                  className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none transition-all duration-200 ease-out"
-                  style={{ borderColor: border, color: text }}
-                />
-                <p className="mt-1 text-[11px]" style={{ color: sub }}>
-                  {(data.wechatNickname ?? '').length}/32 · 留空时可由「姓名」兜底（若界面支持）
-                </p>
-              </label>
-
-              <label className="block">
-                <p className="text-[13px]" style={{ color: sub }}>
-                  微信号
-                </p>
-                <input
-                  value={data.wechatId ?? ''}
-                  onChange={(e) => setField('wechatId', e.target.value)}
-                  placeholder="字母、数字、下划线等，仅作展示"
-                  maxLength={32}
-                  className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none transition-all duration-200 ease-out"
-                  style={{ borderColor: border, color: text }}
-                />
-                <p className="mt-1 text-[11px]" style={{ color: sub }}>
-                  {(data.wechatId ?? '').length}/32
-                </p>
-              </label>
-
-              <label className="block">
-                <p className="text-[13px]" style={{ color: sub }}>
-                  个性签名
-                </p>
-                <textarea
-                  value={data.wechatSignature ?? ''}
-                  onChange={(e) => setField('wechatSignature', e.target.value)}
-                  className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[14px] leading-relaxed outline-none transition-all duration-200 ease-out"
-                  style={{ borderColor: border, color: text }}
-                  rows={3}
-                  placeholder="展示在资料卡下方的一行简介"
-                  maxLength={120}
-                />
-                <p className="mt-1 text-[11px]" style={{ color: sub }}>
-                  {(data.wechatSignature ?? '').length}/120
-                </p>
-              </label>
-
-              <label className="block">
-                <p className="text-[13px]" style={{ color: sub }}>
-                  地区
-                </p>
-                <input
-                  value={data.wechatRegion ?? ''}
-                  onChange={(e) => setField('wechatRegion', e.target.value)}
-                  placeholder=""
-                  maxLength={32}
-                  className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none transition-all duration-200 ease-out"
-                  style={{ borderColor: border, color: text }}
-                />
-                <p className="mt-1 text-[11px]" style={{ color: sub }}>
-                  {(data.wechatRegion ?? '').length}/32 · 留空则资料卡地区显示为空
-                </p>
-              </label>
-
-              <div>
-                <p className="text-[13px]" style={{ color: sub }}>
-                  朋友圈背景图
-                </p>
-                <p className="mt-1 text-[12px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
-                  可填写图片链接，或本地上传并在 1:1 裁剪后保存为本地图。
-                </p>
-                <label className="mt-3 block">
-                  <p className="text-[12px] font-medium" style={{ color: sub }}>
-                    图片地址（URL）
-                  </p>
-                  <input
-                    value={data.momentsCoverUrl?.startsWith('data:') ? '' : (data.momentsCoverUrl ?? '')}
-                    onChange={(e) => setField('momentsCoverUrl', e.target.value)}
-                    placeholder="https://… 粘贴图片链接；与下方本地上传二选一，会互相覆盖"
-                    className="mt-2 w-full rounded-xl border bg-white px-3 py-2.5 text-[13px] outline-none transition-all duration-200 ease-out"
-                    style={{ borderColor: border, color: text }}
-                  />
-                  <p className="mt-1 text-[11px]" style={{ color: sub }}>
-                    当前为本地裁剪图时输入框留空；填写 URL 会替换为链接图；清除后可重新上传。
-                  </p>
-                </label>
-                <div
-                  className="mx-auto mt-3 max-w-[220px] overflow-hidden rounded-xl border bg-[#f5f5f5]"
-                  style={{ borderColor: border, aspectRatio: '1 / 1' }}
-                >
-                  {data.momentsCoverUrl?.trim() ? (
-                    <img
-                      src={data.momentsCoverUrl}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex aspect-square w-full items-center justify-center text-[13px]" style={{ color: sub }}>
-                      暂无背景
-                    </div>
-                  )}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="rounded-xl border bg-white px-3 py-2 text-[13px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                    style={{ borderColor: border, color: text }}
-                    onClick={() => momentsCoverFileRef.current?.click()}
-                  >
-                    上传并裁剪（1:1）
-                  </button>
-                  {data.momentsCoverUrl?.trim() ? (
-                    <button
-                      type="button"
-                      className="rounded-xl border bg-white px-3 py-2 text-[13px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                      style={{ borderColor: border, color: sub }}
-                      onClick={() => setField('momentsCoverUrl', '')}
-                    >
-                      清除
-                    </button>
-                  ) : null}
-                  <input
-                    ref={momentsCoverFileRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      onPickMomentsCoverFile(e.target.files?.[0] ?? null)
-                      e.target.value = ''
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          </Card>
-        ) : null}
-
-        {editTab === 'worldbook' ? (
-          <WorldBooksEditor
-            apiConfig={apiConfig}
-            character={data}
-            forPlayerIdentity={false}
-            worldBackgroundPrompt={characterWbPrompt}
-            identityContext={wbIdentityCtx}
-            linkedNpcsContext={linkedNpcsWbContext}
-            onChange={(next: Character) => {
-              setDirty(true)
-              setData(next)
-            }}
-          />
-        ) : null}
-
-        {editTab === 'network' && !data.generatedForCharacterId ? (
-          <PersonaNetworkSection
-            main={data}
-            apiConfig={apiConfig}
-            onApiMissing={() => {
-              setApiMissingMsg('未配置 API 或未选择模型。请先前往「API设置」完成配置。')
-              setApiMissingOpen(true)
-            }}
-            onOpenNpcEdit={onNavigateToCharacter}
-          />
-        ) : null}
-
-        {editTab === 'network' && data.generatedForCharacterId ? (
-          <Card>
-            <div className="px-4 py-5 text-[13px]" style={{ color: sub }}>
-              NPC 角色不支持生成人脉关系，请在主角角色中查看和编辑。
-            </div>
-          </Card>
-        ) : null}
-
-        {editTab === 'schedule' ? (
-          <Card>
-            <div className="border-b px-4 py-4" style={{ borderColor: border }}>
-              <p className="text-[14px] font-semibold" style={{ color: text }}>
-                日程表
-              </p>
-              <p className="mt-1 text-[12px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
-                保存后会自动加入 AI 聊天回复参考（与长期记忆同优先级）。
-              </p>
-            </div>
-            <div className="px-4 py-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px]" style={{ color: text }}>
-                    {data.schedule?.name?.trim() || '未设置'}
-                  </p>
-                  <p className="mt-1 text-[12px]" style={{ color: sub }}>
-                    {data.schedule ? `表头 ${data.schedule.headers.length} 列 · ${data.schedule.rows.length} 行` : '点击编辑，选择模板或自定义创建'}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="rounded-xl border bg-white px-4 py-2.5 text-[13px] font-semibold transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                  style={{ borderColor: border, color: text }}
-                  onClick={() => setScheduleOpen(true)}
-                >
-                  编辑
-                </button>
-              </div>
-            </div>
-          </Card>
-        ) : null}
-
-        {editTab === 'io' ? (
-          <Card>
-          <div className="border-b px-4 py-4" style={{ borderColor: border }}>
-            <p className="text-[14px] font-semibold" style={{ color: text }}>
-              导入 / 导出
-            </p>
-            <p className="mt-1 text-[12px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
-              完整人设包仅在此页导入/导出；请从列表进入本角色编辑页。导入前须已在「我的身份」或新建角色时选好「当前使用」的玩家身份，否则无法导入。导出包内不含旧的身份绑定字段；导入时一律绑定为当前正在使用的身份。含：资料、世界书、世界背景、人脉
-              NPC 与关系（不含身份绑定边）、人脉画布与连线；导入为追加新副本，不自动进微信通讯录。
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2 px-4 py-4">
-            <button
-              type="button"
-              disabled={ioExporting}
-              className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-[13px] transition-all duration-200 ease-out hover:bg-[#fafafa] disabled:opacity-60"
-              style={{ borderColor: border, color: text }}
-              onClick={() => {
-                void (async () => {
-                  setIoExporting(true)
-                  try {
-                    const payload = await buildCharacterExportBundle(data)
-                    toJsonDownload(
-                      payload,
-                      `【Lumi Phone】-人设-${safeExportNameSegment(payload.mainCharacter.name, '未命名')}.json`,
-                    )
-                  } catch (e) {
-                    window.alert(e instanceof Error ? e.message : '导出失败')
-                  } finally {
-                    setIoExporting(false)
-                  }
-                })()
-              }}
-            >
-              <Download className="size-4" />
-              {ioExporting ? '导出中…' : '导出完整包'}
-            </button>
-            <label
-              className="inline-flex cursor-pointer items-center gap-2 rounded-xl border bg-white px-3 py-2 text-[13px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-              style={{ borderColor: border, color: text }}
-            >
-              <Upload className="size-4" />
-              导入人设包
-              <input
-                type="file"
-                accept=".json,application/json,text/json"
-                className="hidden"
-                onChange={(e) => {
+                  })()
+                }}
+                onImportFileChange={(e) => {
                   const input = e.currentTarget
                   void (async () => {
                     const f = input.files?.[0]
@@ -2445,11 +1839,46 @@ function PersonaEditPage({
                   })()
                 }}
               />
-            </label>
-          </div>
-          </Card>
-        ) : null}
+            ) : null}
+          </motion.div>
+        </AnimatePresence>
       </div>
+
+      <PersonaExportSaveDialog
+        open={!!exportSaveDialog}
+        suggestedName={exportSaveDialog?.suggested ?? ''}
+        draftName={exportFilenameDraft}
+        addTimestamp={exportAddTimestamp}
+        onDraftChange={(v) => {
+          setExportFilenameDraft(v)
+          setExportAddTimestamp(false)
+        }}
+        onAddTimestampChange={(checked) => {
+          const meta = exportSaveDialog
+          if (!meta) return
+          setExportAddTimestamp(checked)
+          setExportFilenameDraft(checked ? applyExportFilenameTimestamp(meta.suggested) : meta.suggested)
+        }}
+        onCancel={() => {
+          pendingExportJsonRef.current = null
+          setExportSaveDialog(null)
+        }}
+        onConfirm={() => {
+          const json = pendingExportJsonRef.current
+          if (!json || !exportSaveDialog) return
+          const finalName = sanitizeExportFilenameInput(exportFilenameDraft)
+          setExportSaveDialog(null)
+          void (async () => {
+            try {
+              await exportCharacterJsonToDisk(json, finalName)
+            } catch (e) {
+              window.alert(e instanceof Error ? e.message : '保存失败')
+            } finally {
+              pendingExportJsonRef.current = null
+            }
+          })()
+        }}
+      />
 
       <CenterDialog
         open={confirmLeave}

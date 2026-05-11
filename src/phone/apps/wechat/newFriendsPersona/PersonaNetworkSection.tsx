@@ -1,5 +1,15 @@
-import { ChevronDown, Loader2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import {
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Maximize2,
+  Plus,
+  RotateCcw,
+  Sparkles,
+  X,
+} from 'lucide-react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, PointerEvent } from 'react'
 import type { Character, PlayerNetworkLink, Relationship } from './types'
@@ -11,7 +21,9 @@ import { genderLabelZh, uid } from './utils'
 import type { ApiConfig } from '../../api/types'
 import { useCustomization } from '../../../CustomizationContext'
 
-const REL_BIAS_OPTIONS = ['家人', '朋友', '同事', '同学', '恋人', '敌人', '陌生人', '合作伙伴'] as const
+/** 关系偏向：语义去重（职场含同事向、家族含亲属向、宿敌含对立向），避免胶囊列表冗长 */
+const REL_BIAS_OPTIONS = ['职场', '家族', '暗恋', '宿敌', '朋友', '同学', '恋人', '陌生人', '合作伙伴'] as const
+const REL_BIAS_ALLOWED = new Set<string>(REL_BIAS_OPTIONS as unknown as string[])
 
 const GRAPH_W = 880
 const GRAPH_H = Math.round(520 * (2 / 3))
@@ -133,7 +145,68 @@ function pairFromPlayerLink(link: PlayerNetworkLink): {
 }
 
 function ringRForGraphHeight(graphH: number) {
-  return Math.min(200, Math.max(90, Math.floor(graphH / 2 - 50)))
+  return Math.min(230, Math.max(100, Math.floor(graphH / 2 - 44)))
+}
+
+/** 轻量力导向：在径向初值上推开节点，减轻拥挤（不引入 d3 依赖） */
+function refineLayoutWithForces(
+  layout: Record<string, { x: number; y: number }>,
+  allIds: string[],
+  focalId: string,
+  graphW: number,
+  graphH: number,
+  ringR: number,
+  steps: number,
+): Record<string, { x: number; y: number }> {
+  const cx = graphW / 2
+  const cy = graphH / 2
+  const pos: Record<string, { x: number; y: number }> = { ...layout }
+  const minNodeDist = 82
+  for (let s = 0; s < steps; s++) {
+    const f: Record<string, { dx: number; dy: number }> = {}
+    for (const id of allIds) f[id] = { dx: 0, dy: 0 }
+    for (let i = 0; i < allIds.length; i++) {
+      for (let j = i + 1; j < allIds.length; j++) {
+        const ia = allIds[i]
+        const ib = allIds[j]
+        const pa = pos[ia]
+        const pb = pos[ib]
+        if (!pa || !pb) continue
+        const dx = pb.x - pa.x
+        const dy = pb.y - pa.y
+        const dist = Math.hypot(dx, dy) || 0.001
+        if (dist < minNodeDist) {
+          const push = ((minNodeDist - dist) / dist) * 0.45
+          f[ia].dx -= dx * push
+          f[ia].dy -= dy * push
+          f[ib].dx += dx * push
+          f[ib].dy += dy * push
+        }
+      }
+    }
+    for (const id of allIds) {
+      const p = pos[id]
+      if (!p) continue
+      if (id === focalId) {
+        f[id].dx += (cx - p.x) * 0.14
+        f[id].dy += (cy - p.y) * 0.14
+      } else if (id !== PLAYER_GRAPH_NODE_ID) {
+        const dx = p.x - cx
+        const dy = p.y - cy
+        const dist = Math.hypot(dx, dy) || 0.001
+        const target = ringR * (0.9 + (s / Math.max(steps, 1)) * 0.1)
+        const pull = (dist - target) * 0.065
+        f[id].dx -= (dx / dist) * pull
+        f[id].dy -= (dy / dist) * pull
+      }
+    }
+    for (const id of allIds) {
+      const p = pos[id]
+      if (!p) continue
+      pos[id] = { x: p.x + f[id].dx, y: p.y + f[id].dy }
+    }
+  }
+  return pos
 }
 
 /** 与主角编辑页「新建角色」一致的空白卡，并标记为当前主角下的 NPC */
@@ -205,10 +278,17 @@ type Props = {
 export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpcEdit }: Props) {
   const { state } = useCustomization()
   const playerAvatarUrl = state.profile.avatarImageUrl || ''
-  const [count, setCount] = useState(3)
+  /** 用字符串承载输入，避免 number 受控时删空/删个位被强制成 0 */
+  const [countInput, setCountInput] = useState('3')
   const [biases, setBiases] = useState<string[]>([])
   const [customNote, setCustomNote] = useState('')
-  const [subTab, setSubTab] = useState<'npcs' | 'graph'>('npcs')
+  const [expandedAccordion, setExpandedAccordion] = useState<null | 'ai' | 'manual'>(null)
+  const [graphFullscreenOpen, setGraphFullscreenOpen] = useState(false)
+  const [graphResetSignal, setGraphResetSignal] = useState(0)
+  const [manualSheetOpen, setManualSheetOpen] = useState(false)
+  const [manualName, setManualName] = useState('')
+  const [manualRelation, setManualRelation] = useState('')
+  const [rosterExpandedId, setRosterExpandedId] = useState<string | null>(null)
   const [npcs, setNpcs] = useState<Character[]>([])
   /** 与当前主角存在跨人设连线的其他根角色（非 NPC） */
   const [linkedRoots, setLinkedRoots] = useState<Character[]>([])
@@ -340,6 +420,11 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
     void reload()
   }, [reload])
 
+  /** 去掉已从选项表移除的旧标签，避免状态里残留无效偏向 */
+  useEffect(() => {
+    setBiases((prev) => prev.filter((b) => REL_BIAS_ALLOWED.has(b)))
+  }, [main.id])
+
   const characterIdToName = useMemo(() => {
     const m = new Map<string, string>()
     m.set(PLAYER_GRAPH_NODE_ID, '你')
@@ -407,7 +492,8 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
       onApiMissing()
       return
     }
-    const n = Math.max(1, Math.min(10, Math.floor(count) || 3))
+    const parsed = parseInt(countInput.replace(/\D/g, ''), 10)
+    const n = Math.max(1, Math.min(10, Number.isFinite(parsed) ? parsed : 3))
     setGenerating(true)
     try {
       const playerIdentity =
@@ -421,7 +507,7 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
         main,
         playerIdentity,
         count: n,
-        relationBiases: biases,
+        relationBiases: biases.filter((b) => REL_BIAS_ALLOWED.has(b)),
         customNote,
         worldBackgroundSummary,
       })
@@ -442,7 +528,6 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
         }
       }
       await reload()
-      setSubTab('npcs')
     } finally {
       setGenerating(false)
     }
@@ -493,142 +578,47 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
     onOpenNpcEdit(npc.id, npc)
   }
 
+  const countSliderValue = Math.max(1, Math.min(10, parseInt(countInput.replace(/\D/g, ''), 10) || 3))
+
+  const submitManualSheet = async () => {
+    const name = manualName.trim()
+    if (!name) {
+      window.alert('请填写姓名')
+      return
+    }
+    const npc = newBlankNpcForMain(main)
+    npc.name = name
+    await personaDb.upsertCharacter(npc)
+    const rel = manualRelation.trim()
+    if (rel) {
+      const nextLink: PlayerNetworkLink = {
+        id: uid('pnl'),
+        characterId: npc.id,
+        relationYouToThem: rel,
+        relationThemToYou: '',
+        youSeeThem: '',
+        theySeeYou: '',
+        youCallThem: '',
+        theyCallYou: '',
+      }
+      await personaDb.putPlayerNetworkLinks(main.id, [...playerLinks, nextLink])
+    }
+    await reload()
+    setManualSheetOpen(false)
+    setManualName('')
+    setManualRelation('')
+    onOpenNpcEdit(npc.id)
+  }
+
+  const focalDisplayName =
+    [main, ...npcs, ...linkedRoots].find((n) => n.id === graphFocalId)?.name?.trim() || '—'
+
   return (
     <>
-    <div
-      className="mt-4 rounded-2xl bg-white p-5"
-      style={{ borderRadius: 16, padding: 20 }}
-    >
-      <p className="text-[16px] font-semibold" style={{ color: '#262626' }}>
-        人脉关系生成
-      </p>
-
-      <div className="mt-4 space-y-4">
-        <label className="block">
-          <span className="text-[13px]" style={{ color: '#8e8e8e' }}>
-            生成数量（1-10）
-          </span>
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={count}
-            onChange={(e) => setCount(Number(e.target.value))}
-            className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none"
-            style={{ borderColor: '#dbdbdb', color: '#262626' }}
-          />
-        </label>
-
-        <div>
-          <p className="text-[13px]" style={{ color: '#8e8e8e' }}>
-            关系偏向（多选）
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {REL_BIAS_OPTIONS.map((b) => {
-              const on = biases.includes(b)
-              return (
-                <button
-                  key={b}
-                  type="button"
-                  onClick={() => toggleBias(b)}
-                  className="rounded-xl border px-3 py-2 text-[12px] transition-all duration-200"
-                  style={{
-                    borderColor: '#dbdbdb',
-                    background: on ? '#111827' : '#fff',
-                    color: on ? '#fff' : '#262626',
-                  }}
-                >
-                  {b}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        <label className="block">
-          <span className="text-[13px]" style={{ color: '#8e8e8e' }}>
-            自定义补充说明
-          </span>
-          <textarea
-            value={customNote}
-            onChange={(e) => setCustomNote(e.target.value)}
-            placeholder="补充要求：比如希望有一个严厉的姐姐、一个调皮的弟弟、一个暗恋主角的同事等"
-            rows={3}
-            className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[14px] outline-none"
-            style={{ borderColor: '#dbdbdb', color: '#262626' }}
-          />
-        </label>
-
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={generating}
-            onClick={() => void onGenerate()}
-            className="min-w-0 flex-1 rounded-xl px-4 py-3 text-[14px] font-medium text-white transition-all duration-200 disabled:opacity-50"
-            style={{ background: '#111827', borderRadius: 12, padding: '12px 16px' }}
-          >
-            {generating ? '生成中…' : '生成人脉与 NPC'}
-          </button>
-          <button
-            type="button"
-            disabled={generating}
-            onClick={onManualAddNpc}
-            className="min-w-0 flex-1 rounded-xl border bg-white px-4 py-3 text-[14px] font-medium transition-all duration-200 disabled:opacity-50"
-            style={{ borderColor: '#dbdbdb', color: '#262626', borderRadius: 12 }}
-          >
-            手动添加 NPC
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-6 border-t pt-4" style={{ borderColor: '#dbdbdb' }}>
-        <div className="flex gap-8 border-b" style={{ borderColor: '#dbdbdb' }}>
-          <button
-            type="button"
-            onClick={() => setSubTab('npcs')}
-            className="pb-2 text-[14px] font-medium transition-all duration-200"
-            style={{
-              color: '#262626',
-              borderBottom: subTab === 'npcs' ? '2px solid #111827' : '2px solid transparent',
-            }}
-          >
-            NPC列表
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubTab('graph')}
-            className="pb-2 text-[14px] font-medium transition-all duration-200"
-            style={{
-              color: '#262626',
-              borderBottom: subTab === 'graph' ? '2px solid #111827' : '2px solid transparent',
-            }}
-          >
-            人脉关系图
-          </button>
-        </div>
-
-        {subTab === 'npcs' ? (
-          <div className="mt-4 space-y-3">
-            {npcs.length === 0 ? (
-              <p className="text-center text-[13px]" style={{ color: '#8e8e8e' }}>
-                暂无 NPC。可点击「手动添加 NPC」创建空白人设，或使用上方「生成人脉与 NPC」。
-              </p>
-            ) : (
-              npcs.map((npc) => (
-                <NpcCard key={npc.id} npc={npc} onEdit={() => onOpenNpcEdit(npc.id)} onDelete={() => void onDeleteNpc(npc.id)} />
-              ))
-            )}
-          </div>
-        ) : (
-          <div className="mt-4 space-y-3">
-            <button
-              type="button"
-              onClick={openGraphEditor}
-              className="w-full rounded-xl border bg-white px-4 py-3 text-[14px] font-medium transition-all duration-200"
-              style={{ borderColor: '#111827', color: '#111827' }}
-            >
-              手动编辑关系图（全部关系可改）
-            </button>
+    <div className="space-y-8">
+      <section className="relative">
+        <div className="relative overflow-hidden rounded-2xl border border-neutral-100/90 bg-gray-50/50">
+          {!graphFullscreenOpen ? (
             <RelationshipGraph
               rootMainId={main.id}
               focalId={graphFocalId}
@@ -639,6 +629,9 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
               rels={rels}
               playerLinks={playerLinks}
               playerAvatarUrl={playerAvatarUrl}
+              resetSignal={graphResetSignal}
+              visualPreset="platinum"
+              dashboardChrome={false}
               onNodeDblClick={(id) => {
                 if (id === PLAYER_GRAPH_NODE_ID) return
                 if (id !== main.id) onOpenNpcEdit(id)
@@ -660,9 +653,350 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                 setEdgeDetail({ aId, bId, ab, ba })
               }}
             />
+          ) : (
+            <div className="flex min-h-[280px] items-center justify-center py-16">
+              <p className="text-center text-[12px] text-neutral-400">图谱已在全屏模式中打开</p>
+            </div>
+          )}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-white/80 to-transparent" aria-hidden />
+          <div className="pointer-events-auto absolute bottom-3 right-3 z-10 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setGraphFullscreenOpen(true)}
+              className="flex size-10 items-center justify-center rounded-full border border-neutral-200/90 bg-white/95 text-[#1C1C1E] shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-colors hover:bg-white"
+              aria-label="全屏编辑关系图"
+            >
+              <Maximize2 className="size-[18px]" strokeWidth={1.5} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setGraphResetSignal((n) => n + 1)}
+              className="flex size-10 items-center justify-center rounded-full border border-neutral-200/90 bg-white/95 text-[#1C1C1E] shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-colors hover:bg-white"
+              aria-label="恢复默认排版"
+            >
+              <RotateCcw className="size-[18px]" strokeWidth={1.5} />
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+        <p className="mt-2 text-center text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400">
+          视角中心 · {focalDisplayName}
+        </p>
+      </section>
+
+      <section className="space-y-3">
+        <div className="overflow-hidden rounded-2xl border border-neutral-200/80 bg-white">
+          <button
+            type="button"
+            onClick={() => setExpandedAccordion((v) => (v === 'ai' ? null : 'ai'))}
+            className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition-colors hover:bg-neutral-50/80"
+          >
+            <span className="flex items-center gap-2 text-[13px] font-medium text-[#1C1C1E]">
+              <Sparkles className="size-4 text-[#D4AF37]" strokeWidth={1.5} />
+              AI 智能拓扑
+            </span>
+            <ChevronDown
+              className={`size-4 shrink-0 text-neutral-400 transition-transform duration-300 ${
+                expandedAccordion === 'ai' ? 'rotate-180' : ''
+              }`}
+              strokeWidth={1.5}
+            />
+          </button>
+          <AnimatePresence initial={false}>
+            {expandedAccordion === 'ai' ? (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
+                className="overflow-hidden border-t border-neutral-100"
+              >
+                <div className="space-y-5 px-4 py-5">
+                  <div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
+                        拓展人数
+                      </span>
+                      <span className="font-mono text-[13px] tabular-nums text-[#1C1C1E]">{countSliderValue}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={1}
+                      max={10}
+                      value={countSliderValue}
+                      onChange={(e) => setCountInput(e.target.value)}
+                      className="mt-3 h-1 w-full cursor-pointer appearance-none rounded-full bg-neutral-200 accent-[#1C1C1E]"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-neutral-400">关系偏向</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {REL_BIAS_OPTIONS.map((b) => {
+                        const on = biases.includes(b)
+                        return (
+                          <button
+                            key={b}
+                            type="button"
+                            onClick={() => toggleBias(b)}
+                            className={`rounded-full border px-3 py-1.5 text-[11px] transition-all duration-200 ${
+                              on
+                                ? 'border-[#1C1C1E] bg-[#1C1C1E] text-white'
+                                : 'border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300'
+                            }`}
+                          >
+                            {b}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  <label className="block">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
+                      补充指令
+                    </span>
+                    <textarea
+                      value={customNote}
+                      onChange={(e) => setCustomNote(e.target.value)}
+                      placeholder="输入额外的设定要求…"
+                      rows={3}
+                      className="mt-2 w-full resize-none border-0 border-b border-neutral-200 bg-transparent py-2 text-[13px] leading-relaxed text-[#1C1C1E] outline-none ring-0 transition-colors placeholder:text-neutral-300 focus:border-[#D4AF37]"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={generating}
+                    onClick={() => void onGenerate()}
+                    className="w-full rounded-xl bg-[#1C1C1E] py-3.5 text-[13px] font-semibold tracking-wide text-white transition-opacity disabled:opacity-50"
+                  >
+                    {generating ? '生成中…' : '开始生成 · Generate'}
+                  </button>
+                </div>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </div>
+
+        <div className="overflow-hidden rounded-2xl border border-neutral-200/80 bg-white">
+          <button
+            type="button"
+            onClick={() => setExpandedAccordion((v) => (v === 'manual' ? null : 'manual'))}
+            className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition-colors hover:bg-neutral-50/80"
+          >
+            <span className="flex items-center gap-2 text-[13px] font-medium text-[#1C1C1E]">
+              <Plus className="size-4 text-[#D4AF37]" strokeWidth={1.5} />
+              手动录入档案
+            </span>
+            <ChevronDown
+              className={`size-4 shrink-0 text-neutral-400 transition-transform duration-300 ${
+                expandedAccordion === 'manual' ? 'rotate-180' : ''
+              }`}
+              strokeWidth={1.5}
+            />
+          </button>
+          <AnimatePresence initial={false}>
+            {expandedAccordion === 'manual' ? (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
+                className="overflow-hidden border-t border-neutral-100"
+              >
+                <div className="px-4 py-5">
+                  <p className="text-[12px] leading-relaxed text-neutral-500">
+                    添加单个 NPC 档案；可填写与「你」之间的连线关系词，随后在完整人设页补全细节。
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setManualSheetOpen(true)}
+                    className="mt-4 w-full rounded-xl border border-neutral-200 py-3 text-[13px] font-medium text-[#1C1C1E] transition-colors hover:bg-neutral-50"
+                  >
+                    打开录入抽屉
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onManualAddNpc}
+                    className="mt-2 w-full py-2 text-[11px] text-neutral-400 transition-colors hover:text-neutral-600"
+                  >
+                    或直接创建空白人设
+                  </button>
+                </div>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-4 flex items-end justify-between gap-2 border-b border-neutral-100 pb-3">
+          <div>
+            <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">Roster · 已收录档案</p>
+            <p className="mt-1 text-[15px] font-semibold tracking-tight text-[#1C1C1E]">NPC 列表</p>
+          </div>
+          <button
+            type="button"
+            onClick={openGraphEditor}
+            className="shrink-0 text-[11px] font-medium text-neutral-500 underline-offset-4 transition-colors hover:text-[#1C1C1E] hover:underline"
+          >
+            深度编辑关系图
+          </button>
+        </div>
+        <div className="space-y-0 divide-y divide-neutral-100 rounded-2xl border border-neutral-200/80 bg-white">
+          {npcs.length === 0 ? (
+            <p className="px-4 py-10 text-center text-[12px] text-neutral-400">暂无收录。使用 AI 拓扑或手动录入添加。</p>
+          ) : (
+            npcs.map((npc) => (
+              <RosterNpcRow
+                key={npc.id}
+                npc={npc}
+                relationHint={playerLinks.find((l) => l.characterId === npc.id)?.relationYouToThem?.trim() || ''}
+                expanded={rosterExpandedId === npc.id}
+                onToggle={() => setRosterExpandedId((id) => (id === npc.id ? null : npc.id))}
+                onEdit={() => onOpenNpcEdit(npc.id)}
+                onDelete={() => void onDeleteNpc(npc.id)}
+              />
+            ))
+          )}
+        </div>
+      </section>
+    </div>
+
+    {graphFullscreenOpen
+      ? createPortal(
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[2600] flex flex-col bg-white"
+            style={{ paddingTop: 'max(10px, env(safe-area-inset-top, 0px))' }}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-neutral-100 px-4 py-3">
+              <p className="text-[14px] font-semibold text-[#1C1C1E]">关系图谱 · 全屏</p>
+              <button
+                type="button"
+                onClick={() => setGraphFullscreenOpen(false)}
+                className="rounded-full p-2 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-[#1C1C1E]"
+                aria-label="关闭"
+              >
+                <X className="size-5" strokeWidth={1.5} />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+              <RelationshipGraph
+                rootMainId={main.id}
+                focalId={graphFocalId}
+                onFocalChange={setGraphFocalId}
+                main={main}
+                npcs={npcs}
+                linkedRoots={linkedRoots}
+                rels={rels}
+                playerLinks={playerLinks}
+                playerAvatarUrl={playerAvatarUrl}
+                resetSignal={graphResetSignal}
+                visualPreset="platinum"
+                dashboardChrome
+                onNodeDblClick={(id) => {
+                  if (id === PLAYER_GRAPH_NODE_ID) return
+                  if (id !== main.id) onOpenNpcEdit(id)
+                }}
+                onEdgeClick={(aId, bId) => {
+                  let ab = relMap.get(`${aId}::${bId}`)
+                  let ba = relMap.get(`${bId}::${aId}`)
+                  if (aId === PLAYER_GRAPH_NODE_ID || bId === PLAYER_GRAPH_NODE_ID) {
+                    const charId = aId === PLAYER_GRAPH_NODE_ID ? bId : aId
+                    const link = playerLinks.find((l) => l.characterId === charId)
+                    if (link) {
+                      const p = pairFromPlayerLink(link)
+                      if (p.aId === aId && p.bId === bId) {
+                        ab = p.ab
+                        ba = p.ba
+                      }
+                    }
+                  }
+                  setEdgeDetail({ aId, bId, ab, ba })
+                }}
+              />
+            </div>
+            <div
+              className="flex shrink-0 justify-end gap-2 border-t border-neutral-100 px-4 py-3"
+              style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}
+            >
+              <button
+                type="button"
+                onClick={() => setGraphResetSignal((n) => n + 1)}
+                className="rounded-full border border-neutral-200 px-4 py-2 text-[12px] font-medium text-[#1C1C1E]"
+              >
+                恢复默认排版
+              </button>
+              <button
+                type="button"
+                onClick={openGraphEditor}
+                className="rounded-full bg-[#1C1C1E] px-4 py-2 text-[12px] font-medium text-white"
+              >
+                深度编辑连线
+              </button>
+            </div>
+          </motion.div>,
+          document.body,
+        )
+      : null}
+
+    {manualSheetOpen
+      ? createPortal(
+          <div
+            className="fixed inset-0 z-[2550] flex flex-col justify-end bg-black/45"
+            role="presentation"
+            onClick={() => setManualSheetOpen(false)}
+          >
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+              className="rounded-t-[20px] bg-white px-4 pt-4 shadow-[0_-8px_40px_rgba(0,0,0,0.12)]"
+              style={{ paddingBottom: 'max(20px, env(safe-area-inset-bottom, 0px))' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-neutral-200" />
+              <p className="text-[15px] font-semibold text-[#1C1C1E]">手动录入档案</p>
+              <p className="mt-1 text-[11px] text-neutral-500">姓名必填；关系词将显示在「你」与该 NPC 的连线标签上。</p>
+              <label className="mt-4 block">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.15em] text-neutral-400">姓名</span>
+                <input
+                  value={manualName}
+                  onChange={(e) => setManualName(e.target.value)}
+                  className="mt-1 w-full border-0 border-b border-neutral-200 py-2 text-[15px] text-[#1C1C1E] outline-none ring-0 focus:border-[#D4AF37]"
+                  placeholder="角色姓名"
+                />
+              </label>
+              <label className="mt-4 block">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.15em] text-neutral-400">
+                  关系词（你→对方，可选）
+                </span>
+                <input
+                  value={manualRelation}
+                  onChange={(e) => setManualRelation(e.target.value)}
+                  className="mt-1 w-full border-0 border-b border-neutral-200 py-2 text-[15px] text-[#1C1C1E] outline-none ring-0 focus:border-[#D4AF37]"
+                  placeholder="如：损友、暗恋对象"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void submitManualSheet()}
+                className="mt-6 w-full rounded-xl bg-[#1C1C1E] py-3.5 text-[13px] font-semibold text-white"
+              >
+                保存并打开人设
+              </button>
+              <button
+                type="button"
+                onClick={() => setManualSheetOpen(false)}
+                className="mt-2 w-full py-2 text-[12px] text-neutral-400"
+              >
+                取消
+              </button>
+            </motion.div>
+          </div>,
+          document.body,
+        )
+      : null}
 
       {edgeDetail ? (
         (() => {
@@ -679,7 +1013,7 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
           if (playerLinkCharIdForModal && plink) {
             return (
               <div
-                className="fixed inset-0 z-[1200] flex items-center justify-center px-4"
+                className="fixed inset-0 z-[2800] flex items-center justify-center px-4"
                 style={{ background: 'rgba(0,0,0,0.45)' }}
                 onClick={() => setEdgeDetail(null)}
               >
@@ -855,7 +1189,7 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
           if (playerLinkCharIdForModal && !plink) {
             return (
               <div
-                className="fixed inset-0 z-[1200] flex items-center justify-center px-4"
+                className="fixed inset-0 z-[2800] flex items-center justify-center px-4"
                 style={{ background: 'rgba(0,0,0,0.45)' }}
                 onClick={() => setEdgeDetail(null)}
               >
@@ -880,7 +1214,7 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
 
           return (
             <div
-              className="fixed inset-0 z-[1200] flex items-center justify-center px-4"
+              className="fixed inset-0 z-[2800] flex items-center justify-center px-4"
               style={{ background: 'rgba(0,0,0,0.45)' }}
               onClick={() => !savingCharEdge && setEdgeDetail(null)}
             >
@@ -1115,7 +1449,7 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
 
       {graphEditorOpen ? (
         <div
-          className="fixed inset-0 z-[1210] flex items-end justify-center px-0 sm:items-center sm:px-4"
+          className="fixed inset-0 z-[2810] flex items-end justify-center px-0 sm:items-center sm:px-4"
           style={{ background: GE.overlay }}
           onClick={() => {
             if (!graphEditorSaving) {
@@ -1785,7 +2119,6 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
           </div>
         </div>
       ) : null}
-    </div>
     {generating
       ? createPortal(
           <div
@@ -1816,72 +2149,154 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
   )
 }
 
-function NpcCard({ npc, onEdit, onDelete }: { npc: Character; onEdit: () => void; onDelete: () => void }) {
+function RosterNpcRow({
+  npc,
+  relationHint,
+  expanded,
+  onToggle,
+  onEdit,
+  onDelete,
+}: {
+  npc: Character
+  relationHint: string
+  expanded: boolean
+  onToggle: () => void
+  onEdit: () => void
+  onDelete: () => void
+}) {
   const interests = npc.interests ?? []
   const painPoints = npc.painPoints ?? []
+  const profileSubtitle = `${genderLabelZh(npc.gender)} · ${npc.identity?.trim() || '—'} · ${npc.mbti?.trim() || '—'}`
+
+  const [bioDisplay, setBioDisplay] = useState(() => npc.bio?.trim() || '')
+  useEffect(() => {
+    const raw = npc.bio?.trim() || ''
+    if (!raw) {
+      setBioDisplay('')
+      return
+    }
+    if (!raw.includes('{{') || !npc.id?.trim()) {
+      setBioDisplay(raw)
+      return
+    }
+    let cancelled = false
+    void personaDb.expandCharacterFieldPlaceholderPreview(raw, npc.id).then((out) => {
+      if (!cancelled) setBioDisplay((out ?? raw).trim() || raw)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [npc.id, npc.bio])
+
   return (
-    <div
-      className="rounded-xl border bg-white p-4"
-      style={{ borderColor: '#dbdbdb', borderRadius: 12, padding: 16 }}
-    >
-      <div className="flex items-start gap-3">
+    <div className="bg-white">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-neutral-50/90"
+      >
         {npc.avatarUrl?.trim() ? (
           <img
             src={npc.avatarUrl}
             alt=""
-            className="size-10 shrink-0 rounded-full border object-cover"
-            style={{ borderColor: '#dbdbdb' }}
+            className="size-11 shrink-0 rounded-full border border-white object-cover shadow-[0_1px_4px_rgba(0,0,0,0.06)]"
           />
         ) : (
-          <div className="size-10 shrink-0 rounded-full border border-dashed bg-[#fafafa]" style={{ borderColor: '#dbdbdb' }} />
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-full border border-neutral-200/90 bg-neutral-100 text-[10px] text-neutral-400">
+            —
+          </div>
         )}
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <span className="text-[16px] font-semibold" style={{ color: '#262626' }}>
-              {npc.name}
-            </span>
-            <span className="text-[12px]" style={{ color: '#8e8e8e' }}>
-              {genderLabelZh(npc.gender)}
-            </span>
-          </div>
-          <p className="mt-1 text-[14px]" style={{ color: '#8e8e8e' }}>
-            {npc.identity} | {npc.mbti || '—'}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {interests.map((t) => (
-              <span key={t} className="rounded-lg bg-[#f4f4f5] px-2 py-0.5 text-[12px]" style={{ color: '#262626' }}>
-                {t}
-              </span>
-            ))}
-            {painPoints.map((t) => (
-              <span key={t} className="rounded-lg bg-[#e5e5e5] px-2 py-0.5 text-[12px]" style={{ color: '#262626' }}>
-雷：{t}
-              </span>
-            ))}
-          </div>
-          <p className="mt-2 line-clamp-3 text-[14px] leading-relaxed" style={{ color: '#262626' }}>
-            {npc.bio || '—'}
-          </p>
+          <p className="truncate text-[15px] font-semibold text-[#1C1C1E]">{npc.name || '未命名'}</p>
+          <p className="mt-0.5 truncate text-[10px] leading-snug text-neutral-500">{profileSubtitle}</p>
         </div>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onEdit}
-          className="rounded-xl border px-4 py-2 text-[13px]"
-          style={{ borderColor: '#dbdbdb', color: '#262626' }}
-        >
-          查看完整人设
-        </button>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="rounded-xl border px-4 py-2 text-[13px]"
-          style={{ borderColor: '#dbdbdb', color: '#8e8e8e' }}
-        >
-          删除
-        </button>
-      </div>
+        <ChevronRight
+          className={`size-4 shrink-0 text-neutral-300 transition-transform duration-300 ${expanded ? 'rotate-90' : ''}`}
+          strokeWidth={1.5}
+        />
+      </button>
+      <AnimatePresence initial={false}>
+        {expanded ? (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden border-t border-neutral-50 bg-neutral-50/40"
+          >
+            <div className="space-y-3 px-4 py-4 text-[12px] text-neutral-600">
+              <p>
+                <span className="text-[10px] uppercase tracking-wider text-neutral-400">Link · 人脉连线</span>
+                <span className="mt-1 block text-[#1C1C1E]">
+                  {relationHint.trim() ? (
+                    <span className="text-neutral-600">[ {relationHint.trim()} ]</span>
+                  ) : (
+                    <span className="text-neutral-400">未在「你」的连线中填写关系词</span>
+                  )}
+                </span>
+              </p>
+              {interests.length > 0 ? (
+                <p>
+                  <span className="text-[10px] uppercase tracking-wider text-neutral-400">Tags · 兴趣</span>
+                  <span className="mt-1.5 flex flex-wrap gap-1.5">
+                    {interests.map((t) => (
+                      <span
+                        key={t}
+                        className="rounded-md bg-white px-2 py-0.5 text-[11px] text-neutral-600 ring-1 ring-neutral-200/80"
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </span>
+                </p>
+              ) : null}
+              {painPoints.length > 0 ? (
+                <p>
+                  <span className="text-[10px] uppercase tracking-wider text-amber-800/70">Minefield · 雷点</span>
+                  <span className="mt-1.5 flex flex-wrap gap-1.5">
+                    {painPoints.map((t) => (
+                      <span
+                        key={t}
+                        className="rounded-md border border-dashed border-amber-200/90 bg-amber-50/80 px-2 py-0.5 text-[11px] text-amber-950/80"
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </span>
+                </p>
+              ) : null}
+              <p>
+                <span className="text-[10px] uppercase tracking-wider text-neutral-400">Bio · 简介</span>
+                <span className="mt-1 block line-clamp-5 whitespace-pre-wrap leading-relaxed text-neutral-500">
+                  {bioDisplay || '暂无简介'}
+                </span>
+              </p>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onEdit()
+                  }}
+                  className="flex-1 rounded-lg border border-neutral-200 py-2 text-[12px] font-medium text-[#1C1C1E] transition-colors hover:bg-white"
+                >
+                  完整人设
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDelete()
+                  }}
+                  className="rounded-lg border border-transparent px-3 py-2 text-[12px] text-neutral-400 transition-colors hover:text-red-600"
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   )
 }
@@ -1898,6 +2313,9 @@ function RelationshipGraph({
   playerAvatarUrl,
   onNodeDblClick,
   onEdgeClick,
+  visualPreset = 'classic',
+  dashboardChrome = true,
+  resetSignal = 0,
 }: {
   rootMainId: string
   focalId: string
@@ -1911,7 +2329,14 @@ function RelationshipGraph({
   playerAvatarUrl: string
   onNodeDblClick: (id: string) => void
   onEdgeClick: (aId: string, bId: string) => void
+  visualPreset?: 'classic' | 'platinum'
+  /** 是否显示视角条、恢复按钮与底部说明（仪表盘嵌入时可关闭） */
+  dashboardChrome?: boolean
+  /** 递增时触发恢复默认排版 */
+  resetSignal?: number
 }) {
+  const svgUid = useId().replace(/:/g, '')
+  const platinum = visualPreset === 'platinum'
   const relDirMap = useMemo(() => {
     const m = new Map<string, Relationship>()
     for (const r of rels) m.set(`${r.fromCharacterId}::${r.toCharacterId}`, r)
@@ -2027,10 +2452,11 @@ function RelationshipGraph({
         setPan(stored.pan)
         return
       }
-      const layout = computeRadialLayout(focalId, charIdsSorted, GRAPH_W, GRAPH_H, ringR)
+      let layout = computeRadialLayout(focalId, charIdsSorted, GRAPH_W, GRAPH_H, ringR)
       if (playerLinks.length > 0) {
         layout[PLAYER_GRAPH_NODE_ID] = { x: GRAPH_W / 2, y: GRAPH_H / 2 + ringR + 82 }
       }
+      layout = refineLayoutWithForces(layout, allNodeIds, focalId, GRAPH_W, GRAPH_H, ringR, platinum ? 56 : 28)
       setPos(layout)
       setScale(1)
       requestAnimationFrame(() => {
@@ -2043,7 +2469,7 @@ function RelationshipGraph({
         setPan(centerPanForFocal(fp.x, fp.y, box.width, box.height, 1))
       })
     })()
-  }, [rootMainId, focalId, layoutNetworkKey, charIdsSorted, allNodeIds, playerLinks.length])
+  }, [rootMainId, focalId, layoutNetworkKey, charIdsSorted, allNodeIds, playerLinks.length, platinum])
 
   useEffect(() => {
     if (!positionsMatchNetwork(pos, allNodeIds)) return
@@ -2063,10 +2489,11 @@ function RelationshipGraph({
 
   const resetToDefaultLayout = useCallback(() => {
     const ringR = ringRForGraphHeight(GRAPH_H)
-    const layout = computeRadialLayout(focalId, charIdsSorted, GRAPH_W, GRAPH_H, ringR)
+    let layout = computeRadialLayout(focalId, charIdsSorted, GRAPH_W, GRAPH_H, ringR)
     if (playerLinks.length > 0) {
       layout[PLAYER_GRAPH_NODE_ID] = { x: GRAPH_W / 2, y: GRAPH_H / 2 + ringR + 82 }
     }
+    layout = refineLayoutWithForces(layout, allNodeIds, focalId, GRAPH_W, GRAPH_H, ringR, platinum ? 56 : 28)
     setPos(layout)
     setScale(1)
     requestAnimationFrame(() => {
@@ -2087,7 +2514,14 @@ function RelationshipGraph({
         updatedAt: Date.now(),
       })
     })
-  }, [focalId, rootMainId, allNodeIds, charIdsSorted, playerLinks.length])
+  }, [focalId, rootMainId, allNodeIds, charIdsSorted, playerLinks.length, platinum])
+
+  const resetLayoutRef = useRef(resetToDefaultLayout)
+  resetLayoutRef.current = resetToDefaultLayout
+  useEffect(() => {
+    if (!resetSignal) return
+    resetLayoutRef.current()
+  }, [resetSignal])
 
   useEffect(() => {
     const el = graphWrapRef.current
@@ -2208,24 +2642,33 @@ function RelationshipGraph({
     finishNodePointer(id, e, false)
   }
 
+  const clipYou = `cp-${svgUid}-${PLAYER_GRAPH_NODE_ID}`
+
   return (
-    <div className="overflow-hidden rounded-xl bg-white p-5" style={{ background: '#fff' }}>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[12px]" style={{ color: '#8e8e8e' }}>
-          视角中心：<span style={{ color: '#262626' }}>{focalName}</span>
-        </p>
-        <button
-          type="button"
-          onClick={resetToDefaultLayout}
-          className="rounded-lg border px-3 py-1.5 text-[12px] font-medium"
-          style={{ borderColor: '#dbdbdb', color: '#262626' }}
-        >
-          恢复默认排版
-        </button>
-      </div>
+    <div
+      className={`overflow-hidden ${platinum ? 'rounded-[14px] bg-transparent p-3 sm:p-4' : 'rounded-xl bg-white p-5'}`}
+      style={{ background: platinum ? 'transparent' : '#fff' }}
+    >
+      {dashboardChrome ? (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[12px]" style={{ color: platinum ? '#a3a3a3' : '#8e8e8e' }}>
+            视角中心：<span style={{ color: platinum ? '#1C1C1E' : '#262626' }}>{focalName}</span>
+          </p>
+          <button
+            type="button"
+            onClick={resetToDefaultLayout}
+            className={`rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-colors ${
+              platinum ? 'border-neutral-200/90 text-[#1C1C1E] hover:bg-white' : ''
+            }`}
+            style={platinum ? undefined : { borderColor: '#dbdbdb', color: '#262626' }}
+          >
+            恢复默认排版
+          </button>
+        </div>
+      ) : null}
       <div
         ref={graphWrapRef}
-        className="max-w-full"
+        className="mx-auto max-w-full"
         style={{
           touchAction: 'none',
           width: GRAPH_W,
@@ -2248,21 +2691,25 @@ function RelationshipGraph({
       >
         <defs>
           {playerLinks.length > 0 ? (
-            <clipPath id={`cp-${PLAYER_GRAPH_NODE_ID}`}>
+            <clipPath id={clipYou}>
               <circle cx={0} cy={0} r={20} />
             </clipPath>
           ) : null}
           {nodes.map((n) => (
-            <clipPath key={`cp-${n.id}`} id={`cp-${n.id}`}>
+            <clipPath key={`cp-${svgUid}-${n.id}`} id={`cp-${svgUid}-${n.id}`}>
               <circle cx={0} cy={0} r={20} />
             </clipPath>
           ))}
-          <marker id="arrEnd" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="strokeWidth">
-            <path d="M0,0 L8,4 L0,8 Z" fill="#111827" />
-          </marker>
-          <marker id="arrStart" markerWidth="8" markerHeight="8" refX="2" refY="4" orient="auto" markerUnits="strokeWidth">
-            <path d="M8,0 L0,4 L8,8 Z" fill="#111827" />
-          </marker>
+          {!platinum ? (
+            <>
+              <marker id={`arrEnd-${svgUid}`} markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L8,4 L0,8 Z" fill="#111827" />
+              </marker>
+              <marker id={`arrStart-${svgUid}`} markerWidth="8" markerHeight="8" refX="2" refY="4" orient="auto" markerUnits="strokeWidth">
+                <path d="M8,0 L0,4 L8,8 Z" fill="#111827" />
+              </marker>
+            </>
+          ) : null}
         </defs>
         <g transform={`translate(${pan.x},${pan.y}) scale(${scale})`}>
           <rect
@@ -2286,6 +2733,11 @@ function RelationshipGraph({
                 : focalId === pair.bId
                   ? pair.ba?.relation ?? pair.ab?.relation ?? ''
                   : pair.ab?.relation ?? pair.ba?.relation ?? ''
+            const labelTrim = String(label).trim()
+            const labelW = platinum
+              ? Math.max(36, Math.min(118, labelTrim.length * 6.5 + 18))
+              : 112
+            const labelH = platinum ? 16 : 20
             return (
               <g key={`${pair.aId}::${pair.bId}`}>
                 <line
@@ -2303,37 +2755,41 @@ function RelationshipGraph({
                   y1={a.y}
                   x2={b.x}
                   y2={b.y}
-                  stroke="#111827"
-                  strokeWidth={1}
-                  markerEnd="url(#arrEnd)"
-                  markerStart="url(#arrStart)"
+                  stroke={platinum ? '#d4d4d4' : '#111827'}
+                  strokeWidth={platinum ? 0.85 : 1}
+                  markerEnd={platinum ? 'none' : `url(#arrEnd-${svgUid})`}
+                  markerStart={platinum ? 'none' : `url(#arrStart-${svgUid})`}
                   pointerEvents="none"
                 />
-                <rect
-                  x={mx - 56}
-                  y={my - 10}
-                  width={112}
-                  height={20}
-                  rx={6}
-                  fill="rgba(255,255,255,0.92)"
-                  stroke="#dbdbdb"
-                  strokeWidth={1}
-                  style={{ cursor: 'pointer' }}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onEdgeClick(pair.aId, pair.bId)
-                  }}
-                />
-                <text
-                  x={mx}
-                  y={my + 4}
-                  textAnchor="middle"
-                  fontSize={12}
-                  fill="#262626"
-                  style={{ cursor: 'pointer', pointerEvents: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
-                >
-                  {label}
-                </text>
+                {labelTrim ? (
+                  <>
+                    <rect
+                      x={mx - labelW / 2}
+                      y={my - labelH / 2}
+                      width={labelW}
+                      height={labelH}
+                      rx={platinum ? 4 : 6}
+                      fill="#ffffff"
+                      stroke={platinum ? 'none' : '#dbdbdb'}
+                      strokeWidth={platinum ? 0 : 1}
+                      style={{ cursor: 'pointer' }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onEdgeClick(pair.aId, pair.bId)
+                      }}
+                    />
+                    <text
+                      x={mx}
+                      y={my + (platinum ? 3.5 : 4)}
+                      textAnchor="middle"
+                      fontSize={platinum ? 10 : 12}
+                      fill={platinum ? '#525252' : '#262626'}
+                      style={{ cursor: 'pointer', pointerEvents: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+                    >
+                      {labelTrim}
+                    </text>
+                  </>
+                ) : null}
               </g>
             )
           })}
@@ -2358,14 +2814,14 @@ function RelationshipGraph({
                     y={-20}
                     width={40}
                     height={40}
-                    clipPath={`url(#cp-${PLAYER_GRAPH_NODE_ID})`}
+                    clipPath={`url(#${clipYou})`}
                     preserveAspectRatio="xMidYMid slice"
                     style={{ WebkitUserDrag: 'none', userSelect: 'none' } as CSSProperties}
                   />
-                  <circle r={20} fill="none" stroke="#000000" strokeWidth={2} />
+                  <circle r={20} fill="none" stroke={platinum ? '#ffffff' : '#000000'} strokeWidth={platinum ? 1.5 : 2} />
                 </>
               ) : (
-                <circle r={20} fill="#ffffff" stroke="#000000" strokeWidth={2} />
+                <circle r={20} fill="#ffffff" stroke={platinum ? '#e5e5e5' : '#000000'} strokeWidth={platinum ? 1.5 : 2} />
               )}
               <text
                 y={36}
@@ -2393,23 +2849,29 @@ function RelationshipGraph({
               >
                 {n.avatarUrl?.trim() ? (
                   <>
+                    {isFocal && platinum ? (
+                      <circle r={27} fill="none" stroke="#D4AF37" strokeOpacity={0.28} strokeWidth={1} />
+                    ) : null}
                     <image
                       href={n.avatarUrl}
                       x={-20}
                       y={-20}
                       width={40}
                       height={40}
-                      clipPath={`url(#cp-${n.id})`}
+                      clipPath={`url(#cp-${svgUid}-${n.id})`}
                       preserveAspectRatio="xMidYMid slice"
                       style={{ WebkitUserDrag: 'none', userSelect: 'none' } as CSSProperties}
                     />
-                    <circle r={20} fill="none" stroke="#dbdbdb" strokeWidth={1} />
-                    {isFocal ? <circle r={23} fill="none" stroke="#111827" strokeWidth={1.5} /> : null}
+                    <circle r={20} fill="none" stroke={platinum ? '#ffffff' : '#dbdbdb'} strokeWidth={platinum ? 1.25 : 1} />
+                    {isFocal && !platinum ? <circle r={23} fill="none" stroke="#111827" strokeWidth={1.5} /> : null}
                   </>
                 ) : (
                   <>
-                    <circle r={20} fill="#fafafa" stroke="#dbdbdb" strokeWidth={1} />
-                    {isFocal ? <circle r={23} fill="none" stroke="#111827" strokeWidth={1.5} /> : null}
+                    {isFocal && platinum ? (
+                      <circle r={27} fill="none" stroke="#D4AF37" strokeOpacity={0.28} strokeWidth={1} />
+                    ) : null}
+                    <circle r={20} fill="#fafafa" stroke={platinum ? '#e5e5e5' : '#dbdbdb'} strokeWidth={1} />
+                    {isFocal && !platinum ? <circle r={23} fill="none" stroke="#111827" strokeWidth={1.5} /> : null}
                   </>
                 )}
                 <text
@@ -2438,9 +2900,11 @@ function RelationshipGraph({
         </g>
       </svg>
       </div>
-      <p className="mt-2 text-center text-[11px]" style={{ color: '#8e8e8e' }}>
-        单击头像切换视角中心（「你」不可切视角）· 连点打开人设 · 拖节点 / 空白平移 · 捏合或滚轮缩放 · 点击连线或中间关系词标签查看；含「你」的连线可编辑你对对方的描述与关系词。完整编辑请用上方「手动编辑关系图」。
-      </p>
+      {dashboardChrome ? (
+        <p className="mt-2 text-center text-[11px] leading-relaxed" style={{ color: platinum ? '#a3a3a3' : '#8e8e8e' }}>
+          单击头像切换视角中心（「你」不可切视角）· 连点打开人设 · 拖节点 / 空白平移 · 捏合或滚轮缩放 · 点击连线或标签查看；含「你」的连线可编辑。完整编辑请用「深度编辑关系图」。
+        </p>
+      ) : null}
     </div>
   )
 }

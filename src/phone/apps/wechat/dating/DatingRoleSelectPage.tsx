@@ -1,12 +1,35 @@
 import { CalendarHeart, ChevronRight, Clock } from 'lucide-react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { personaDb } from '../newFriendsPersona/idb'
 import { useDating } from './DatingContext'
+
+/** 列表副标题：与简介/签名存库一致，展开 {{id:…}} / {{user}} 等为可读名 */
+function DatingListSignatureLine({ characterId, text }: { characterId: string; text: string }) {
+  const raw = String(text ?? '')
+  const [display, setDisplay] = useState(raw)
+  useEffect(() => {
+    if (!raw.includes('{{') || !characterId.trim()) {
+      setDisplay(raw)
+      return
+    }
+    let cancelled = false
+    void personaDb.expandCharacterFieldPlaceholderPreview(raw, characterId).then((out) => {
+      if (!cancelled) setDisplay((out ?? raw).trim() || raw)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [characterId, raw])
+  return <p className="line-clamp-1 text-[14px] text-[#8e8e8e]">{display}</p>
+}
 
 type Props = {
   onEnterStory: () => void
+  /** 无可用角色时：跳转「角色人设」管理页 */
+  onOpenPersonaManager?: () => void
 }
 
-export function DatingRoleSelectPage({ onEnterStory }: Props) {
+export function DatingRoleSelectPage({ onEnterStory, onOpenPersonaManager }: Props) {
   const { characters, allArchives, setCurrentCharacterId } = useDating()
 
   const lastPlayed = useMemo(() => {
@@ -74,7 +97,7 @@ export function DatingRoleSelectPage({ onEnterStory }: Props) {
               <img src={c.avatarUrl} alt={c.realName} className="h-[50px] w-[50px] rounded-full border-2 border-stone-200 object-cover" />
               <div className="ml-3 min-w-0">
                 <p className="text-[16px] font-semibold text-[#262626]">{c.realName}</p>
-                <p className="line-clamp-1 text-[14px] text-[#8e8e8e]">{c.signature}</p>
+                <DatingListSignatureLine characterId={c.id} text={c.signature} />
               </div>
               <ChevronRight className="ml-auto size-4 shrink-0 text-[#8e8e8e]" />
             </button>
@@ -84,12 +107,13 @@ export function DatingRoleSelectPage({ onEnterStory }: Props) {
         <div className="flex min-h-[70vh] flex-col items-center justify-center px-6 text-center">
           <CalendarHeart className="size-12 text-[#8e8e8e]" strokeWidth={1.7} />
           <p className="mt-4 text-[16px] text-[#262626]">暂无可约会的AI角色</p>
-          <p className="mt-2 text-[14px] text-[#8e8e8e]">导入AI角色人设后，即可开启专属约会剧情</p>
+          <p className="mt-2 text-[14px] text-[#8e8e8e]">创建角色人设后，即可开启专属约会剧情</p>
           <button
             type="button"
+            onClick={() => onOpenPersonaManager?.()}
             className="mt-4 rounded-xl bg-neutral-900 px-6 py-2.5 text-white transition-all duration-200 ease-out hover:bg-neutral-800"
           >
-            导入人设
+            创建角色
           </button>
         </div>
       )}

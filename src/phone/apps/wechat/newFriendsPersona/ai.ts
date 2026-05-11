@@ -519,8 +519,25 @@ function parseOpenAiChoiceMessage(data: unknown): string {
   }
 
   throw new Error(
-    '返回格式不符合预期（未解析到模型正文）。客户端已尝试：嵌套 JSON、choices[].message 为字符串、answer/response 等常见网关字段、Gemini 结构。若仍失败，请确认网关返回 JSON 含 choices[].message.content、choices[].text，或与 OpenAI chat/completions 兼容。',
+    '返回格式不符合预期（未解析到模型正文）。客户端已尝试：嵌套 JSON、choices[].message 为字符串、answer/response 等常见网关字段、Gemini 结构。HTTP 200 仍失败时常见于：网关套壳字段名不兼容、`choices[].message.content` / `choices[].text` 为空字符串（审查/过载/上下文过长截断）、或配置了流式 SSE 却走了非流式路径。若仍失败，请确认网关返回可与 OpenAI `chat/completions` 对齐的 JSON。',
   )
+}
+
+/** fetch 后与 `resp.json()` 等价，但在非 JSON 时给出可操作提示（多为流式/HTML/网关错误页） */
+async function readFetchJsonBody(resp: Response): Promise<unknown> {
+  const raw = await resp.text()
+  const text = raw.trim()
+  if (!text) {
+    throw new Error(`网关返回空响应体（HTTP ${resp.status}），无法解析。`)
+  }
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    const head = text.slice(0, 240).replace(/\s+/g, ' ')
+    throw new Error(
+      `网关返回非合法 JSON（HTTP ${resp.status}）。常见原因：API 地址指向了 **SSE 流式** endpoint、反代返回 HTML/纯文本、或线路错误。响应开头：${head}${text.length > 240 ? '…' : ''}`,
+    )
+  }
 }
 
 function parseGeminiText(data: unknown): string {
@@ -651,7 +668,7 @@ export async function openAiCompatibleChatAny(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    const data: unknown = await resp.json()
+    const data: unknown = await readFetchJsonBody(resp)
     if (!resp.ok) {
       const rec = data && typeof data === 'object' ? (data as Record<string, unknown>) : null
       const errObj = rec?.error && typeof rec.error === 'object' ? (rec.error as Record<string, unknown>) : null
@@ -682,7 +699,7 @@ export async function openAiCompatibleChatAny(
     },
     body: JSON.stringify(body),
   })
-  const data: unknown = await resp.json()
+  const data: unknown = await readFetchJsonBody(resp)
   if (!resp.ok) {
     const rec = data && typeof data === 'object' ? (data as Record<string, unknown>) : null
     const errObj = rec?.error && typeof rec.error === 'object' ? (rec.error as Record<string, unknown>) : null
@@ -717,7 +734,7 @@ export async function openAiCompatibleChat(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    const data: unknown = await resp.json()
+    const data: unknown = await readFetchJsonBody(resp)
     if (!resp.ok) {
       const rec = data && typeof data === 'object' ? (data as Record<string, unknown>) : null
       const errObj = rec?.error && typeof rec.error === 'object' ? (rec.error as Record<string, unknown>) : null
@@ -747,7 +764,7 @@ export async function openAiCompatibleChat(
     },
     body: JSON.stringify(body),
   })
-  const data: unknown = await resp.json()
+  const data: unknown = await readFetchJsonBody(resp)
   if (!resp.ok) {
     const rec = data && typeof data === 'object' ? (data as Record<string, unknown>) : null
     const errObj = rec?.error && typeof rec.error === 'object' ? (rec.error as Record<string, unknown>) : null
@@ -911,7 +928,7 @@ export async function generateWorldBookItemContent(params: {
           ? `已有简介（可融入语气，勿整段复述）：${params.character.bio.trim().slice(0, 280)}`
           : '',
         `世界书名称：${params.worldBook.name}。`,
-        `条目插入时机：${params.item.priority === 'before' ? '聊天之前' : '聊天之后'}。`,
+        `条目插入时机：${params.item.priority === 'before' ? '序言介入' : '尾声延展'}。`,
         `本条标题：${params.item.name}。关键词：${params.item.keywords || '无'}。`,
         '',
       ]
@@ -933,7 +950,7 @@ export async function generateWorldBookItemContent(params: {
           : '',
         `操作者身份参考：姓名=${params.identityContext?.name || '你'}，职业/身份=${params.identityContext?.identity || '未设定'}，MBTI=${params.identityContext?.mbti || '未设定'}。`,
         `世界书：${params.worldBook.name}。`,
-        `条目优先级：${params.item.priority === 'before' ? '聊天之前' : '聊天之后'}。`,
+        `条目优先级：${params.item.priority === 'before' ? '序言介入' : '尾声延展'}。`,
         `条目：${params.item.name}。`,
         `关键词：${params.item.keywords || '无'}。`,
         '',

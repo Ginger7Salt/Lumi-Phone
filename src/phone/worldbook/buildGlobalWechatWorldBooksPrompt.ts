@@ -8,5 +8,5 @@ export const GLOBAL_WB_LINE_NOTE =
 export function formatGlobalWorldBookItemLineForPrompt(name: string, content: string): string {
   const title = String(name ?? '').trim() || '未命名条目'
   const body = String(content ?? '').trim()
-  return `- [聊天之前] ${title}：${body} ${GLOBAL_WB_LINE_NOTE}`
+  return `- [序言介入] ${title}：${body} ${GLOBAL_WB_LINE_NOTE}`
 }

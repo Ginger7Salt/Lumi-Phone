@@ -1,39 +1,86 @@
+import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { Pressable } from '../../../components/Pressable'
-import './redPacketMotion.css'
+const PLATINUM = '#D4AF37'
+const PLATINUM_SOFT = 'rgba(212, 175, 55, 0.28)'
 
-const GOLD = '#c9a962'
-const GOLD_DEEP = '#8a7344'
+function formatYuan(n: number): string {
+  if (!Number.isFinite(n)) return '—'
+  return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+/** 暗金几何圆扣（非「開」字金币） */
+function PlatinumSealButton({
+  disabled,
+  onActivate,
+}: {
+  disabled: boolean
+  onActivate: () => void
+}) {
+  return (
+    <motion.button
+      type="button"
+      disabled={disabled}
+      onClick={onActivate}
+      className="relative flex h-[68px] w-[68px] items-center justify-center rounded-full outline-none active:scale-[0.97] disabled:pointer-events-none"
+      style={{
+        background: 'radial-gradient(circle at 32% 28%, #4a4234 0%, #2a2620 42%, #1a1814 100%)',
+        boxShadow: `
+          0 0 0 1px ${PLATINUM_SOFT},
+          0 8px 28px rgba(15, 23, 42, 0.18),
+          inset 0 1px 0 rgba(255,255,255,0.12)
+        `,
+      }}
+      aria-label="拆开红包"
+    >
+      <span
+        className="pointer-events-none absolute inset-0 rounded-full animate-pulse opacity-90"
+        style={{
+          boxShadow: `0 0 22px 4px rgba(212, 175, 55, 0.22)`,
+        }}
+        aria-hidden
+      />
+      <svg viewBox="0 0 40 40" className="relative h-8 w-8" aria-hidden>
+        <circle cx="20" cy="20" r="16" fill="none" stroke={PLATINUM} strokeOpacity={0.45} strokeWidth="1" />
+        <circle cx="20" cy="20" r="10" fill="none" stroke={PLATINUM} strokeOpacity={0.35} strokeWidth="0.85" />
+        <path d="M20 10 L26 26 L14 26 Z" fill="none" stroke={PLATINUM} strokeOpacity={0.5} strokeWidth="1" strokeLinejoin="round" />
+      </svg>
+    </motion.button>
+  )
+}
+
+type CeremonyPhase = 'idle' | 'seal_spin' | 'reveal' | 'fade_out'
 
 /**
- * 居中黑金拆红包：磨砂遮罩 + 竖向封套 + 中央暗金金币（繁体「開」）。
- * 点击金币后 CSS rotateY 约 1s，随后由 onFlowComplete 写库并跳转详情（由上层处理）。
+ * 浅色铂金拆红包：毛玻璃遮罩 + 修长信封 + 暗金圆扣 Y 轴翻转，随后信封上掀露出金额。
  */
 export function RedPacketModal({
   open,
+  amountYuan,
   remark,
   senderName,
   senderAvatarUrl,
+  subcaption,
   onClose,
   onFlowComplete,
 }: {
   open: boolean
+  amountYuan: number
   remark: string
   senderAvatarUrl?: string
   senderName: string
+  subcaption?: string
   onClose: () => void
-  /** 动画结束后调用：上层负责 patch opened、关弹窗、navigate 详情 */
   onFlowComplete: () => void | Promise<void>
 }) {
-  const [coinFlipping, setCoinFlipping] = useState(false)
+  const [phase, setPhase] = useState<CeremonyPhase>('idle')
   const finishedRef = useRef(false)
   const flowRef = useRef(onFlowComplete)
   flowRef.current = onFlowComplete
 
   useEffect(() => {
     if (!open) {
-      setCoinFlipping(false)
+      setPhase('idle')
       finishedRef.current = false
     }
   }, [open])
@@ -44,102 +91,174 @@ export function RedPacketModal({
     void Promise.resolve(flowRef.current()).catch(() => {})
   }, [])
 
-  const onCoinAnimationEnd = useCallback(
-    (e: React.AnimationEvent<HTMLButtonElement>) => {
-      if (!coinFlipping) return
-      const name = e.animationName || ''
-      if (!name.includes('wx-redpacket-coin-flip-y')) return
-      runComplete()
-    },
-    [coinFlipping, runComplete],
-  )
+  const startCeremony = useCallback(() => {
+    if (phase !== 'idle' || finishedRef.current) return
+    setPhase('seal_spin')
+  }, [phase])
 
   useEffect(() => {
-    if (!open || !coinFlipping) return
-    const t = window.setTimeout(() => runComplete(), 1100)
+    if (phase !== 'seal_spin') return
+    const t = window.setTimeout(() => setPhase('reveal'), 800)
     return () => window.clearTimeout(t)
-  }, [open, coinFlipping, runComplete])
+  }, [phase])
 
-  if (!open) return null
+  useEffect(() => {
+    if (phase !== 'reveal') return
+    const t = window.setTimeout(() => setPhase('fade_out'), 720)
+    return () => window.clearTimeout(t)
+  }, [phase])
+
+  useEffect(() => {
+    if (phase !== 'fade_out') return
+    const t = window.setTimeout(() => runComplete(), 420)
+    return () => window.clearTimeout(t)
+  }, [phase, runComplete])
+
+  useEffect(() => {
+    if (!open || phase === 'idle') return
+    const t = window.setTimeout(() => runComplete(), 3200)
+    return () => window.clearTimeout(t)
+  }, [open, phase, runComplete])
+
+  const amtLine = `¥ ${formatYuan(amountYuan)}`
 
   return (
-    <div
-      className="fixed inset-0 z-[210] flex items-center justify-center px-5 py-8"
-      style={{
-        background: 'rgba(0,0,0,0.42)',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        paddingTop: 'max(16px, env(safe-area-inset-top, 0px))',
-        paddingBottom: 'max(16px, env(safe-area-inset-bottom, 0px))',
-      }}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !coinFlipping) onClose()
-      }}
-      role="presentation"
-    >
-      <div
-        className="relative w-full max-w-[320px] overflow-hidden rounded-[22px] border border-white/10"
-        style={{
-          background: 'linear-gradient(180deg, #1c1c1c 0%, #0d0d0d 100%)',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06)',
-        }}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent" />
-
-        <div className="px-6 pb-8 pt-7 text-center">
-          <p className="text-[10px] font-medium tracking-[0.28em] text-white/35">RED PACKET</p>
-
-          <div className="mt-5 flex flex-col items-center gap-2">
-            {senderAvatarUrl?.trim() ? (
-              <img
-                src={senderAvatarUrl.trim()}
-                alt=""
-                className="h-14 w-14 rounded-2xl border border-white/10 object-cover"
-              />
-            ) : (
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-[18px] text-white/35">
-                ?
+    <AnimatePresence>
+      {open ? (
+        <motion.div
+          key="rp-overlay"
+          role="presentation"
+          className="fixed inset-0 z-[210] flex items-center justify-center bg-[#f4f4f6] px-5 py-8"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: phase === 'fade_out' ? 0 : 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: phase === 'fade_out' ? 0.38 : 0.28 }}
+          style={{
+            paddingTop: 'max(16px, env(safe-area-inset-top, 0px))',
+            paddingBottom: 'max(16px, env(safe-area-inset-bottom, 0px))',
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && phase === 'idle') onClose()
+          }}
+        >
+          <motion.div
+            layout
+            className="relative w-full max-w-[300px]"
+            initial={{ opacity: 0, y: 10, scale: 0.98 }}
+            animate={{
+              opacity: phase === 'fade_out' ? 0 : 1,
+              y: phase === 'fade_out' ? -8 : 0,
+              scale: phase === 'fade_out' ? 0.96 : 1,
+            }}
+            transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 text-center">
+              <p className="text-[10px] font-semibold tracking-[0.26em] text-[#64748B]">RED PACKET</p>
+              <div className="mt-4 flex flex-col items-center gap-2">
+                {senderAvatarUrl?.trim() ? (
+                  <img
+                    src={senderAvatarUrl.trim()}
+                    alt=""
+                    className="h-12 w-12 rounded-2xl border border-[#D4AF37]/25 object-cover shadow-[0_4px_14px_rgba(15,23,42,0.06)]"
+                  />
+                ) : (
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-gray-200 bg-white text-[15px] text-gray-400">
+                    ?
+                  </div>
+                )}
+                <p className="max-w-[260px] truncate text-[15px] font-medium text-[#1e293b]">{senderName}</p>
               </div>
-            )}
-            <p className="max-w-[240px] truncate text-[16px] font-medium text-white/88">{senderName}</p>
-          </div>
+              <p className="mx-auto mt-4 max-w-[260px] text-[13px] leading-relaxed text-[#64748B]">
+                {remark.trim() || 'Best Wishes'}
+              </p>
+              {subcaption?.trim() ? (
+                <p className="mx-auto mt-2 max-w-[260px] text-center text-[11px] leading-relaxed text-[#94a3b8]">
+                  {subcaption.trim()}
+                </p>
+              ) : null}
+            </div>
 
-          <p className="mx-auto mt-5 max-w-[260px] text-[14px] leading-relaxed text-white/50">
-            {remark.trim() || 'Best Wishes'}
-          </p>
-
-          <div className="mt-8 flex justify-center">
-            <Pressable
-              type="button"
-              disabled={coinFlipping}
-              onClick={() => {
-                if (coinFlipping || finishedRef.current) return
-                setCoinFlipping(true)
-              }}
-              onAnimationEnd={onCoinAnimationEnd}
-              className={`relative flex h-[72px] w-[72px] items-center justify-center rounded-full border-2 transition-transform active:scale-[0.97] disabled:opacity-90 ${
-                coinFlipping ? 'wx-rp-coin-flip' : 'wx-rp-coin-idle'
-              }`}
-              style={{
-                borderColor: `${GOLD_DEEP}`,
-                background: `radial-gradient(circle at 30% 28%, ${GOLD} 0%, ${GOLD_DEEP} 48%, #3d3424 100%)`,
-                boxShadow: '0 6px 20px rgba(0,0,0,0.45), inset 0 2px 4px rgba(255,255,255,0.12)',
-              }}
-              aria-label="開"
+            {/* 修长竖向信封 */}
+            <div
+              className="relative mx-auto mt-2 w-[min(200px,52vw)] overflow-visible rounded-[18px] border border-[#D4AF37]/28 bg-gradient-to-b from-white via-white to-[#f8fafc] shadow-[0_10px_40px_rgba(212,175,55,0.1)]"
+              style={{ minHeight: 260, perspective: 1100 }}
             >
-              <span
-                className="select-none text-[22px] font-semibold text-[#1a1510]"
-                style={{ fontFamily: 'ui-serif, "Songti SC", "Noto Serif SC", serif', textShadow: '0 1px 0 rgba(255,255,255,0.15)' }}
-              >
-                開
-              </span>
-            </Pressable>
-          </div>
+              <div
+                className="pointer-events-none absolute inset-x-3 top-2 h-px rounded-full opacity-70"
+                style={{
+                  background: `linear-gradient(90deg, transparent, ${PLATINUM}55, transparent)`,
+                }}
+              />
 
-          <p className="mt-4 text-[11px] tracking-[0.12em] text-white/30">TAP COIN · OPEN</p>
-        </div>
-      </div>
-    </div>
+              {/* 内层金额（拆封后） */}
+              <motion.div
+                className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center pt-10"
+                initial={false}
+                animate={{
+                  opacity: phase === 'reveal' || phase === 'fade_out' ? 1 : 0,
+                  y: phase === 'reveal' || phase === 'fade_out' ? 0 : 8,
+                }}
+                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <p className="text-[11px] font-medium tracking-[0.2em] text-[#94a3b8]">AMOUNT</p>
+                <p
+                  className="mt-2 text-[28px] font-semibold tabular-nums tracking-tight text-[#1e293b]"
+                  style={{ fontFamily: 'ui-monospace, "DIN Alternate", "Helvetica Neue", sans-serif' }}
+                >
+                  {amtLine}
+                </p>
+              </motion.div>
+
+              {/* 上盖：向上掀开 */}
+              <motion.div
+                className="absolute inset-x-0 top-0 z-[1] rounded-t-[18px] border-b border-[#D4AF37]/15 bg-gradient-to-b from-white to-[#f1f5f9]"
+                style={{
+                  height: '52%',
+                  transformOrigin: '50% 0%',
+                  transformStyle: 'preserve-3d',
+                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.9)',
+                }}
+                initial={false}
+                animate={{
+                  rotateX: phase === 'reveal' || phase === 'fade_out' ? -118 : 0,
+                }}
+                transition={{ duration: 0.62, ease: [0.22, 1, 0.36, 1] }}
+              />
+
+              {/* 圆扣层 */}
+              <motion.div
+                className="absolute inset-0 z-[2] flex items-center justify-center"
+                style={{ perspective: 900 }}
+                initial={false}
+                animate={{
+                  opacity: phase === 'idle' || phase === 'seal_spin' ? 1 : 0,
+                  pointerEvents: phase === 'idle' || phase === 'seal_spin' ? 'auto' : 'none',
+                }}
+                transition={{ duration: 0.25 }}
+              >
+                <motion.div
+                  animate={{ rotateY: phase === 'idle' ? 0 : 360 }}
+                  transition={
+                    phase === 'idle'
+                      ? { duration: 0 }
+                      : { duration: 0.8, ease: [0.33, 0.9, 0.32, 1] }
+                  }
+                  style={{ transformStyle: 'preserve-3d' }}
+                >
+                  <PlatinumSealButton disabled={phase !== 'idle'} onActivate={startCeremony} />
+                </motion.div>
+              </motion.div>
+
+              <p className="pointer-events-none absolute bottom-3 inset-x-0 text-center text-[10px] tracking-[0.18em] text-[#94a3b8]">
+                PLATINUM SEAL
+              </p>
+            </div>
+
+            <p className="mt-4 text-center text-[10px] tracking-[0.16em] text-[#94a3b8]">轻触圆扣以启封</p>
+          </motion.div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
   )
 }

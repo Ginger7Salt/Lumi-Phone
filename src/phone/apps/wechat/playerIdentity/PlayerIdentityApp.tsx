@@ -18,6 +18,7 @@ import {
   isMbtiPersonalityWorldBookName,
   normalizeMbti,
 } from '../mbtiPersonalityWorldBook'
+import { isLargeMbtiAvatar, MBTI_SUMMARY_4, resolveMbtiImageUrl } from '../newFriendsPersona/mbtiProfileUi'
 
 const COLORS = {
   bg: '#f5f5f5',
@@ -93,45 +94,6 @@ const PAIN_OPTIONS = [
   '当众让人难堪',
   '习惯性否定',
 ] as const
-
-const MBTI_IMAGE_URLS = import.meta.glob('../../../../../image/MBTI人格形象图/*.{png,jpg,jpeg,webp}', {
-  eager: true,
-  import: 'default',
-}) as Record<string, string>
-
-function resolveMbtiImageUrl(mbti: string): string {
-  const key = (mbti || '').trim().toUpperCase()
-  if (!key) return ''
-  for (const [path, url] of Object.entries(MBTI_IMAGE_URLS)) {
-    const name = path.split('/').pop() || ''
-    if (name.toUpperCase().startsWith(key)) return url
-  }
-  return ''
-}
-
-function isLargeMbtiAvatar(mbti?: string) {
-  const key = String(mbti || '').trim().toUpperCase()
-  return key === 'ISFJ' || key === 'ENTJ'
-}
-
-const MBTI_SUMMARY_4: Record<string, string> = {
-  INTJ: '冷静谋略',
-  INTP: '理性求真',
-  ENTJ: '强势统筹',
-  ENTP: '机智破局',
-  INFJ: '洞察引导',
-  INFP: '温柔理想',
-  ENFJ: '亲和领航',
-  ENFP: '热情探索',
-  ISTJ: '稳重守序',
-  ISFJ: '细致守护',
-  ESTJ: '务实管理',
-  ESFJ: '体贴社交',
-  ISTP: '冷静实干',
-  ISFP: '随性艺感',
-  ESTP: '果断冒险',
-  ESFP: '外向享乐',
-}
 
 function Card({ children }: { children: React.ReactNode }) {
   return (
@@ -392,7 +354,11 @@ export function PlayerIdentityApp({
           </div>
         }
       />
-      <div className="h-full min-h-0 overflow-y-auto px-4 pb-[calc(96px+env(safe-area-inset-bottom,0px))] pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+      <div
+        className={`h-full min-h-0 overflow-y-auto px-4 pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden ${
+          list.length > 0 ? 'pb-[calc(96px+env(safe-area-inset-bottom,0px))]' : 'pb-4'
+        }`}
+      >
         <div className="space-y-4">
           <p className="px-1 text-[16px] font-semibold" style={{ color: COLORS.text }}>
             身份列表
@@ -488,22 +454,24 @@ export function PlayerIdentityApp({
         </div>
       </div>
 
-      <div
-        className="pointer-events-none fixed inset-x-0 bottom-0 z-20"
-        style={{ paddingBottom: 'max(20px, env(safe-area-inset-bottom,0px))' }}
-      >
-        <div className="pointer-events-auto px-4">
-          <button
-            type="button"
-            onClick={() => setPage({ name: 'edit', id: newIdentity().id, isNew: true, draft: newIdentity() })}
-            className="flex w-full items-center justify-center gap-2 rounded-[12px] px-4 py-3 text-[14px] font-semibold text-white transition-all duration-200 ease-out"
-            style={{ background: COLORS.text }}
-          >
-            <Plus className="size-4" color="#ffffff" strokeWidth={2} />
-            创建新身份
-          </button>
+      {list.length > 0 ? (
+        <div
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-20"
+          style={{ paddingBottom: 'max(20px, env(safe-area-inset-bottom,0px))' }}
+        >
+          <div className="pointer-events-auto px-4">
+            <button
+              type="button"
+              onClick={() => setPage({ name: 'edit', id: newIdentity().id, isNew: true, draft: newIdentity() })}
+              className="flex w-full items-center justify-center gap-2 rounded-[12px] px-4 py-3 text-[14px] font-semibold text-white transition-all duration-200 ease-out"
+              style={{ background: COLORS.text }}
+            >
+              <Plus className="size-4" color="#ffffff" strokeWidth={2} />
+              创建新身份
+            </button>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {deleteId ? (
         <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/50 px-4">
@@ -1088,7 +1056,7 @@ function IdentityEditPage({
                               </div>
                               <div className="min-w-0">
                                 <p className="text-[13px] font-semibold">{m}</p>
-                                <p className="mt-0.5 text-[11px]" style={{ color: active ? 'rgba(255,255,255,0.72)' : '#666666' }}>
+                                <p className="mt-1 text-[12px] leading-relaxed" style={{ color: active ? 'rgba(255,255,255,0.78)' : '#666666' }}>
                                   {MBTI_SUMMARY_4[m] ?? '人格概括'}
                                 </p>
                               </div>

@@ -16,7 +16,10 @@ export function RedPacketDetailPage({
   senderName,
   senderAvatarUrl,
   chatPeerName,
+  /** 已拆开时领取记录一行展示谁领取：己方发包为对方备注；对方发包为己方昵称 */
+  claimerName,
   fromSelf,
+  opened,
   onBack,
   onOpenHistory,
 }: {
@@ -25,12 +28,24 @@ export function RedPacketDetailPage({
   senderName: string
   senderAvatarUrl?: string
   chatPeerName: string
+  claimerName?: string
   fromSelf: boolean
+  /** false：只读待领态，不展示为已拆封 */
+  opened: boolean
   onBack: () => void
   onOpenHistory: () => void
 }) {
+  const claimRecordLabel =
+    claimerName?.trim() ||
+    (fromSelf ? chatPeerName.trim() || '聊天' : senderName.trim() || '—')
+  const statusLine = opened
+    ? '已拆开 · Opened'
+    : fromSelf
+      ? '待对方领取 · Pending'
+      : '待领取 · Pending'
+
   const rows: DetailRow[] = [
-    { label: 'STATUS', value: 'Opened' },
+    { label: 'STATUS', value: statusLine },
     { label: 'REMARK', value: remark.trim() || '—' },
     { label: fromSelf ? 'TO' : 'CHAT', value: chatPeerName },
   ]
@@ -107,13 +122,21 @@ export function RedPacketDetailPage({
 
         <p className="mt-8 text-center text-[11px] text-[#a8a299]">领取记录</p>
         <div className="mt-3 rounded-xl border border-[#e8e2d8] bg-white/95 px-4 py-3 text-[13px] text-[#4a4a4a] shadow-[0_2px_12px_rgba(0,0,0,0.03)]">
-          <div className="flex justify-between gap-2">
-            <span>{senderName}</span>
-            <span className="tabular-nums font-medium" style={{ color: platinumGold }}>
-              ¥{amountYuan.toFixed(2)}
-            </span>
-          </div>
-          <p className="mt-1 text-[12px] text-[#8c877c]">已领取 · Opened</p>
+          {opened ? (
+            <>
+              <div className="flex justify-between gap-2">
+                <span>{claimRecordLabel}</span>
+                <span className="tabular-nums font-medium" style={{ color: platinumGold }}>
+                  ¥{amountYuan.toFixed(2)}
+                </span>
+              </div>
+              <p className="mt-1 text-[12px] text-[#8c877c]">已领取 · Opened</p>
+            </>
+          ) : (
+            <p className="text-center text-[12px] leading-relaxed text-[#8c877c]">
+              {fromSelf ? '对方领取后将显示在此 · Awaiting recipient' : '尚未拆开 · Not opened yet'}
+            </p>
+          )}
         </div>
       </div>
     </div>

@@ -8,12 +8,14 @@ import {
 } from './offlineDatingArchiveResolve'
 import { offlinePlotBodyHasNpcSpeakerOrMentionFallback } from './offlineDatingNpcSpeakerDetect'
 import { splitDatingAssistantOutput } from './plotCoT'
+import { extractVnVoiceParamsBlock } from './vnVoiceParamsStrip'
 
 function plotBodyForPrompt(p: DatingPlotSnapshotItem): string {
   const raw = String(p.content || '').trim()
   if (!raw) return ''
   if (p.type === 'player') return raw
-  return splitDatingAssistantOutput(raw).content.trim()
+  const prose = splitDatingAssistantOutput(raw).content.trim()
+  return extractVnVoiceParamsBlock(prose).cleanedText.trim()
 }
 
 function pad2(n: number) {
@@ -166,6 +168,27 @@ export async function buildUnsummarizedOfflineDatingText(
   } catch {
     return ''
   }
+}
+
+/**
+ * 仅从给定快照拼接「尚未总结·线下剧情」式样正文（**不从 KV 再读全档**）。
+ * 用于「重新生成」某条 AI 气泡：避免把待重写的旧正文再次注入 user，导致洗稿雷同。
+ */
+export function formatOfflineUnsummarizedBlockFromPlotSnapshots(
+  plots: DatingPlotSnapshotItem[],
+  peerDisplayName: string | null | undefined,
+  maxChars: number = DATING_AI_REFERENCE_SECTION_CHAR_CAP,
+): string {
+  const peerLabel = peerDisplayName?.trim() || '对方'
+  const lines: string[] = []
+  for (const p of plots) {
+    const t = plotBodyForPrompt(p)
+    if (!t) continue
+    if (p.type === 'player') lines.push(`我：${t}`)
+    else lines.push(`${peerLabel}：${t}`)
+  }
+  const raw = lines.join('\n').trim()
+  return clipReferenceTail(raw, maxChars, '尚未总结·线下剧情')
 }
 
 /**

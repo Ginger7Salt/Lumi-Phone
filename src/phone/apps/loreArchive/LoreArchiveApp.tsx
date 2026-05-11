@@ -5,6 +5,7 @@ import { useCustomization } from '../../CustomizationContext'
 import { Pressable } from '../../components/Pressable'
 import type { LoreEntry } from '../../worldbook/loreArchiveTypes'
 import { removeLoreEntry, useWorldbookStore } from '../../worldbook/worldbookLoreStore'
+import { LORE_ARCHIVE_FOCUS_ENTRY_SESSION_KEY } from './loreArchiveFocusNavigation'
 import { LoreArchiveList } from './LoreArchiveList'
 import { LoreEditor, type LoreEditorCharacter } from './LoreEditor'
 
@@ -107,10 +108,31 @@ export function LoreArchiveApp({ onBack }: Props) {
       if (!found) return
       setDraft({ ...found })
       setScreen('edit')
+      setPlatformTab('wechat')
       setAutoSaveAt(null)
     },
     [entries],
   )
+
+  /** 遇见等模块：跳转档案室并直接打开指定法则条目 */
+  useEffect(() => {
+    if (!hydrated) return
+    let pending: string | null = null
+    try {
+      pending = sessionStorage.getItem(LORE_ARCHIVE_FOCUS_ENTRY_SESSION_KEY)?.trim() || null
+    } catch {
+      return
+    }
+    if (!pending) return
+    const found = entries.find((e) => e.id === pending)
+    if (!found) return
+    try {
+      sessionStorage.removeItem(LORE_ARCHIVE_FOCUS_ENTRY_SESSION_KEY)
+    } catch {
+      // ignore
+    }
+    openEdit(pending)
+  }, [hydrated, entries, openEdit])
 
   const duplicateEntry = useCallback(
     (id: string) => {

@@ -101,12 +101,16 @@ function isRecord(x: unknown): x is LumiTransferRecord {
   )
 }
 
-function writeAll(list: LumiTransferRecord[]): void {
+function writeAllWithoutEmit(list: LumiTransferRecord[]): void {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(list))
   } catch {
     /* ignore quota */
   }
+}
+
+function writeAll(list: LumiTransferRecord[]): void {
+  writeAllWithoutEmit(list)
   emitLumiTransferChanged()
 }
 
@@ -144,14 +148,22 @@ export function upsertLumiTransfer(record: LumiTransferRecord): void {
   writeAll(list)
 }
 
-export function acceptLumiTransfer(transferId: string, getCurrentTime: () => number): boolean {
+export function acceptLumiTransfer(
+  transferId: string,
+  getCurrentTime: () => number,
+  opts?: { emitChanged?: boolean },
+): boolean {
   evaluateExpiredTransfers(getCurrentTime)
   const list = readAll()
   const t = list.find((x) => x.id === transferId.trim())
   if (!t || t.status !== 'pending') return false
   t.status = 'accepted'
   t.acceptedAt = getCurrentTime()
-  writeAll(list)
+  if (opts?.emitChanged === false) {
+    writeAllWithoutEmit(list)
+  } else {
+    writeAll(list)
+  }
   return true
 }
 
@@ -164,6 +176,32 @@ export function returnLumiTransfer(transferId: string, getCurrentTime: () => num
   t.status = 'returned'
   writeAll(list)
   return true
+}
+
+/**
+ * 重新回复：撤销「用户→当前会话角色」且已标记收款的转账，回到待收款（仅私聊语义下的 sender/receiver 对齐）。
+ */
+export function resetAcceptedIncomingPlayerTransfersForConversationPeer(params: {
+  conversationKey: string
+  playerIdentityId: string
+  peerCharacterId: string
+}): boolean {
+  const ck = params.conversationKey.trim()
+  const pid = params.playerIdentityId.trim()
+  const cid = params.peerCharacterId.trim()
+  if (!ck || !pid || !cid || pid === '__none__') return false
+  const list = readAll()
+  let changed = false
+  for (const t of list) {
+    if (t.conversationKey !== ck) continue
+    if (t.status !== 'accepted') continue
+    if (t.senderId !== pid || t.receiverId !== cid) continue
+    t.status = 'pending'
+    delete t.acceptedAt
+    changed = true
+  }
+  if (changed) writeAll(list)
+  return changed
 }
 
 export function listLumiTransfersForPlayer(playerIdentityId: string): LumiTransferRecord[] {

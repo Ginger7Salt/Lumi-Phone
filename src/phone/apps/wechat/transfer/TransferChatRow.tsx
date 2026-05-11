@@ -6,12 +6,14 @@ import {
   ChatGroupSpeakerRankOnAvatar,
 } from '../group/ChatGroupSpeakerAvatarWrap'
 import { useLongPress } from '../hooks/useWeChatLongPress'
-import { TransferBubble } from './TransferBubble'
+import { TransferBubble, type TransferBubblePerspective } from './TransferBubble'
 
 type Props = {
   id: string
   isSelf: boolean
   transferId: string
+  /** 默认：己方 outgoing / 对方 incoming；收款方在详情页确认的己方 ack 气泡需强制 incoming */
+  transferBubblePerspective?: TransferBubblePerspective
   getCurrentTime: () => number
   refreshTick?: number
   bubble: WeChatBubbleTheme
@@ -32,6 +34,7 @@ export function TransferChatRow({
   id: _id,
   isSelf,
   transferId,
+  transferBubblePerspective,
   getCurrentTime,
   refreshTick = 0,
   bubble,
@@ -93,13 +96,18 @@ export function TransferChatRow({
           if (!selected) onOpen()
         }}
       >
-        <TransferBubble transferId={transferId} getCurrentTime={getCurrentTime} onRefresh={refreshTick} />
+        <TransferBubble
+          transferId={transferId}
+          getCurrentTime={getCurrentTime}
+          onRefresh={refreshTick}
+          perspective={transferBubblePerspective ?? (isSelf ? 'outgoing' : 'incoming')}
+        />
         {selected ? (
           <span className="pointer-events-none absolute inset-0 rounded-[14px]" style={{ background: 'rgba(0,0,0,0.06)' }} aria-hidden />
         ) : null}
       </div>
     ),
-    [bind, bubbleRadius, getCurrentTime, isSelf, onOpen, pressing, selected, transferId, refreshTick],
+    [bind, bubbleRadius, getCurrentTime, isSelf, onOpen, pressing, selected, transferBubblePerspective, transferId, refreshTick],
   )
 
   const showAvatarVisual = showAvatar && showAvatarColumn

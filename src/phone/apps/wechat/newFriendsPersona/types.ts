@@ -454,6 +454,8 @@ export type WeChatRedPacketPayload = {
   remark: string
   /** 接收方拆开后为 true，列表气泡可展示金额 */
   opened: boolean
+  /** 过期未领（可选，由业务层写入） */
+  expired?: boolean
 }
 
 /** Lumi 转账消息：状态与金额存于 localStorage，此处仅存关联 id */

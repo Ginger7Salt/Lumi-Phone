@@ -2,7 +2,14 @@ import { ChevronLeft } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { emitWeChatStorageChanged, personaDb } from '../newFriendsPersona/idb'
 import { formatRedPacketHistoryDateTime } from '../redPacket/redPacketHistoryFromMessages'
+import { parsePrivateWeChatConversationCharacterAndSession } from '../wechatConversationKey'
+import {
+  LS_TRANSFER_RETURN_NOTIFIED_KEY,
+  readNotifiedSet,
+  writeNotifiedSet,
+} from '../wechatLocalNotifySet'
 import { walletAddTransaction, walletAdjustBalance } from '../wallet/walletMockStore'
 import {
   acceptLumiTransfer,
@@ -14,6 +21,11 @@ import {
 const GOLD = '#c9a76a'
 const BG = '#ffffff'
 
+function transferCardContentFromRecord(rec: LumiTransferRecord): string {
+  const note = rec.remark?.trim()
+  return note ? `[转账] ${note}` : '[转账]'
+}
+
 function formatCountdown(ms: number): string {
   if (ms <= 0) return '00:00:00'
   const totalSec = Math.floor(ms / 1000)
@@ -24,7 +36,10 @@ function formatCountdown(ms: number): string {
 }
 
 /**
- * Lumi 转账详情：pending 倒计时 + 确认收款；accepted / returned 展示结果。
+ * 转账详情：pending 倒计时；收款方（会话中的角色 / 当前身份）可确认收款或退还；已 accepted / returned 展示结果。
+ * 用户转出、对方为 AI 时：对方须在聊天中输出 `[TRANSFER_ACCEPT]`，由 ChatRoom 写入 accepted、系统灰条与对方「已收款」话术气泡。
+ * 用户在详情页确认收款 / 退还后：会追加带 `transfer` 的转账卡气泡（金额与状态由 localStorage 记录驱动，与角色侧 ack 一致）。
+ * 收款方点「退还」时另有一条系统灰条（与定时器去重）。
  */
 export function TransferDetailPage({
   transferId,
@@ -74,25 +89,96 @@ export function TransferDetailPage({
 
   const onConfirm = useCallback(() => {
     if (!canConfirmAsReceiver) return
-    if (acceptLumiTransfer(transferId, getCurrentTime)) {
-      if (rec && Number.isFinite(rec.amount) && rec.amount > 0) {
-        const peer = peerName.trim() || '对方'
-        const note = rec.remark?.trim()
-        walletAdjustBalance(rec.amount)
-        walletAddTransaction({
-          type: 'topup',
-          title: note ? `收到${peer}的转账 · ${note}` : `收到${peer}的转账`,
-          amount: rec.amount,
-        })
-      }
-      refresh()
+    if (!acceptLumiTransfer(transferId, getCurrentTime)) return
+    const fresh = getLumiTransferFresh(transferId, getCurrentTime)
+    if (!fresh || fresh.status !== 'accepted') return
+    if (Number.isFinite(fresh.amount) && fresh.amount > 0) {
+      const peer = peerName.trim() || '对方'
+      const note = fresh.remark?.trim()
+      walletAdjustBalance(fresh.amount)
+      walletAddTransaction({
+        type: 'topup',
+        title: note ? `收到${peer}的转账 · ${note}` : `收到${peer}的转账`,
+        amount: fresh.amount,
+      })
     }
-  }, [canConfirmAsReceiver, getCurrentTime, peerName, rec, refresh, transferId])
+    void (async () => {
+      const parts = parsePrivateWeChatConversationCharacterAndSession(fresh.conversationKey)
+      if (!parts) return
+      const msgId = `wxtr-recv-ack-${transferId.trim()}`
+      const content = transferCardContentFromRecord(fresh)
+      try {
+        await personaDb.appendWeChatChatMessage({
+          id: msgId,
+          characterId: parts.characterId,
+          playerIdentityId,
+          type: 'player',
+          content,
+          timestamp: getCurrentTime(),
+          isRead: true,
+          conversationKey: fresh.conversationKey,
+          transfer: { transferId: transferId.trim() },
+        })
+      } catch {
+        /* 同 id 重复收款确认时忽略 */
+      }
+      emitWeChatStorageChanged()
+    })()
+    refresh()
+  }, [canConfirmAsReceiver, getCurrentTime, peerName, playerIdentityId, refresh, transferId])
 
   const onReturn = useCallback(() => {
     if (!canConfirmAsReceiver) return
-    if (returnLumiTransfer(transferId, getCurrentTime)) refresh()
-  }, [canConfirmAsReceiver, transferId, getCurrentTime, refresh])
+    if (!returnLumiTransfer(transferId, getCurrentTime)) return
+    const fresh = getLumiTransferFresh(transferId, getCurrentTime)
+    if (!fresh || fresh.status !== 'returned') return
+    const tidEarly = transferId.trim()
+    const transferNotifiedEarly = readNotifiedSet(LS_TRANSFER_RETURN_NOTIFIED_KEY)
+    transferNotifiedEarly.add(tidEarly)
+    writeNotifiedSet(LS_TRANSFER_RETURN_NOTIFIED_KEY, transferNotifiedEarly)
+    const peer = peerName.trim() || '对方'
+    void (async () => {
+      const parts = parsePrivateWeChatConversationCharacterAndSession(fresh.conversationKey)
+      if (!parts) return
+      const tid = transferId.trim()
+      const stripId = `wxsys-tr-return-user-${tid}`
+      const stripText = `【系统】你退还了${peer}的转账`
+      const ackId = `wxtr-recv-return-ack-${tid}`
+      const ackContent = transferCardContentFromRecord(fresh)
+      const ts = getCurrentTime()
+      try {
+        await personaDb.appendWeChatChatMessage({
+          id: stripId,
+          characterId: parts.characterId,
+          playerIdentityId,
+          type: 'player',
+          content: stripText,
+          timestamp: ts,
+          isRead: true,
+          conversationKey: fresh.conversationKey,
+        })
+      } catch {
+        /* ignore */
+      }
+      try {
+        await personaDb.appendWeChatChatMessage({
+          id: ackId,
+          characterId: parts.characterId,
+          playerIdentityId,
+          type: 'player',
+          content: ackContent,
+          timestamp: ts + 1,
+          isRead: true,
+          conversationKey: fresh.conversationKey,
+          transfer: { transferId: tid },
+        })
+      } catch {
+        /* ignore */
+      }
+      emitWeChatStorageChanged()
+    })()
+    refresh()
+  }, [canConfirmAsReceiver, getCurrentTime, peerName, playerIdentityId, refresh, transferId])
 
   const acceptedTimeLabel = useMemo(() => {
     if (!rec?.acceptedAt) return ''
@@ -173,7 +259,9 @@ export function TransferDetailPage({
                 </Pressable>
               </div>
             ) : isSender ? (
-              <p className="mt-10 text-center text-[14px] text-[#aaa]">等待对方查收</p>
+              <p className="mt-10 text-center text-[14px] text-[#aaa]">
+                等待对方在聊天中确认收款（对方回复收下或输出 <span className="font-mono text-[12px]">[TRANSFER_ACCEPT]</span> 后即完成）
+              </p>
             ) : null}
           </>
         ) : null}

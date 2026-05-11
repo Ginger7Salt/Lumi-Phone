@@ -9,7 +9,7 @@ const PLATINUM = '#D4AF37'
 const INK = '#1C1C1E'
 const SHEET_SPRING = { type: 'spring' as const, damping: 38, stiffness: 380 }
 
-type AccordionId = 'core' | 'cursor' | 'deep'
+type AccordionId = 'sample' | 'wbAfter' | 'core' | 'cursor' | 'deep'
 
 function pct(score: number): string {
   return `${Math.round(score * 1000) / 10}%`
@@ -64,12 +64,12 @@ export type MemoryTraceModalProps = {
 }
 
 export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps) {
-  const [expanded, setExpanded] = useState<AccordionId | null>('core')
+  const [expanded, setExpanded] = useState<AccordionId | null>(null)
   const matrix = data?.contextMatrix
 
   useEffect(() => {
     if (!open) return
-    const t = window.setTimeout(() => setExpanded(data ? 'core' : null), 0)
+    const t = window.setTimeout(() => setExpanded(null), 0)
     return () => window.clearTimeout(t)
   }, [open, data])
 
@@ -151,19 +151,141 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
               ) : null}
               {data && matrix ? (
               <motion.div variants={blockVariants} initial="hidden" animate="show" className="flex flex-col gap-5 pt-3">
-                {/* Block A */}
-                <motion.section variants={itemVariants} className="rounded-xl bg-neutral-50/80 p-4" style={{ borderLeft: `2px solid ${PLATINUM}80` }}>
-                  <p className="text-[10px] font-medium uppercase tracking-[0.26em] text-neutral-400">TARGET SAMPLE · 样本锚定</p>
-                  <p className="mt-2 text-[12px] text-neutral-500">
-                    角色 <span className="font-medium text-neutral-700">{data.charName}</span> · 最新回复切片
-                  </p>
-                  <p className="mt-3 font-serif text-[16px] italic leading-relaxed text-neutral-900">
-                    {data.lastReply}
-                  </p>
-                </motion.section>
+                {data.worldBookAfterChat == null ? (
+                  <motion.section
+                    variants={itemVariants}
+                    className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50/50 p-4 text-[13px] leading-relaxed text-neutral-500"
+                  >
+                    <p className="text-[10px] font-medium uppercase tracking-[0.26em] text-neutral-400">POST-CHAT · 尾声延展</p>
+                    <p className="mt-2 font-semibold text-neutral-700">「尾声延展」溯源</p>
+                    <p className="mt-2">
+                      这条思维溯源是<strong className="font-medium text-neutral-700">在客户端加入「尾声延展」与补丁记录之前</strong>
+                      保存到本地的，所以没有「注入快照 / 模型补丁 / 替换前后对照」。再让角色或约会<strong className="font-medium text-neutral-700">任意生成一轮新 AI 回复</strong>
+                      后，新记录会带完整板块。
+                    </p>
+                  </motion.section>
+                ) : null}
 
-                {/* Accordion B–D */}
                 <motion.div variants={itemVariants} className="overflow-hidden rounded-2xl border border-neutral-100 bg-white shadow-sm">
+                  <AccordionRow
+                    titleEn="TARGET SAMPLE"
+                    titleZh="样本锚定 · 最新回复切片"
+                    expanded={expanded === 'sample'}
+                    onToggle={() => toggleAccordion('sample')}
+                  >
+                    <div className="px-1">
+                      <div className="rounded-xl bg-neutral-50/80 p-4" style={{ borderLeft: `2px solid ${PLATINUM}80` }}>
+                        <p className="text-[12px] text-neutral-500">
+                          角色 <span className="font-medium text-neutral-700">{data.charName}</span>
+                        </p>
+                        <p className="mt-3 font-serif text-[16px] italic leading-relaxed text-neutral-900">{data.lastReply}</p>
+                      </div>
+                    </div>
+                  </AccordionRow>
+
+                  {data.worldBookAfterChat ? (
+                    <AccordionRow
+                      titleEn="POST-CHAT LAYER"
+                      titleZh="尾声延展（世界书）"
+                      expanded={expanded === 'wbAfter'}
+                      onToggle={() => toggleAccordion('wbAfter')}
+                    >
+                      <div className="space-y-4 px-1 text-[13px] leading-relaxed text-neutral-700">
+                        <div className="flex flex-wrap gap-2 text-[12px]">
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 font-medium ${
+                              data.worldBookAfterChat.protocolInPrompt
+                                ? 'bg-emerald-50 text-emerald-800'
+                                : 'bg-neutral-100 text-neutral-600'
+                            }`}
+                          >
+                            快照注入：{data.worldBookAfterChat.protocolInPrompt ? '已进本轮 system' : '未启用（无尾声延展条目）'}
+                          </span>
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 font-medium ${
+                              data.worldBookAfterChat.patchOutputRulesIncluded
+                                ? 'bg-emerald-50 text-emerald-800'
+                                : 'bg-neutral-100 text-neutral-600'
+                            }`}
+                          >
+                            覆盖协议说明：{data.worldBookAfterChat.patchOutputRulesIncluded ? '已附带' : '未附带'}
+                          </span>
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 font-medium ${
+                              data.worldBookAfterChat.parsedPatches.length
+                                ? 'bg-amber-50 text-amber-900'
+                                : 'bg-neutral-100 text-neutral-600'
+                            }`}
+                          >
+                            模型 JSON：{data.worldBookAfterChat.parsedPatches.length ? `解析到 ${data.worldBookAfterChat.parsedPatches.length} 条` : '无'}
+                          </span>
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 font-medium ${
+                              data.worldBookAfterChat.appliedToDb ? 'bg-emerald-50 text-emerald-800' : 'bg-neutral-100 text-neutral-600'
+                            }`}
+                          >
+                            写库：{data.worldBookAfterChat.appliedToDb ? '至少一条已写入人设' : '未写入或内容未变'}
+                          </span>
+                        </div>
+                        {data.worldBookAfterChat.modelOmittedPatchBlock ? (
+                          <p className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-[12px] text-amber-950">
+                            本轮已向模型要求「有变化则输出 ---WB_AFTER_PATCH---」，但<strong className="font-semibold">未解析到有效补丁</strong>（可能模型未输出、JSON 格式不符，或仅声明无实质字段）。
+                          </p>
+                        ) : null}
+                        {data.worldBookAfterChat.injectedDynamicSection.trim() ? (
+                          <div>
+                            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">
+                              注入快照（与模型所见一致）
+                            </p>
+                            <pre className="mt-2 max-h-[min(36vh,360px)] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-neutral-100 bg-neutral-50/80 p-3 font-sans text-[12px] text-neutral-700 [scrollbar-width:thin]">
+                              {data.worldBookAfterChat.injectedDynamicSection}
+                            </pre>
+                          </div>
+                        ) : (
+                          <p className="text-[12px] text-neutral-500">本轮 system 未包含「尾声延展」条目正文快照。</p>
+                        )}
+                        {data.worldBookAfterChat.parsedPatches.length ? (
+                          <div>
+                            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">
+                              补丁明细（写库前旧文 ↔ 模型提交的替换后正文）
+                            </p>
+                            <ul className="mt-2 space-y-4">
+                              {data.worldBookAfterChat.parsedPatches.map((row, i) => (
+                                <li key={`${row.worldBookId}-${row.itemId}-${i}`} className="rounded-lg border border-neutral-100 bg-white p-3 shadow-sm">
+                                  <p className="text-[13px] font-semibold text-neutral-800">
+                                    {row.bookName && row.itemName
+                                      ? `「${row.bookName}」·「${row.itemName}」`
+                                      : '世界书条目'}
+                                    {row.characterId ? (
+                                      <span className="ml-2 font-mono text-[10px] font-normal text-neutral-500">
+                                        characterId={row.characterId}
+                                      </span>
+                                    ) : null}
+                                  </p>
+                                  <p className="mt-1 font-mono text-[10px] text-neutral-500">
+                                    worldBookId={row.worldBookId} · itemId={row.itemId}
+                                  </p>
+                                  <div className="mt-3 space-y-2">
+                                    <p className="text-[11px] font-medium text-neutral-500">替换前（写库前快照）</p>
+                                    <pre className="max-h-[min(24vh,240px)] overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-neutral-100 bg-stone-50/90 p-2.5 font-sans text-[12px] leading-relaxed text-neutral-800 [scrollbar-width:thin]">
+                                      {row.previousContent.trim() ? row.previousContent : '（未在人设中找到对应条目，或 id 不一致；无法展示旧文）'}
+                                    </pre>
+                                  </div>
+                                  <div className="mt-3 space-y-2">
+                                    <p className="text-[11px] font-medium text-emerald-800/90">替换后（模型提交 · 与写库一致）</p>
+                                    <pre className="max-h-[min(32vh,320px)] overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-emerald-100/80 bg-emerald-50/40 p-2.5 font-sans text-[12px] leading-relaxed text-neutral-900 [scrollbar-width:thin]">
+                                      {row.newContentFull.trim() || '（空）'}
+                                    </pre>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </div>
+                    </AccordionRow>
+                  ) : null}
+
                   <AccordionRow
                     titleEn="CORE DIRECTIVES"
                     titleZh="核心基底"

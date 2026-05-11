@@ -1,0 +1,332 @@
+/**
+ * 线下约会/VN 剧情专用：禁词与白描文风约束。
+ * 仅由 DatingContext 等线下生成管线注入；微信私聊/群聊线上气泡不注入。
+ * 占位符 `{{char}}` `{{user}}` 由约会管线在注入前展开。
+ */
+
+/** 绝对禁用词：为「完整程序扫描词表」子集，下文另列全表 */
+export const PROSE_FORBIDDEN_ABSOLUTE_LEXICON: readonly string[] = Object.freeze([
+  '邪魅一笑',
+  '矜贵',
+  '薄情',
+  '禁欲',
+  '骨感',
+  '沉沦',
+  '沦陷',
+  '宠溺',
+  '缱绻',
+  '阴鸷',
+  '桀骜',
+  '冷冽',
+  '软糯',
+  '娇软',
+  '宿命',
+  '死死',
+  '低吼',
+  '自暴自弃',
+  '泛着',
+  '喉结',
+  '骨节',
+  '自嘲',
+  '烫人',
+  '潮气',
+  '侵略性',
+  '一抹',
+  '惊惶',
+  '烂泥',
+  '判决书',
+  '仿佛',
+  '一丝',
+  '一瞬',
+  '一缕',
+  '一霎',
+  '一星半点',
+  '近乎',
+  '几乎',
+  '猛地',
+  '骤然',
+  '猛然',
+  '霎时',
+  '刹那',
+])
+
+/**
+ * 分类禁词（程序 substring）+ 比喻连接词 + 截图高频油腻套话。
+ * 与 `PROSE_FORBIDDEN_ABSOLUTE_LEXICON` 合并去重后为程序扫描主词表。
+ */
+const PROSE_FORBIDDEN_CATEGORY_LEXICON: readonly string[] = [
+  '一抹',
+  '一丝',
+  '一瞬',
+  '一霎',
+  '一缕',
+  '一星半点',
+  '一颗',
+  '一怔',
+  '一窒',
+  '一紧',
+  '一松',
+  '一烫',
+  '一凉',
+  '一颤',
+  '一晃',
+  '一晃神',
+  '一寸柔情',
+  '低沉',
+  '沙哑',
+  '嘶哑',
+  '深沉',
+  '磁性',
+  '慵懒',
+  '狡黠',
+  '恼怒',
+  '狰狞',
+  '茫然',
+  '空白',
+  '恐惧',
+  '绝望',
+  '木讷',
+  '麻木',
+  '狂野',
+  '粗暴',
+  '坚定',
+  '她知道',
+  '他知道',
+  '感觉到',
+  '心湖',
+  '石子',
+  '掀起涟漪',
+  '一叶扁舟',
+  '浮木',
+  '深渊',
+  '艺术品',
+  '珍品',
+  '稀世珍宝',
+  '困兽',
+  '小兽',
+  '幼兽',
+  '野兽',
+  '棋逢对手',
+  '猎人',
+  '猎物',
+  '猎手',
+  '棋子',
+  '棋盘',
+  '乐章',
+  '毁灭',
+  '毁天灭地',
+  '灭顶',
+  '无形的大手',
+  '手术刀',
+  '骨头',
+  '淬了',
+  '命令',
+  '不容',
+  '不容置疑',
+  '不容置喙',
+  '不容拒绝',
+  '言简意赅',
+  '简短有力',
+  '征服',
+  '支配',
+  '占有',
+  '捏碎',
+  '骨血',
+  '揉进骨血',
+  '骨节泛白',
+  '嘴角勾起',
+  '弓起',
+  '颤抖如小兽',
+  '细若蚊呐',
+  '四肢百骸',
+  '生理性',
+  '凝固',
+  '陷入',
+  '就像',
+  '如同',
+  '意味',
+  '前所未有的',
+  '未经人事',
+  '自我厌恶',
+  '鲜明的对比',
+  '每一次',
+  '能感觉',
+  '神圣',
+  '神祇',
+  '虔诚',
+  '狂热',
+  '信徒',
+  '崇拜',
+  '魔鬼',
+  '五脏六腑',
+  '舌尖上研磨',
+  '跳跳糖',
+  '宛如',
+  '好似',
+  '犹如',
+  '恰似',
+  '好比',
+  '化成',
+  '化作',
+  /** 「形容词+抽象名词」空话壳（程序 substring；总则见 prompt 上文，不限于此） */
+  '豁出去的劲',
+  '豁出去的劲头',
+  '理直气壮的劲头',
+  '理直气壮的劲',
+  '不管不顾的架势',
+  '孤注一掷的狠劲',
+  /** 网文感官/情绪堆砌（高频油腻套话；程序 substring） */
+  '放在舌尖上反复掂量',
+  '舌尖上反复掂量',
+  '舌尖反复掂量',
+  '慢得在确认某种绝密档案',
+  '某种绝密档案',
+  '摊牌后的沉重',
+  '手足无措的狂喜',
+  '如释重负的颤音',
+  '发红的眼角',
+  '泛红的眼角',
+  '那抹',
+  '亮得刺眼',
+  '亮的有些刺眼',
+  '亮得有些刺眼',
+  '充满了木质香',
+  '多糖奶茶',
+  '木质香和多糖奶茶',
+]
+
+/** 思维链历史补扫项（八股/隐喻高频），并入程序全表 */
+const LUMI_COT_LEXICON_SCAN_LEGACY: readonly string[] = [
+  '薄茧',
+  '羽毛',
+  '火苗',
+  '游戏规则',
+  '泻火',
+  '非但',
+  '全然',
+  '泛白',
+  '孤注一掷',
+  '神明',
+  '古井',
+  '邪火',
+  '肉刃',
+  '深潭',
+  '枯井',
+  '研磨一遍',
+  '倏地',
+  '陡然',
+  '蓦地',
+]
+
+/** 禁词表「禁止语句」类：整段正文 substring 难以覆盖的骨架，用正则示警 */
+const PROSE_FORBIDDEN_STRUCTURE_PATTERNS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+  { label: '不是…而是…', pattern: /不是[\s\S]{0,200}?而是/ },
+  { label: '以为…没想到…', pattern: /以为[\s\S]{0,200}?没想到/ },
+  { label: '非但没有…反而…', pattern: /非但没有[\s\S]{0,160}?反而/ },
+  { label: '捏住…下巴', pattern: /捏住[\s\S]{0,40}?下巴/ },
+  { label: '你到底是谁', pattern: /你到底是谁/ },
+  { label: '你的身体比你的嘴还', pattern: /你的身体比你的嘴还/ },
+  { label: '嘴上…身体却…', pattern: /嘴上[\s\S]{0,160}?身体却/ },
+  { label: '你什么都不懂', pattern: /你什么都不懂/ },
+  { label: '游戏规则由我制定', pattern: /游戏规则由我制定/ },
+  { label: '像一根…的针…刺入', pattern: /像一根[\s\S]{0,48}?针[\s\S]{0,32}?刺入/ },
+  /** 对白在舌尖把玩、掂量类 */
+  { label: '舌尖…掂量', pattern: /舌尖[\u4e00-\u9fff，。、「」：；,\s]{0,16}?掂量|掂量[\u4e00-\u9fff，。、「」：；,\s]{0,16}?舌尖/ },
+]
+
+function mergeProseForbiddenScanTerms(): string[] {
+  const set = new Set<string>()
+  for (const t of PROSE_FORBIDDEN_ABSOLUTE_LEXICON) {
+    const s = String(t).trim()
+    if (s.length >= 2) set.add(s)
+  }
+  for (const t of PROSE_FORBIDDEN_CATEGORY_LEXICON) {
+    const s = String(t).trim()
+    if (s.length >= 2) set.add(s)
+  }
+  for (const t of LUMI_COT_LEXICON_SCAN_LEGACY) {
+    const s = String(t).trim()
+    if (s.length >= 2) set.add(s)
+  }
+  return [...set].sort((a, b) => b.length - a.length || a.localeCompare(b, 'zh-Hans-CN'))
+}
+
+/**
+ * 线下正文程序扫描用：**绝对词 + 分类词例 + 思维链补扫** 去重全集（substring 匹配）。
+ * 与 `LUMI_COT_LEXICON_SCAN` 为同一数组引用。
+ */
+export const PROSE_FORBIDDEN_SCAN_TERMS: readonly string[] = Object.freeze(mergeProseForbiddenScanTerms())
+
+export const PROSE_FORBIDDEN_SCAN_TERM_COUNT = PROSE_FORBIDDEN_SCAN_TERMS.length
+
+/** @deprecated 与 {@link PROSE_FORBIDDEN_SCAN_TERMS} 同源，供思维链 bundle 等历史引用名 */
+export const LUMI_COT_LEXICON_SCAN: readonly string[] = PROSE_FORBIDDEN_SCAN_TERMS
+
+/**
+ * 对「可见剧情正文」做禁词全表扫描（不含思维链；调用方应先 `splitDatingAssistantOutput` 等）。
+ * @returns 命中词或结构标签（稳定排序，便于提示与去重）
+ */
+export function findProseForbiddenHits(proseBody: string): string[] {
+  const text = String(proseBody ?? '')
+  const hits = new Set<string>()
+  for (const term of PROSE_FORBIDDEN_SCAN_TERMS) {
+    if (term.length >= 2 && text.includes(term)) hits.add(term)
+  }
+  for (const { label, pattern } of PROSE_FORBIDDEN_STRUCTURE_PATTERNS) {
+    if (pattern.test(text)) hits.add(`〔结构〕${label}`)
+  }
+  return [...hits].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+}
+
+/** 禁词复检轮：追加在 assistant 之后，要求模型整段重写 */
+export function buildProseForbiddenRepairUserPrompt(forbiddenHits: readonly string[]): string {
+  const list = [...forbiddenHits].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')).join('、')
+  return (
+    `【程序复检·写作禁词未通过】客户端已对上一轮「正文」做**全表 substring / 结构句式**扫描（已排除思维链与 VN 语音参数块）。\n` +
+    `下列词条或结构仍出现在正文，与 system【线下/VN·文风与禁词】冲突，**你必须全部消除**（禁止同音、繁简、空格拆字、近形糊弄）。\n\n` +
+    `**命中清单**：${list}\n\n` +
+    `请**重新输出一整份**符合原请求的回复：\n` +
+    `1) 仍须先输出完整的 \`<thinking>…</thinking>\`（遵守篇幅与 Lumi 分册要求）；\n` +
+    `2) 紧接输出正文：**零比喻**、句法贴近 system 汪曾祺/萧红**唯二范文**，**不得**再含上列任一命中项；\n` +
+    `3) VN 若启用：标签与语音参数块格式不变；\n` +
+    `4) 剧情承接、人设、原 user 消息中的字数、对白占比与模式约束须全部满足。\n`
+  )
+}
+
+/**
+ * 文风：短文条化 + 汪/萧两篇为唯一示范；硬核规则主要靠文末扫描词表程序化约束。
+ */
+export const PROSE_FORBIDDEN_LEXICON_PROMPT = `
+---------------------
+【线下/VN 剧情｜文风与禁词（不约束微信线上聊天气泡）】
+违禁串须改写；文末【完整程序扫描词表】与程序 substring / 少量结构正则同源，命中退回重写。<thinking> 内勿复述冗长教条，对照本段**总则 + 唯二范文句法**即可。
+
+---
+
+【总则】
+- **对白占比 ≥55%**（粗估：对白句数 ÷（对白句数 + 旁白句数））；先把话说出口，再用短旁白收口。
+- **零比喻**：禁止「A 像/是/宛如 B」及一切喻体；情绪只落**动作、对白、可核对事实**。
+- **禁止网文堆砌**：如把对白**放在舌尖掂量**、**语速像在确认绝密档案**、**摊牌后的沉重**、**手足无措的狂喜**、**如释重负的颤音**、**发红的眼角**凑**那抹**弧度、**亮得刺眼**排比、**木质香 / 多糖奶茶**混进同一股「空气」描写等（程序亦扫违禁串）。
+- **禁止「一+微量」、堆砌模糊副词、形容词 + 空话壳**（劲头/心气/气韵/架势等）；详尽词串见文末表。
+
+---
+
+【唯二正文笔法锚点｜未配用户自定义文风时，仅此二家为模仿对象】（**不许复述节选剧情**；学**短句、一事一句、少形容词叠床、多点可见人事**）
+——**汪曾祺·铺陈**：现在穿树皮编的草鞋的人很少了，大家都穿塑料凉鞋、旅游鞋。但是到处都还在种木芙蓉，这是一种习惯。于是芙蓉就成了永嘉城乡一景。」
+
+——**汪曾祺·生活联缀**：章家家规很严，我从来没有见外公笑过。他们家的人都不会喝酒。老头子生日、姑奶奶归宁，逢年过节，摆席请客，给客人预备高粱酒，其实只有我父亲一个人喝，他们自己家的人只喝糯米做的甜酒。席上没有人划拳碰杯，宴后也没有人撒酒疯。家里不许赌钱。过年准许赌五天，但也限于掷骰子赶老羊，不许打麻将，更不许推牌九。在这个家里听不到有人大声说笑，说话声音都很低，整天都是静悄悄的。
+
+——**萧红·动作夹对白**：他们并没有注意到我的醒转。到第三年他就不来信啦！你们这当兵的人……我就问她：“你丈夫也是当兵的吗？”赶车的舅舅，抓了我的辫发，把我向后拉了一下。“那么以后……就总也没有信来？”他问他。
+
+---
+
+【自检四项】对白占比是否够；正文是否零比喻；是否躲过全文扫描违禁串；**句长与修饰密度是否贴近以上三段**，而非网文排比。
+
+---
+
+【完整程序扫描词表｜逐项规避；同构仿写亦禁】共 **${PROSE_FORBIDDEN_SCAN_TERM_COUNT}** 项。
+
+${PROSE_FORBIDDEN_SCAN_TERMS.join('、')}
+
+---------------------
+`.trim()

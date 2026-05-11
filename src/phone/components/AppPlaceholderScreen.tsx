@@ -6,9 +6,13 @@ import { useCustomization } from '../CustomizationContext'
 type Props = {
   appId: AppSlot['id']
   onBack: () => void
+  /** 主文案；不传则用默认占位说明 */
+  message?: string
+  /** 补充说明（较小字号） */
+  hint?: string
 }
 
-export function AppPlaceholderScreen({ appId, onBack }: Props) {
+export function AppPlaceholderScreen({ appId, onBack, message, hint }: Props) {
   const { state } = useCustomization()
   const app = state.apps.find((a) => a.id === appId)
   const { theme, appPageStyles } = state
@@ -71,9 +75,14 @@ export function AppPlaceholderScreen({ appId, onBack }: Props) {
             boxShadow: 'var(--phone-shadow)',
           }}
         >
-          <p className="text-[14px]" style={{ color: theme.textMuted }}>
-            此页面为占位，后续可接入真实功能或后端。
+          <p className="text-[14px] leading-relaxed" style={{ color: theme.textMuted }}>
+            {message ?? '此页面为占位，后续可接入真实功能或后端。'}
           </p>
+          {hint ? (
+            <p className="mt-3 text-[12px] leading-relaxed opacity-90" style={{ color: theme.textMuted }}>
+              {hint}
+            </p>
+          ) : null}
         </section>
       </div>
     </div>

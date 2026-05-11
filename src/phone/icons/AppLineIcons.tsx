@@ -105,6 +105,17 @@ export function IconLoreArchive(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+/** 遇见：同心圆雷达意象 + 中心光点（宿命邂逅） */
+export function IconLumiMeet(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="8.25" opacity="0.28" />
+      <circle cx="12" cy="12" r="5.25" opacity="0.45" />
+      <circle cx="12" cy="12" r="2.15" />
+    </svg>
+  )
+}
+
 /** 回收站：筒身 + 波纹盖 */
 export function IconRecycleBin(props: SVGProps<SVGSVGElement>) {
   return (
@@ -121,6 +132,7 @@ const map = {
   wechat: IconWeChat,
   takeout: IconTakeout,
   weibo: IconWeibo,
+  lumiMeet: IconLumiMeet,
   api: IconApi,
   voiceprint: IconVoiceprint,
   dataArchive: IconDataArchive,

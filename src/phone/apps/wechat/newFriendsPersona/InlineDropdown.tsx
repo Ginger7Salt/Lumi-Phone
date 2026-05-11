@@ -13,6 +13,8 @@ export function InlineDropdown({
   open,
   onToggle,
   disabled = false,
+  /** 为 true 时在触发按钮上 mousedown 调用 preventDefault，避免抢走邻近 textarea 焦点导致选区错乱（占位符插入等场景） */
+  suppressTriggerFocusSteal = false,
   children,
 }: {
   label: string
@@ -21,6 +23,7 @@ export function InlineDropdown({
   onToggle: () => void
   /** 为 true 时不展开，样式与禁用一致（如无数据时） */
   disabled?: boolean
+  suppressTriggerFocusSteal?: boolean
   children: ReactNode
 }) {
   const modal = useMemo(() => {
@@ -76,6 +79,13 @@ export function InlineDropdown({
         disabled={disabled}
         className="relative flex w-full items-center justify-center gap-1 rounded-xl border bg-white px-3 py-3 text-[15px] outline-none transition-all duration-200 ease-out disabled:cursor-not-allowed disabled:opacity-60"
         style={{ borderColor: '#e5e5e5', color: '#000000' }}
+        onMouseDown={
+          suppressTriggerFocusSteal && !disabled
+            ? (e) => {
+                e.preventDefault()
+              }
+            : undefined
+        }
         onClick={disabled ? undefined : onToggle}
         aria-label={label}
         aria-expanded={open}

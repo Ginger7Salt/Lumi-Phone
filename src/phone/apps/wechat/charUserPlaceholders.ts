@@ -6,6 +6,12 @@ import type { Character, PlayerIdentity } from './newFriendsPersona/types'
 export const WORLD_BOOK_CHAR_PLACEHOLDER = '{{char}}'
 export const WORLD_BOOK_USER_PLACEHOLDER = '{{user}}'
 
+/** 同一条人脉档案下的其他人设（档案主角或其它 NPC）：`{{id:<人设 id>}}`，注入前替换为显示名 */
+export function linkedCharacterPlaceholder(characterId: string): string {
+  const id = String(characterId ?? '').trim()
+  return id ? `{{id:${id}}}` : ''
+}
+
 export type CharUserNames = {
   /** 当前人设（约会对象）展示名，一般用 realName */
   charName: string

@@ -3,6 +3,7 @@ import { BellOff, EyeOff, MoreHorizontal, Pin, PinOff, Plus, Trash2, CircleDot }
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -51,6 +52,7 @@ import { RedPacketDetailPage } from './redPacket/RedPacketDetailPage'
 import { RedPacketHistoryPage } from './redPacket/RedPacketHistoryPage'
 import { WeChatProfileEditModal } from './WeChatProfileEditModal'
 import { MemoryTraceModal } from './MemoryTraceModal'
+import { WorldBookAfterPatchNoticeHost } from './WorldBookAfterPatchNoticeHost'
 import { getLastMemoryTrace, hydrateMemoryTraceFromIndexedDb, subscribeLastMemoryTrace } from './memoryTraceStore'
 import { ChatThemeProvider, useChatTheme } from './ChatThemeContext'
 import { WeChatConsoleFloatingPanel } from './WeChatConsoleFloatingPanel'
@@ -77,6 +79,10 @@ import { sanitizePrivateMemorySummaryBody } from './memory/autoSummaryPlaceholde
 import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtils'
 import { uid } from './newFriendsPersona/utils'
 import { formatWorldBackgroundForPrompt } from './newFriendsPersona/worldBackgroundFormat'
+import {
+  applyWorldBookAfterPatchesToCharacter,
+  WORLD_BOOK_AFTER_PATCH_UPDATED_EVENT,
+} from './newFriendsPersona/worldBookAfterPatch'
 import {
   buildFriendRequestDeletionOrdinalBias,
   buildFriendRequestPrivatePromptPack,
@@ -126,7 +132,11 @@ type WxRedPacketDetailPayload = {
   senderName: string
   senderAvatarUrl?: string
   chatPeerName: string
+  /** 已拆开时「领取记录」展示领取者：己方发包为对方备注；对方发包为己方昵称 */
+  claimerName?: string
   fromSelf: boolean
+  /** 是否已拆；false 为只读详情（如本人发出的待对方领取） */
+  opened: boolean
 }
 
 type WxRoute =
@@ -141,7 +151,7 @@ type WxRoute =
       name: 'new-friends-persona'
       editCharacterId?: string
       returnToChat?: WxActiveChat
-      source?: 'contacts' | 'profile'
+      source?: 'contacts' | 'profile' | 'dating'
     }
   /** 通讯录 → 群聊列表 */
   | { name: 'contacts-group-chats' }
@@ -204,6 +214,24 @@ function wxWalletPeerCharacterId(chat: WxActiveChat): string {
   if (chat.kind === 'lumi') return WECHAT_LUMI_PEER_CHARACTER_ID
   if (chat.kind === 'persona') return chat.characterId
   return wechatGroupPeerCharacterId(chat.groupId)
+}
+
+/**
+ * 仍绑定同一「聊天会话」的路由：从聊天页进入子页时 ChatRoom 保持挂载（隐藏续跑逐条露出 / 正在输入），避免卸载丢动画。
+ */
+function wxRouteChatLayerContext(route: WxRoute): WxActiveChat | null {
+  if (route.name === 'chat') return route.chat
+  switch (route.name) {
+    case 'affection-pay':
+    case 'red-packet-send':
+    case 'red-packet-detail':
+    case 'red-packet-history':
+    case 'lumi-transfer':
+    case 'transfer-detail':
+      return route.chat
+    default:
+      return null
+  }
 }
 
 /** RedPacketPage 仅接受 lumi/persona；群会话映射为占位 persona id */
@@ -548,12 +576,13 @@ function Header({
     }
     let cancelled = false
     let step = 0
-    const delays = [3000, 1500, 2000, 1500]
+    /** 逐条露出：先短亮「正在输入」再切备注，循环模拟敲键盘间隙（ms） */
+    const delays = [1800, 2200, 1600, 2400]
     let tid: number | null = null
     const schedule = () => {
       if (cancelled) return
-      setAltPhase(step % 2 === 0 ? 'title' : 'typing')
-      const ms = delays[step % delays.length] ?? 1500
+      setAltPhase(step % 2 === 0 ? 'typing' : 'title')
+      const ms = delays[step % delays.length] ?? 2000
       step += 1
       tid = window.setTimeout(schedule, ms)
     }
@@ -3573,9 +3602,33 @@ function WeChatAppInner({ onBack }: Props) {
     }
   }, [])
 
+  /**
+   * 底层 ChatRoom 绑定的会话：除当前 `chat`/红包转账等外，在「消息列表 tabs」上仍保留最后一次会话，
+   * 避免返回列表时卸载导致逐条露出 / 正在输入状态丢失。
+   */
+  const wxDockChatRef = useRef<WxActiveChat | null>(null)
+  const routeWxChatCtx = wxRouteChatLayerContext(route)
+  if (routeWxChatCtx) wxDockChatRef.current = routeWxChatCtx
+  else if (route.name === 'forward-select-chat') wxDockChatRef.current = route.fromChat
+
+  const wxDockRouteGroup =
+    route.name === 'tabs' ||
+    route.name === 'chat' ||
+    route.name === 'forward-select-chat' ||
+    routeWxChatCtx != null
+
+  useLayoutEffect(() => {
+    if (!wxDockRouteGroup) wxDockChatRef.current = null
+  }, [wxDockRouteGroup])
+
+  const wxDockChat: WxActiveChat | null =
+    routeWxChatCtx ??
+    (route.name === 'forward-select-chat' ? route.fromChat : null) ??
+    (route.name === 'tabs' ? wxDockChatRef.current : null)
+
   const chatPeerContact = useMemo(() => {
-    if (route.name !== 'chat') return null
-    const chat = route.chat
+    const chat = wxDockChat
+    if (!chat) return null
     if (chat.kind === 'lumi') {
       return weChatMergedContacts?.find((c) => c.id === 'wechat-lumi-assistant') ?? WECHAT_LUMI_ASSISTANT_CONTACT
     }
@@ -3599,21 +3652,22 @@ function WeChatAppInner({ onBack }: Props) {
       }
     }
     return { id: row.id, remarkName: row.remarkName, avatarUrl: row.avatarUrl }
-  }, [route, activeGroupRow, weChatMergedContacts, state.wechatPersonaContacts])
+  }, [wxDockChat, activeGroupRow, weChatMergedContacts, state.wechatPersonaContacts])
 
   useEffect(() => {
-    if (route.name !== 'chat' || route.chat.kind !== 'group') {
+    const layer = wxDockChat
+    if (!layer || layer.kind !== 'group') {
       setActiveGroupRow(null)
       return
     }
     let cancelled = false
-    void personaDb.getGroupChat(route.chat.groupId).then((g) => {
+    void personaDb.getGroupChat(layer.groupId).then((g) => {
       if (!cancelled) setActiveGroupRow(g)
     })
     return () => {
       cancelled = true
     }
-  }, [route])
+  }, [wxDockChat])
 
   /** 转账页对方信息 */
   const lumiTransferPeer = useMemo(() => {
@@ -3664,23 +3718,22 @@ function WeChatAppInner({ onBack }: Props) {
 
   /** 当前聊天页用于 IndexedDB 的会话 id：Lumi 固定为助手 id，与绑定人设无关，避免与角色私聊串线 */
   const activeConversationCharacterId = useMemo(() => {
-    if (route.name !== 'chat') return null
-    if (route.chat.kind === 'lumi') return WECHAT_LUMI_PEER_CHARACTER_ID
-    if (route.chat.kind === 'group') return wechatGroupPeerCharacterId(route.chat.groupId)
-    return route.chat.characterId
-  }, [route])
+    const layer = wxDockChat
+    if (!layer) return null
+    if (layer.kind === 'lumi') return WECHAT_LUMI_PEER_CHARACTER_ID
+    if (layer.kind === 'group') return wechatGroupPeerCharacterId(layer.groupId)
+    return layer.characterId
+  }, [wxDockChat])
 
-  const activeChatForRoute = useMemo<WxActiveChat | null>(() => {
-    if (route.name !== 'chat') return null
-    return route.chat
-  }, [route])
+  const activeChatForRoute = useMemo<WxActiveChat | null>(() => wxDockChat, [wxDockChat])
 
   const chatRoomPersonaCharacterId = useMemo(() => {
-    if (route.name !== 'chat') return null
-    if (route.chat.kind === 'group') return null
-    if (route.chat.kind === 'persona') return route.chat.characterId
+    const layer = wxDockChat
+    if (!layer) return null
+    if (layer.kind === 'group') return null
+    if (layer.kind === 'persona') return layer.characterId
     return lumiBindingPersonaCharacterId
-  }, [route, lumiBindingPersonaCharacterId])
+  }, [wxDockChat, lumiBindingPersonaCharacterId])
 
   /**
    * null = 尚未从 IndexedDB 读到当前身份 id。
@@ -3722,14 +3775,7 @@ function WeChatAppInner({ onBack }: Props) {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const chat =
-        route.name === 'chat' ||
-        route.name === 'transfer-detail' ||
-        route.name === 'lumi-transfer' ||
-        route.name === 'red-packet-send' ||
-        route.name === 'affection-pay'
-          ? route.chat
-          : null
+      const chat = wxDockChat
       if (!chat) {
         if (!cancelled) setChatRouteIdentityId(null)
         return
@@ -3749,7 +3795,7 @@ function WeChatAppInner({ onBack }: Props) {
     return () => {
       cancelled = true
     }
-  }, [route, playerIdentityId])
+  }, [wxDockChat, playerIdentityId])
 
   const refreshPendingNewFriendRequests = useCallback(async () => {
     if (playerIdentityId === null) return
@@ -3957,10 +4003,11 @@ function WeChatAppInner({ onBack }: Props) {
   }, [refreshMessageThreadsMeta])
 
   const activeConversationKey = useMemo(() => {
-    if (route.name !== 'chat' || !chatRouteIdentityId || !activeConversationCharacterId) return null
-    if (route.chat.kind === 'group') return wechatGroupConversationKey(route.chat.groupId, chatRouteIdentityId)
+    const layer = wxDockChat
+    if (!layer || !chatRouteIdentityId || !activeConversationCharacterId) return null
+    if (layer.kind === 'group') return wechatGroupConversationKey(layer.groupId, chatRouteIdentityId)
     return wechatConversationKey(activeConversationCharacterId, chatRouteIdentityId)
-  }, [route, chatRouteIdentityId, activeConversationCharacterId])
+  }, [wxDockChat, chatRouteIdentityId, activeConversationCharacterId])
 
   // 转发：选择聊天页当前待转发消息（单条/多条）
   const [forwardPendingMessages, setForwardPendingMessages] = useState<WeChatChatMessage[] | null>(null)
@@ -3997,9 +4044,7 @@ function WeChatAppInner({ onBack }: Props) {
   const [busyDetailOpen, setBusyDetailOpen] = useState(false)
   const [chatSkipBusySignal, setChatSkipBusySignal] = useState(0)
   const routeTimeCharacterId =
-    route.name === 'red-packet-send' || route.name === 'lumi-transfer' || route.name === 'transfer-detail'
-      ? wxWalletPeerCharacterId(route.chat)
-      : null
+    route.name === 'chat' ? null : wxDockChat ? wxWalletPeerCharacterId(wxDockChat) : null
   const { getCurrentTimeMs } = useWeChatCurrentTime({
     characterId:
       route.name === 'chat'
@@ -4179,9 +4224,13 @@ function WeChatAppInner({ onBack }: Props) {
   }, [route.name, activeConversationCharacterId, getCurrentTimeMs])
 
   useEffect(() => {
-    setWeChatForegroundConversationKey(activeConversationKey)
+    if (route.name === 'chat' && activeConversationKey) {
+      setWeChatForegroundConversationKey(activeConversationKey)
+      return () => setWeChatForegroundConversationKey(null)
+    }
+    setWeChatForegroundConversationKey(null)
     return () => setWeChatForegroundConversationKey(null)
-  }, [activeConversationKey])
+  }, [route.name, activeConversationKey])
 
   const [chatSessionPrefs, setChatSessionPrefs] = useState<{
     danmaku: boolean
@@ -4251,6 +4300,7 @@ function WeChatAppInner({ onBack }: Props) {
         await personaDb.markWeChatConversationReadToLatest(activeConversationKey)
       }
       chatMarkOnceForConvKeyRef.current = null
+      wxDockChatRef.current = null
       await refreshMessageThreadsMeta()
       setRoute({ name: 'tabs', tab: 'messages' })
     })()
@@ -4341,13 +4391,6 @@ function WeChatAppInner({ onBack }: Props) {
       backgroundSize: 'cover',
     }
   }, [route.name, activeTabBgFill, pageStyle?.pageBg, pageStyle?.pageBgImageUrl])
-
-  useEffect(() => {
-    if (route.name !== 'chat') {
-      setChatOtherTyping(false)
-      setChatOpponentRevealPending(false)
-    }
-  }, [route.name])
 
   useEffect(() => {
     if (!(route.name === 'tabs' && route.tab === 'profile')) {
@@ -4445,6 +4488,21 @@ function WeChatAppInner({ onBack }: Props) {
         chatMemberIds: friendReqWbIds,
         globalWechatPlate: 'private_chat',
       })
+      if (ai.worldBookPatches?.length) {
+        try {
+          const nextCh = applyWorldBookAfterPatchesToCharacter(character, ai.worldBookPatches)
+          if (nextCh) {
+            await personaDb.upsertCharacter(nextCh)
+            window.dispatchEvent(
+              new CustomEvent(WORLD_BOOK_AFTER_PATCH_UPDATED_EVENT, {
+                detail: { appliedPatchCount: ai.worldBookPatches.length },
+              }),
+            )
+          }
+        } catch {
+          /* 与 ChatRoom 一致：尾声延展写库失败不阻断好友验证气泡 */
+        }
+      }
       return {
         bubbles: ai.bubbles.filter((x) => String(x || '').trim().length > 0),
         nickname: character.remark?.trim() || character.wechatNickname?.trim() || character.name || '对方',
@@ -4712,7 +4770,9 @@ function WeChatAppInner({ onBack }: Props) {
           title={route.name === 'chat' && chatPeerContact ? chatPeerContact.remarkName : title}
           titleSub={route.name === 'chat' && chatPeerContact?.tag ? chatPeerContact.tag : undefined}
           showTyping={route.name === 'chat' && chatOtherTyping}
-          titleTypingAlternate={route.name === 'chat' && chatOpponentRevealPending}
+          titleTypingAlternate={
+            route.name === 'chat' && chatOpponentRevealPending && !chatOtherTyping
+          }
           typingText={
             route.name === 'chat' && route.chat.kind === 'group' ? '成员正在输入…' : '对方正在输入…'
           }
@@ -4862,6 +4922,98 @@ function WeChatAppInner({ onBack }: Props) {
       </AnimatePresence>
 
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {wxDockChat && activeConversationCharacterId ? (
+          <div
+            className={
+              route.name === 'chat'
+                ? 'relative z-0 flex min-h-0 flex-1 flex-col'
+                : 'pointer-events-none absolute inset-0 z-0 flex min-h-0 overflow-hidden opacity-0'
+            }
+            aria-hidden={route.name !== 'chat'}
+          >
+            {chatRouteIdentityId === null ? (
+              route.name === 'chat' ? (
+                <div
+                  className="flex flex-1 items-center justify-center px-4 text-[14px]"
+                  style={{ color: 'var(--wx-text-muted)' }}
+                >
+                  正在加载…
+                </div>
+              ) : null
+            ) : (
+              <ChatRoom
+                onBack={exitChatToMessages}
+                onOtherTypingChange={setChatOtherTyping}
+                onOpponentRevealQueueActive={setChatOpponentRevealPending}
+                skipBusySignal={chatSkipBusySignal}
+                personaCharacterId={chatRoomPersonaCharacterId ?? undefined}
+                playerDisplayName={state.profile.displayName}
+                playerAvatarUrl={state.profile.avatarImageUrl}
+                peerAvatarUrl={chatPeerContact?.avatarUrl}
+                peerNotifyTitle={chatPeerContact?.remarkName ?? '聊天'}
+                chatBackgroundUrl={chatSessionPrefs?.bg || undefined}
+                danmakuEnabled={chatSessionPrefs?.danmaku ?? false}
+                showGroupMemberNicknameInChat={chatSessionPrefs?.showGroupMemberNicknameInChat !== false}
+                showGroupRankBadgesInChat={!!chatSessionPrefs?.showGroupRankBadgesInChat}
+                useLumiProjectAssistantPrompt={wxDockChat.kind === 'lumi'}
+                roomType={wxDockChat.kind === 'group' ? 'group' : 'private'}
+                groupId={wxDockChat.kind === 'group' ? wxDockChat.groupId : null}
+                conversationCharacterId={activeConversationCharacterId ?? ''}
+                playerIdentityId={chatRouteIdentityId}
+                scrollToMessageId={pendingScrollToMessageId}
+                onScrollToMessageConsumed={clearPendingScrollToMessage}
+                onRequestForwardMessage={(msg) => {
+                  if (!activeChatForRoute) return
+                  setRoute({
+                    name: 'forward-select-chat',
+                    fromChat: activeChatForRoute,
+                    payload: { mode: 'single', messageIds: [msg.id] },
+                  })
+                }}
+                onRequestForwardMessages={(payload) => {
+                  if (!activeChatForRoute) return
+                  setRoute({
+                    name: 'forward-select-chat',
+                    fromChat: activeChatForRoute,
+                    payload: {
+                      mode: payload.mode,
+                      messageIds: payload.messageIds,
+                      mergeTitle: payload.mergeTitle,
+                    },
+                  })
+                }}
+                onOpenSendRedPacket={() => {
+                  if (!activeChatForRoute || playerIdentityId === null) return
+                  setRoute({ name: 'red-packet-send', chat: activeChatForRoute })
+                }}
+                onNavigateRedPacketDetail={(detail) => {
+                  if (!activeChatForRoute) return
+                  setRoute({ name: 'red-packet-detail', chat: activeChatForRoute, detail })
+                }}
+                onOpenLumiTransfer={() => {
+                  if (!activeChatForRoute) return
+                  setRoute({ name: 'lumi-transfer', chat: activeChatForRoute })
+                }}
+                onOpenAffectionPay={() => {
+                  if (!activeChatForRoute || playerIdentityId === null) return
+                  setRoute({ name: 'affection-pay', chat: activeChatForRoute })
+                }}
+                onNavigateTransferDetail={(transferId) => {
+                  if (!activeChatForRoute) return
+                  setRoute({ name: 'transfer-detail', chat: activeChatForRoute, transferId })
+                }}
+              />
+            )}
+          </div>
+        ) : null}
+        <div
+          className={
+            route.name === 'chat'
+              ? 'pointer-events-none absolute inset-0 z-[1] flex min-h-0 opacity-0'
+              : 'relative z-[1] flex min-h-0 flex-1 flex-col'
+          }
+          aria-hidden={route.name === 'chat'}
+        >
         <AnimatePresence mode="wait" initial={false}>
           {route.name === 'tabs' ? (
             <motion.div key={`tab-${route.tab}`} className="flex h-full min-h-0 flex-col" {...pageProps}>
@@ -4918,7 +5070,10 @@ function WeChatAppInner({ onBack }: Props) {
                 </div>
               ) : route.tab === 'dates' ? (
                 <div className="min-h-0 flex-1">
-                  <DatingSystem onVnChromeChange={setHideDatingChrome} />
+                  <DatingSystem
+                    onVnChromeChange={setHideDatingChrome}
+                    onOpenPersonaManager={() => setRoute({ name: 'new-friends-persona', source: 'dating' })}
+                  />
                 </div>
               ) : route.tab === 'discover' ? (
                 <div className="min-h-0 flex-1">
@@ -4948,81 +5103,12 @@ function WeChatAppInner({ onBack }: Props) {
               )}
             </motion.div>
           ) : route.name === 'chat' ? (
-            <motion.div key="chat" className="flex min-h-0 flex-1 flex-col" {...pageProps}>
-              {chatRouteIdentityId === null ? (
-                <div
-                  className="flex flex-1 items-center justify-center px-4 text-[14px]"
-                  style={{ color: 'var(--wx-text-muted)' }}
-                >
-                  正在加载…
-                </div>
-              ) : (
-                <ChatRoom
-                  onBack={exitChatToMessages}
-                  onOtherTypingChange={setChatOtherTyping}
-                  onOpponentRevealQueueActive={setChatOpponentRevealPending}
-                  skipBusySignal={chatSkipBusySignal}
-                  personaCharacterId={chatRoomPersonaCharacterId ?? undefined}
-                  playerDisplayName={state.profile.displayName}
-                  playerAvatarUrl={state.profile.avatarImageUrl}
-                  peerAvatarUrl={chatPeerContact?.avatarUrl}
-                  peerNotifyTitle={chatPeerContact?.remarkName ?? '聊天'}
-                  chatBackgroundUrl={chatSessionPrefs?.bg || undefined}
-                  danmakuEnabled={chatSessionPrefs?.danmaku ?? false}
-                  showGroupMemberNicknameInChat={chatSessionPrefs?.showGroupMemberNicknameInChat !== false}
-                  showGroupRankBadgesInChat={!!chatSessionPrefs?.showGroupRankBadgesInChat}
-                  useLumiProjectAssistantPrompt={
-                    route.name === 'chat' && route.chat.kind === 'lumi'
-                  }
-                  roomType={route.name === 'chat' && route.chat.kind === 'group' ? 'group' : 'private'}
-                  groupId={route.name === 'chat' && route.chat.kind === 'group' ? route.chat.groupId : null}
-                  conversationCharacterId={activeConversationCharacterId ?? ''}
-                  playerIdentityId={chatRouteIdentityId}
-                  scrollToMessageId={pendingScrollToMessageId}
-                  onScrollToMessageConsumed={clearPendingScrollToMessage}
-                  onRequestForwardMessage={(msg) => {
-                    if (!activeChatForRoute) return
-                    setRoute({
-                      name: 'forward-select-chat',
-                      fromChat: activeChatForRoute,
-                      payload: { mode: 'single', messageIds: [msg.id] },
-                    })
-                  }}
-                  onRequestForwardMessages={(payload) => {
-                    if (!activeChatForRoute) return
-                    setRoute({
-                      name: 'forward-select-chat',
-                      fromChat: activeChatForRoute,
-                      payload: {
-                        mode: payload.mode,
-                        messageIds: payload.messageIds,
-                        mergeTitle: payload.mergeTitle,
-                      },
-                    })
-                  }}
-                  onOpenSendRedPacket={() => {
-                    if (!activeChatForRoute || playerIdentityId === null) return
-                    setRoute({ name: 'red-packet-send', chat: activeChatForRoute })
-                  }}
-                  onNavigateRedPacketDetail={(detail) => {
-                    if (!activeChatForRoute) return
-                    setRoute({ name: 'red-packet-detail', chat: activeChatForRoute, detail })
-                  }}
-                  onOpenLumiTransfer={() => {
-                    if (!activeChatForRoute) return
-                    setRoute({ name: 'lumi-transfer', chat: activeChatForRoute })
-                  }}
-                  onOpenAffectionPay={() => {
-                    if (!activeChatForRoute || playerIdentityId === null) return
-                    setRoute({ name: 'affection-pay', chat: activeChatForRoute })
-                  }}
-                  onNavigateTransferDetail={(transferId) => {
-                    if (!activeChatForRoute) return
-                    setRoute({ name: 'transfer-detail', chat: activeChatForRoute, transferId })
-                  }}
-                />
-              )}
-            </motion.div>
+            <motion.div
+              key="wx-chat-route-placeholder"
+              initial={false}
+              className="pointer-events-none h-0 min-h-0 w-0 shrink-0 overflow-hidden opacity-0"
+              aria-hidden
+            />
           ) : route.name === 'affection-pay' ? (
             <motion.div key="affection-pay" className="flex min-h-0 flex-1 flex-col" {...pageProps}>
               {playerIdentityId === null ? (
@@ -5176,7 +5262,9 @@ function WeChatAppInner({ onBack }: Props) {
                 senderName={route.detail.senderName}
                 senderAvatarUrl={route.detail.senderAvatarUrl}
                 chatPeerName={route.detail.chatPeerName}
+                claimerName={route.detail.claimerName}
                 fromSelf={route.detail.fromSelf}
+                opened={route.detail.opened}
                 onBack={() => setRoute({ name: 'chat', chat: route.chat })}
                 onOpenHistory={() =>
                   setRoute({
@@ -5355,6 +5443,10 @@ function WeChatAppInner({ onBack }: Props) {
                     setRoute({ name: 'chat', chat: route.returnToChat })
                     return
                   }
+                  if (route.name === 'new-friends-persona' && route.source === 'dating') {
+                    setRoute({ name: 'tabs', tab: 'dates' })
+                    return
+                  }
                   if (route.name === 'new-friends-persona' && route.source === 'profile') {
                     setRoute({ name: 'tabs', tab: 'profile' })
                     return
@@ -5366,6 +5458,7 @@ function WeChatAppInner({ onBack }: Props) {
             </motion.div>
           )}
         </AnimatePresence>
+        </div>
 
         <AnimatePresence>
           {route.name === 'forward-select-chat' && playerIdentityId && forwardPendingMessages?.length ? (
@@ -5833,6 +5926,7 @@ function WeChatAppInner({ onBack }: Props) {
         onSave={setProfile}
       />
       <MemoryTraceModal open={memoryTraceOpen} onClose={() => setMemoryTraceOpen(false)} data={memoryTraceSnapshot} />
+      <WorldBookAfterPatchNoticeHost />
 
       <AnimatePresence>
         {consoleOpen ? (

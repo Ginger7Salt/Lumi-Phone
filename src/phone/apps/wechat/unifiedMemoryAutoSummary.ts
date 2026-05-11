@@ -5,6 +5,7 @@ import {
   textMentionsAnyToken,
 } from './dating/offlineDatingArchiveResolve'
 import { splitDatingAssistantOutput } from './dating/plotCoT'
+import { extractVnVoiceParamsBlock } from './dating/vnVoiceParamsStrip'
 import { findGroupMember } from './groupChatUtils'
 import { buildNpcLinkedOfflineExcerptUserBlock } from './memory/linkedOfflineExcerptsForAutoSummary'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from './newFriendsPersona/idb'
@@ -163,7 +164,10 @@ export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
   for (const p of offlinePlotsPrior) {
     let t = String(p.content || '').trim()
     if (!t) continue
-    if (p.type === 'ai') t = splitDatingAssistantOutput(t).content.trim()
+    if (p.type === 'ai') {
+      const prose = splitDatingAssistantOutput(t).content.trim()
+      t = extractVnVoiceParamsBlock(prose).cleanedText.trim()
+    }
     if (!t) continue
     if (p.type === 'player') offlineLines.push(`我：${t}`)
     else offlineLines.push(`${peer}：${t}`)

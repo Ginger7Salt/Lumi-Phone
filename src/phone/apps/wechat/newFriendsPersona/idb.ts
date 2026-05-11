@@ -2098,6 +2098,8 @@ export class PersonaDb {
     if (db.objectStoreNames.contains(CHARACTER_MEMORIES_STORE)) stores.push(CHARACTER_MEMORIES_STORE)
     if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)) stores.push(CHAT_CONV_SETTINGS_STORE)
     if (db.objectStoreNames.contains(CHARACTER_DANMAKU_STORE)) stores.push(CHARACTER_DANMAKU_STORE)
+    /** 下文会访问 playerNetworkLinks；须在建事务时纳入 scope，否则会抛 object store was not found */
+    if (db.objectStoreNames.contains(PLAYER_LINKS_STORE)) stores.push(PLAYER_LINKS_STORE)
     const tx = db.transaction(stores, 'readwrite')
     const relStore = tx.objectStore(REL_STORE)
     const charStore = tx.objectStore(STORE)
@@ -4185,6 +4187,23 @@ export class PersonaDb {
         if (!nid) continue
         npcNetworkIdMap[nid] = String(n.name ?? n.wechatNickname ?? '').trim() || nid.slice(0, 8)
       }
+    } else if (owner) {
+      /** 根人设（非 NPC）：同一条人脉档案下的主角 id + 其他人脉，供预览/UI 展开 `{{id:…}}`（与 NPC 视角一致） */
+      const rootId = owner.trim()
+      const archiveName =
+        String(ownerRow?.name ?? ownerRow?.wechatNickname ?? '').trim() || rootId.slice(0, 8)
+      npcNetworkIdMap[rootId] = archiveName
+      let npcPeers: Character[] = []
+      try {
+        npcPeers = await this.listNpcsFor(rootId)
+      } catch {
+        npcPeers = []
+      }
+      for (const n of npcPeers) {
+        const nid = n.id.trim()
+        if (!nid) continue
+        npcNetworkIdMap[nid] = String(n.name ?? n.wechatNickname ?? '').trim() || nid.slice(0, 8)
+      }
     }
 
     const linkedRoots = new Set(
@@ -4311,6 +4330,18 @@ export class PersonaDb {
     }
     const [out] = await this.expandMemoryListContentForPrompt([synthetic], expandOwnerId)
     return (out ?? raw).trim()
+  }
+
+  /**
+   * 人设编辑页（简介、世界书条目等）：与记忆条目相同的占位符展开规则，供 UI「发给模型的预览」。
+   * `characterId` 须为 IndexedDB 中的人设 id（根人设或 NPC）。
+   */
+  async expandCharacterFieldPlaceholderPreview(content: string, characterId: string): Promise<string> {
+    return this.expandMemoryDraftForPromptPreview({
+      content: String(content ?? ''),
+      characterId: characterId.trim(),
+      memoryScope: 'private',
+    })
   }
 
   /** 拼成注入系统提示的【长期记忆】正文；含私聊 + 共同参与群聊的穿透合并；无条目时返回空串 */

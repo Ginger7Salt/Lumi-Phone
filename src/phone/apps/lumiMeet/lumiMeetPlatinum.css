@@ -1,0 +1,97 @@
+/** Lumi Meet · 浅色铂金风排版工具类（独立于微信页） */
+
+.font-elegant-serif {
+  font-family:
+    'Noto Serif SC',
+    'Songti SC',
+    'STSong',
+    'Times New Roman',
+    serif;
+  font-feature-settings: 'kern' 1;
+}
+
+.meet-caption-en {
+  font-family:
+    'Noto Sans SC',
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-weight: 300;
+  letter-spacing: 0.08em;
+}
+
+.meet-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(180, 170, 155, 0.45) transparent;
+}
+
+.meet-platinum-pill {
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(250, 248, 245, 0.92) 100%);
+  box-shadow: 0 10px 36px rgba(35, 30, 24, 0.05);
+}
+
+/** 筛选 / 分段控件：当前选中项（需与 .meet-platinum-pill 同用） */
+.meet-platinum-pill.meet-platinum-pill--selected {
+  border-color: rgba(212, 175, 55, 0.72);
+  background: linear-gradient(180deg, #fcf8f1 0%, #efe6d6 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    0 0 0 2px rgba(212, 175, 55, 0.28),
+    0 8px 28px rgba(212, 175, 55, 0.08);
+  color: #252220;
+  font-weight: 500;
+}
+
+.meet-card {
+  backdrop-filter: blur(6px);
+}
+
+.meet-field:focus {
+  border-color: rgba(201, 184, 164, 0.65);
+  box-shadow: 0 0 0 3px rgba(201, 184, 164, 0.18);
+}
+
+.meet-btn-primary {
+  border-radius: 999px;
+  border: 1px solid rgba(212, 175, 140, 0.35);
+  background: linear-gradient(135deg, #faf7f2 0%, #ebe4dc 48%, #dfd6cc 100%);
+  color: #3d3834;
+  box-shadow: 0 14px 42px rgba(60, 48, 36, 0.12);
+}
+
+.meet-btn-secondary {
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.85);
+  color: #6e6862;
+}
+
+/** 深度筛选 · 黑底选中胶囊（铂金英文点缀可由调用处控制） */
+.meet-filter-pill-dark {
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+  color: #3d3a34;
+  transition:
+    background-color 0.22s ease,
+    color 0.22s ease,
+    border-color 0.22s ease;
+}
+
+.meet-filter-pill-dark.meet-filter-pill-dark--on {
+  background: #141414;
+  border-color: rgba(212, 175, 55, 0.35);
+  color: #fafafa;
+}
+
+.meet-resonance-quote {
+  font-family: 'Songti SC', 'Noto Serif SC', STSong, Georgia, serif;
+}
+
+/** 交友意向 · 块状选项（选中态由 TSX 组合类控制） */
+.meet-intention-option:focus-visible {
+  outline: 2px solid rgba(212, 175, 55, 0.5);
+  outline-offset: 2px;
+}

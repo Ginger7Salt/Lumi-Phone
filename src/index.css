@@ -185,6 +185,11 @@ html[data-phone-layout='locked'] #root {
   }
 }
 
+/** 遇见九维档案等：正文衬线（与全局 --phone-font 独立，便于高奢侧写排版） */
+.font-dossier-serif {
+  font-family: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+}
+
 /* Reduce motion */
 @media (prefers-reduced-motion: reduce) {
   *,

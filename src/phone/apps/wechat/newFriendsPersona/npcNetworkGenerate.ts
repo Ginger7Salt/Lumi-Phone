@@ -208,9 +208,33 @@ function pickNpcAvatar(npc: AiNpcJson, gender: Gender, used: Set<string>): strin
   return pickOne(ALL_AVATAR_POOL)
 }
 
-/** 正文中不出现「玩家」，统一为「你」（修正模型偶发用词） */
+/** 正文中不出现「玩家」，统一为占位符「{{user}}」（修正模型偶发用词；注入会话时再展开为玩家身份名） */
 function noPlayerWord(s: string): string {
-  return String(s || '').replace(/玩家/g, '你')
+  return String(s || '').replace(/玩家/g, '{{user}}')
+}
+
+/** 世界书/bio 中指根档案主角：用 {{id:主角人设UUID}}，避免写死汉字姓名（split/join 规避正则特殊字符） */
+function scrubMainNameWithRootPlaceholder(text: string, mainName: string, mainId: string): string {
+  const mn = String(mainName ?? '').trim()
+  const mid = String(mainId ?? '').trim()
+  if (!mn || !mid || !text) return text
+  return text.split(mn).join(`{{id:${mid}}}`)
+}
+
+function scrubNpcAnchorsForMain(npc: AiNpcJson, main: Character): AiNpcJson {
+  const mn = String(main.name ?? '').trim()
+  const mid = String(main.id ?? '').trim()
+  if (!mn || !mid) return npc
+  const fix = (s: string) => scrubMainNameWithRootPlaceholder(s, mn, mid)
+  const entries = (xs: { name: string; content: string }[]) =>
+    (xs || []).map((e) => ({ name: fix(e.name), content: fix(e.content) }))
+  return {
+    ...npc,
+    bio: fix(String(npc.bio || '')),
+    motto: fix(String(npc.motto || '').trim()),
+    basicSettingEntries: entries(npc.basicSettingEntries || []),
+    firstImpressionEntries: entries(npc.firstImpressionEntries || []),
+  }
 }
 
 function normalizeRelationPerspective(fromName: string, toName: string, raw: unknown): string {
@@ -345,6 +369,9 @@ export async function generateNpcNetworkWithAi(
     .filter(Boolean)
     .join('\n\n')
 
+  /** 人脉 NPC 世界书中指「绑定根人设主角」须用的占位符（注入会话时替换为姓名） */
+  const mainRootPh = `{{id:${main.id}}}`
+
   const system = `你是中文小说向角色关系设计师。必须输出且仅输出一个合法 JSON 对象，不要 markdown，不要解释。
 JSON 顶层结构：{"npcs":[...],"relationships":[...],"playerLinks":[...]}。
 npcs 长度必须等于用户要求的数量。
@@ -360,10 +387,15 @@ npcs 长度必须等于用户要求的数量。
 - avatarCategory（必须从以下枚举中选择且只能选一个：["40岁以上长辈头像男","40岁以上长辈头像女","微信头像男E型阳光","微信头像女清冷和御姐","抽象搞笑男女通用","微信头像女可爱活泼"]）,
 - interests（字符串数组，恰好3个）, painPoints（字符串数组，恰好2个）,
 - mbti（四字母大写）,
-- bio（约100字中文第三人称简介）,
-- basicSettingEntries：数组，每项 {name, content}。必须覆盖并写清：固定人设、背景故事、该NPC与主角「${main.name}」的相识过程、该NPC与「你」（当前操作本项目的人）的相识过程（四个主题可分多条条目，不得遗漏后两项）。
-- firstImpressionEntries：数组，每项 {name, content}。对应世界书「当前对你的态度」（priority=聊天之后）。必须至少一条，且只能描述该 NPC 对「你」的当前态度。
-- 写法要求（强约束）：第三人称旁白式叙述（与基础设定条目一致）；指涉操作者时只用第二人称「你」，全文禁止出现「玩家」二字。禁止 NPC 第一人称台词、内心独白、书信体。
+- bio（约100字中文第三人称简介）：凡提及绑定档案主角（根人设），须用「${mainRootPh}」，**禁止**出现汉字姓名「${main.name}」。
+- basicSettingEntries：数组，每项 {name, content}。必须覆盖并写清：固定人设、背景故事、该 NPC（本人须用「{{char}}」，勿写该 NPC 在 JSON 里的真实姓名）、与绑定档案主角相识的过程（主角侧**必须**全程使用占位符「${mainRootPh}」，**严禁**写汉字姓名「${main.name}」）、该 NPC 与玩家身份（须用「{{user}}」；勿用「玩家」）的相识过程（四个主题可分多条条目，不得遗漏后两项）。
+- firstImpressionEntries：数组，每项 {name, content}。对应世界书「当前对你的态度」（尾声延展 / priority=after）。必须至少一条，且只能描述该 NPC 对「{{user}}」的当前态度；禁止写成对档案主角的态度（主角侧若须提及仍只用「${mainRootPh}」，勿写「${main.name}」）。指 NPC 本人用「{{char}}」。
+- 写法要求（强约束）：第三人称旁白式叙述（与基础设定条目一致）；指 NPC 本人一律用「{{char}}」，指绑定的玩家身份一律用「{{user}}」；凡提及绑定档案主角一律用「${mainRootPh}」，**禁止**写汉字姓名「${main.name}」。全文禁止「玩家」二字。禁止 NPC 第一人称台词、内心独白、书信体。
+
+NPC 人设异质性（最高优先级，与姓名铁律并列）：
+- **严禁**生成与档案主角「换个名字就算新人」的 NPC：禁止照搬或轻度改写主角的职业、简介、MBTI、兴趣爱好（三项）、身高体重组合给任一 NPC；每个 NPC 须在「职业定位 / 年龄阶段矛盾 / 叙事功能」上至少一项与主角**显著不同**。
+- 禁止把主角的世界书或简介改几个词当作 NPC 的 bio；禁止输出与主角人设高度重合的「平行主角」式 NPC。
+- 自检：若某 NPC 与主角档案重叠度过高，须重写该 NPC 直至合格再输出 JSON。
 
 姓名铁律（最高优先级，必须严格遵守）：
 - 所有 NPC 的 name 必须是「真实姓名样式」，默认 2~4 个中文汉字（如：王静、陈默、林婉、赵明远）。
@@ -375,13 +407,13 @@ npcs 长度必须等于用户要求的数量。
 身高体重与座右铭要求（强约束）：
 - height：写成易读格式，优先用 cm（例："170cm"），允许 "1.70m" / "170厘米"；不要写区间；不要写过长解释。
 - weight：优先用 kg（例："55kg"），允许 "55公斤"；不要写区间；不要写过长解释。
-- motto：一句短准的人设准则，<=15 个汉字，避免空洞大词；禁止出现「玩家」二字，指操作者只用「你」。
-- 内容应概括当下关系体感，可含与主角「${main.name}」无关、仅与「你」相处状态有关的描述；自由发挥，不限定句式。可参考风格（禁止照搬）：第一次见面后就没怎么交流，感觉有点陌生；最近和你在冷战，感觉和你交流非常尴尬。
+- motto：一句短准的人设准则，<=15 个汉字，避免空洞大词；禁止「玩家」。尽量不写具体姓名；若须指本人可用「{{char}}」但总长仍须 <=15 汉字（占位符按字面计字需谨慎，优先不用占位符的抽象句）。
+- 内容应概括当下关系体感，可含与「${mainRootPh}」无关、仅与「{{user}}」相处状态有关的描述；自由发挥，不限定句式。可参考风格（禁止照搬）：第一次见面后就没怎么交流，感觉有点陌生；最近和 {{user}} 在冷战，感觉交流非常尴尬。
 
 你与主角区分（强约束，禁止混写）：
-- 「主角」= 角色「${main.name}」；操作者一律在正文里写作「你」，不得写「玩家」。
-- firstImpressionEntries 里禁止写成 NPC 对主角「${main.name}」的态度，必须写对「你」的态度。
-- basicSettingEntries 中「与主角相识」与「与你相识」须分开写、不可互相替代。
+- 绑定档案主角在世界书/bio/motto 的正文中一律用「${mainRootPh}」，不得写汉字姓名「${main.name}」。操作者/玩家在正文里一律写作「{{user}}」，不得写「玩家」。
+- firstImpressionEntries 里禁止写成 NPC 对档案主角的态度，必须写对「{{user}}」的态度。
+- basicSettingEntries 中「与档案主角相识」与「与 {{user}} 相识」须分开写、不可互相替代。
 
 每个 relationships 对象：
 - fromName, toName（必须是主角「${main.name}」或某个 npc 的 name，精确匹配）,
@@ -415,9 +447,10 @@ playerLinks 数组（必填）：只描述「图中每一名角色（主角与 N
 
 还需包含 NPC 之间合理间接关系（朋友的朋友等），保证全员与主角人设、世界书逻辑自洽。
 
-世界书条目行末若带有「本条代词」括注，必须按括注解读正文里的「我/你/他」，再推断职务、情感线与「主角 vs 操作者」；禁止忽略括注把「我」一律当成主角「${main.name}」。`
+世界书条目行末若带有「本条代词」括注，必须按括注解读正文里的「我/你/他」，再推断职务、情感线与「档案主角 vs 操作者」；禁止忽略括注把「我」一律当成「${mainRootPh}」所指的档案主角。`
 
   const user = `【主角人设】
+（NPC 世界书/bio 中指该主角须写占位符「${mainRootPh}」，勿写姓名汉字）
 姓名：${main.name}
 性别：${genderLabelZh(main.gender)}
 年龄：${main.age != null && Number.isFinite(main.age) ? `${main.age}岁` : '未知'}
@@ -455,7 +488,7 @@ ${input.playerIdentity?.worldBooks?.length ? `所有世界书条目：${(() => {
         const items = (w?.items || []).map((it) => {
           const itName = String(it?.name || '未命名条目')
           const itEnabled = it?.enabled ? '开启' : '关闭'
-          const pr = it?.priority === 'after' ? '聊天之后' : '聊天之前'
+          const pr = it?.priority === 'after' ? '尾声延展' : '序言介入'
           const keywords = String(it?.keywords || '')
           const content = String(it?.content || '')
           const ann =
@@ -496,7 +529,7 @@ ${input.playerIdentity?.worldBooks?.length ? `所有世界书条目：${(() => {
     // 同批生成内按姓名去重，避免重复卡片。
     if (seenNpcNameKeys.has(npcNameKey)) continue
     seenNpcNameKeys.add(npcNameKey)
-    const ch = characterFromAiNpc(n, main, usedAvatarUrls)
+    const ch = characterFromAiNpc(scrubNpcAnchorsForMain(n as AiNpcJson, main), main, usedAvatarUrls)
     characters.push(ch)
     nameToCharacter.set(ch.name, ch)
   }
