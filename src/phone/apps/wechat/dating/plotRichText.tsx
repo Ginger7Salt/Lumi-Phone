@@ -6,12 +6,17 @@ const QR = '\u201D'
 /** 内心 OS：浅灰字，无衬底、无描边 */
 const osCls = 'text-[15px] font-normal italic leading-[1.75] text-[#b8b8bc]'
 
+/** 对白：字重与色相与旁白区分；源码中的半角直引号在 UI 上显示为弯引号 “…” */
+const dialogueCls =
+  'inline not-italic font-medium text-[#141418] tracking-[0.015em] [font-feature-settings:\"liga\"_1,\"kern\"_1]'
+
 type Match = { end: number; node: ReactNode }
 
 /**
  * 三种语义：**内心**、对白（「」/弯引号/英文引号）、其余为旁白。
  * 对白与旁白同一视觉流：**不**再加灰底方框（旧版曾用卡片式台词块）。
- * 优先级：** → * → 「」 → “” → ""
+ * 优先级：** → * → 「」 → “” → 半角 ""
+ * 半角直引号对白在展示层映射为弯引号并套用 dialogueCls。
  */
 export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
   if (!s) return []
@@ -76,9 +81,9 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
     return {
       end: end + 1,
       node: (
-        <Fragment key={k}>
+        <span key={k} className={dialogueCls}>
           「{parsePlotRichText(inner, depth + 1)}」
-        </Fragment>
+        </span>
       ),
     }
   }
@@ -92,11 +97,11 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
     return {
       end: end + 1,
       node: (
-        <Fragment key={k}>
+        <span key={k} className={dialogueCls}>
           {QL}
           {parsePlotRichText(inner, depth + 1)}
           {QR}
-        </Fragment>
+        </span>
       ),
     }
   }
@@ -110,11 +115,11 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
     return {
       end: end + 1,
       node: (
-        <Fragment key={k}>
-          {'"'}
+        <span key={k} className={dialogueCls}>
+          {QL}
           {parsePlotRichText(inner, depth + 1)}
-          {'"'}
-        </Fragment>
+          {QR}
+        </span>
       ),
     }
   }
