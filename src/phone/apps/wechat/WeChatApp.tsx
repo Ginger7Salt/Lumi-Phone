@@ -3860,7 +3860,6 @@ function WeChatAppInner({ onBack }: Props) {
           ch?.name ||
           (r.characterId === WECHAT_LUMI_PEER_CHARACTER_ID ? 'Lumi' : '对方')
         const avatar = ch?.avatarUrl?.trim() || (r.characterId === WECHAT_LUMI_PEER_CHARACTER_ID ? lumiWechatAvatarUrl : '')
-        const sessionPid = resolvePrivateChatSessionPlayerIdentityId(ch, playerIdentityId)
         const convKey = resolvePrivateWeChatConversationKey(r.characterId, ch, playerIdentityId)
         const unreadCount = await personaDb.countUnreadWeChatCharacterMessages(convKey)
         const msgs = await personaDb.listWeChatChatMessagesRecent({ conversationKey: convKey, limit: 200 })
