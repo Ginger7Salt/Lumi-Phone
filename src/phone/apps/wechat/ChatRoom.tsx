@@ -1330,6 +1330,8 @@ function compareChatMsgByRevealOrder(a: ChatMsg, b: ChatMsg): number {
 
 /** 对方消息异步露出队列任务（延迟后并入 `items` 并落库） */
 type OpponentRevealJob = {
+  /** 入队时所属会话；与 {@link conversationKeyLiveRef} 不一致时只落库、不并入当前聊天列表 */
+  forConversationKey: string
   msg: ChatMsg
   /** 在并入列表与 `persist` 之前执行（如：先 accept 转账，再展示接收方卡，以便与发送方「已收款」UI 同步） */
   beforeReveal?: () => void
@@ -2249,9 +2251,23 @@ export function ChatRoom({
   )
 
   const mergeOtherIncomingForRoom = useCallback(
-    (prev: ChatItem[], incoming: ChatMsg) =>
-      filterGroupChatItemsHideModeratorOnlyBubbles(mergeIncomingMessage(prev, incoming), roomType, null),
-    [roomType, mergeIncomingMessage],
+    (prev: ChatItem[], incoming: ChatMsg) => {
+      if (roomType === 'private' && !useLumiProjectAssistantPrompt) {
+        const peer = (personaCharacterId?.trim() || conversationCharacterId.trim()) || ''
+        const sid = incoming.senderCharacterId?.trim()
+        if (
+          peer &&
+          sid &&
+          sid !== peer &&
+          sid !== WECHAT_GROUP_BOT_CHARACTER_ID &&
+          sid !== WECHAT_LUMI_PEER_CHARACTER_ID
+        ) {
+          return prev
+        }
+      }
+      return filterGroupChatItemsHideModeratorOnlyBubbles(mergeIncomingMessage(prev, incoming), roomType, null)
+    },
+    [conversationCharacterId, mergeIncomingMessage, personaCharacterId, roomType, useLumiProjectAssistantPrompt],
   )
 
   const appendSystemNote = useCallback(
@@ -2298,6 +2314,7 @@ export function ChatRoom({
         status: 'sent',
       }
       return {
+        forConversationKey: conversationKey,
         msg: stripMsg,
         persist: () => {
           void (async () => {
@@ -2372,6 +2389,7 @@ export function ChatRoom({
         transfer: { transferId: tid },
       }
       return {
+        forConversationKey: conversationKey,
         msg: ackMsg,
         opponentRevealFlushSync: true,
         beforeReveal: () => {
@@ -2427,6 +2445,7 @@ export function ChatRoom({
         status: 'sent',
       }
       return {
+        forConversationKey: conversationKey,
         msg: stripMsg,
         persist: () => {
           void (async () => {
@@ -2484,6 +2503,7 @@ export function ChatRoom({
         transfer: { transferId: tid },
       }
       return {
+        forConversationKey: conversationKey,
         msg: ackMsg,
         persist: () => {
           void (async () => {
@@ -2918,10 +2938,28 @@ export function ChatRoom({
   const hydrateMessagesRef = useRef(hydrateMessages)
   hydrateMessagesRef.current = hydrateMessages
 
+  const opponentRevealTimerRef = useRef<number | null>(null)
+  const cancelOpponentRevealTimer = useCallback(() => {
+    if (opponentRevealTimerRef.current != null) {
+      window.clearTimeout(opponentRevealTimerRef.current)
+      opponentRevealTimerRef.current = null
+    }
+  }, [])
+
   /** 须早于依赖它的 storage 监听；与 {@link flushAiReplies} 共用 */
   const flushAiRepliesBusyRef = useRef(false)
   const storageHydrateDebounceRef = useRef<number | null>(null)
   const storageGroupSyncDebounceRef = useRef<number | null>(null)
+
+  const [typingVisible, setTypingVisibleState] = useState(false)
+  const [typingFooterInterrupt, setTypingFooterInterrupt] = useState(false)
+  const setTypingVisible = useCallback(
+    (v: boolean) => {
+      persistChatAwaitingAiTyping(conversationKey, v)
+      setTypingVisibleState(v)
+    },
+    [conversationKey],
+  )
 
   useEffect(() => {
     if (storageHydrateDebounceRef.current != null) {
@@ -2940,10 +2978,17 @@ export function ChatRoom({
      * 切换会话必须先清空内存列表：hydrate 会把 itemsRef 里「DB 尚无 id」的气泡与本轮 DB 结果合并（同会话乐观更新）。
      * 若不置空，从群聊切到私聊时上一屏群消息仍留在 ref 中，会被误并进私聊列表（串会话）。
      */
+    opponentQueueStopRef.current = true
+    pendingAiRepliesRef.current = 0
+    setAwaitingAiKick(false)
+    setTypingVisible(false)
+    onOpponentRevealQueueActiveRef.current?.(false)
+    cancelOpponentRevealTimer()
+    setPendingQueue([])
     setItems([])
     itemsRef.current = []
     void hydrateMessagesRef.current(true)
-  }, [conversationKey])
+  }, [conversationKey, cancelOpponentRevealTimer, setTypingVisible])
 
   useEffect(() => {
     const id = scrollToMessageId?.trim()
@@ -3527,16 +3572,6 @@ export function ChatRoom({
     })
   }, [])
 
-  const [typingVisible, setTypingVisibleState] = useState(false)
-  const [typingFooterInterrupt, setTypingFooterInterrupt] = useState(false)
-  const setTypingVisible = useCallback(
-    (v: boolean) => {
-      persistChatAwaitingAiTyping(conversationKey, v)
-      setTypingVisibleState(v)
-    },
-    [conversationKey],
-  )
-
   useEffect(() => {
     onOtherTypingChange?.(typingVisible)
   }, [typingVisible, onOtherTypingChange])
@@ -3564,12 +3599,37 @@ export function ChatRoom({
   }, [items, conversationKey, setTypingVisible])
 
   const opponentRevealJobsRef = useRef<OpponentRevealJob[]>([])
-  const opponentRevealTimerRef = useRef<number | null>(null)
   const [pendingQueue, setPendingQueue] = useState<ChatMsg[]>([])
 
-  const syncPendingQueueFromRef = useCallback(() => {
-    setPendingQueue(opponentRevealJobsRef.current.map((j) => j.msg))
+  const persistOpponentRevealJobOnly = useCallback((j: OpponentRevealJob) => {
+    try {
+      j.beforeReveal?.()
+    } catch {
+      /* ignore */
+    }
+    try {
+      j.persist()
+    } catch {
+      /* ignore */
+    }
+    try {
+      j.afterReveal?.()
+    } catch {
+      /* ignore */
+    }
   }, [])
+
+  const isOpponentRevealJobForLiveConversation = useCallback((j: OpponentRevealJob) => {
+    const live = conversationKeyLiveRef.current.trim()
+    const jobKey = j.forConversationKey.trim()
+    return !!live && !!jobKey && live === jobKey
+  }, [])
+
+  const syncPendingQueueFromRef = useCallback(() => {
+    setPendingQueue(
+      opponentRevealJobsRef.current.filter(isOpponentRevealJobForLiveConversation).map((j) => j.msg),
+    )
+  }, [isOpponentRevealJobForLiveConversation])
 
   /**
    * 入队前统一写死本条批次的 timestamp：须与 merge 后出现在列表里的顺序一致，
@@ -3597,28 +3657,24 @@ export function ChatRoom({
     return jobs
   }, [extractMessages, getCurrentTimeMs])
 
-  const cancelOpponentRevealTimer = useCallback(() => {
-    if (opponentRevealTimerRef.current != null) {
-      window.clearTimeout(opponentRevealTimerRef.current)
-      opponentRevealTimerRef.current = null
-    }
-  }, [])
-
   /** 用户插话等：立刻露出剩余队列，避免与新一轮发送打架 */
   const flushOpponentRevealQueueImmediate = useCallback(() => {
     cancelOpponentRevealTimer()
     const jobs = opponentRevealJobsRef.current.splice(0)
     if (jobs.length === 0) return
     setPendingQueue([])
-    const needsFlushTransferEmit = jobs.some((j) => j.opponentRevealFlushSync)
+    const live = conversationKeyLiveRef.current.trim()
+    const forUi = jobs.filter((j) => j.forConversationKey.trim() === live)
+    const stale = jobs.filter((j) => j.forConversationKey.trim() !== live)
+    for (const j of stale) persistOpponentRevealJobOnly(j)
+    if (forUi.length === 0) {
+      onOpponentRevealQueueActive?.(false)
+      return
+    }
+    const needsFlushTransferEmit = forUi.some((j) => j.opponentRevealFlushSync)
     const mergeAll = (prev: ChatItem[]) => {
       let next = prev
-      for (const j of jobs) {
-        try {
-          j.beforeReveal?.()
-        } catch {
-          /* ignore */
-        }
+      for (const j of forUi) {
         next = mergeOtherIncomingForRoom(next, { ...j.msg, otherAnimated: true })
       }
       itemsRef.current = next
@@ -3632,14 +3688,7 @@ export function ChatRoom({
     } else {
       setItems((prev) => mergeAll(prev))
     }
-    for (const j of jobs) {
-      try {
-        j.persist()
-      } catch {
-        /* ignore */
-      }
-      j.afterReveal?.()
-    }
+    for (const j of forUi) persistOpponentRevealJobOnly(j)
     scrollToBottomSmooth()
     persistTypingInterruptRecover(conversationKey, false)
     onOpponentRevealQueueActive?.(false)
@@ -3647,6 +3696,7 @@ export function ChatRoom({
     cancelOpponentRevealTimer,
     conversationKey,
     mergeOtherIncomingForRoom,
+    persistOpponentRevealJobOnly,
     scrollToBottomSmooth,
     onOpponentRevealQueueActive,
   ])
@@ -3668,7 +3718,14 @@ export function ChatRoom({
           run()
           return
         }
-        setPendingQueue(opponentRevealJobsRef.current.map((j) => j.msg))
+        if (!isOpponentRevealJobForLiveConversation(job)) {
+          persistOpponentRevealJobOnly(job)
+          run()
+          return
+        }
+        setPendingQueue(
+          opponentRevealJobsRef.current.filter(isOpponentRevealJobForLiveConversation).map((j) => j.msg),
+        )
         const incoming = { ...job.msg, otherAnimated: true }
         const el = scrollRef.current
         const atBottomNow = el ? isScrollNearBottom(el) : isAtBottomRef.current
@@ -3708,25 +3765,45 @@ export function ChatRoom({
         run()
       }, delay)
     }
-    if (opponentRevealJobsRef.current.length > 0) onOpponentRevealQueueActive?.(true)
+    if (opponentRevealJobsRef.current.some(isOpponentRevealJobForLiveConversation)) {
+      onOpponentRevealQueueActive?.(true)
+    }
     run()
-  }, [mergeOtherIncomingForRoom, scrollToBottomSmooth, onOpponentRevealQueueActive])
+  }, [
+    isOpponentRevealJobForLiveConversation,
+    mergeOtherIncomingForRoom,
+    persistOpponentRevealJobOnly,
+    scrollToBottomSmooth,
+    onOpponentRevealQueueActive,
+  ])
 
   const enqueueOpponentMessagesSequential = useCallback(
     (jobs: OpponentRevealJob[]) => {
       if (jobs.length === 0) return
+      const jobConvKey = conversationKey.trim()
+      const liveConvKey = conversationKeyLiveRef.current.trim()
+      const stamped: OpponentRevealJob[] = jobs.map((j) => ({
+        ...j,
+        forConversationKey: j.forConversationKey?.trim() || jobConvKey,
+      }))
+      if (!jobConvKey || jobConvKey !== liveConvKey) {
+        for (const j of stamped) persistOpponentRevealJobOnly(j)
+        return
+      }
       /** 模型已返回：顶栏「等 API」态结束；逐条露出阶段由 chatOpponentRevealPending 继续显示正在输入 */
       setTypingVisible(false)
-      assignSequentialOpponentRevealTimestamps(jobs)
-      opponentRevealJobsRef.current.push(...jobs)
+      assignSequentialOpponentRevealTimestamps(stamped)
+      opponentRevealJobsRef.current.push(...stamped)
       syncPendingQueueFromRef()
       onOpponentRevealQueueActive?.(true)
       kickOpponentRevealProcessor()
     },
     [
       assignSequentialOpponentRevealTimestamps,
+      conversationKey,
       kickOpponentRevealProcessor,
       onOpponentRevealQueueActive,
+      persistOpponentRevealJobOnly,
       setTypingVisible,
       syncPendingQueueFromRef,
     ],
@@ -4582,8 +4659,14 @@ export function ChatRoom({
       pendingAiRepliesRef.current = 1
     }
     const peerName = playerDisplayName.trim() || state.profile.displayName.trim() || '朋友'
+    const flushConversationKey = conversationKey.trim()
     try {
       while (pendingAiRepliesRef.current > 0) {
+        if (conversationKeyLiveRef.current.trim() !== flushConversationKey) {
+          pendingAiRepliesRef.current = 0
+          opponentQueueStopRef.current = true
+          break
+        }
         if (manualAiPauseRef.current) {
           pendingAiRepliesRef.current = 0
           break
@@ -5513,6 +5596,10 @@ export function ChatRoom({
 
         if (opponentQueueStopRef.current) continue
         if (aiRequestFailed) continue
+        if (conversationKeyLiveRef.current.trim() !== flushConversationKey) {
+          opponentQueueStopRef.current = true
+          continue
+        }
 
         let worldBookAfterUpdated = false
         let worldBookAfterAppliedPatchCount = 0
@@ -5811,6 +5898,7 @@ export function ChatRoom({
           } catch {
             /* ignore */
           }
+          if (conversationKeyLiveRef.current.trim() !== flushConversationKey) return
           setItems((prev) => {
             const next = mergeItemsWithGroupModerationFilter(prev, piece.ui)
             itemsRef.current = next
@@ -5919,6 +6007,7 @@ export function ChatRoom({
               let opponentJobs: OpponentRevealJob[] = newMsgs.map((m, j) => {
                 const p = plans[j]!
                 return {
+                  forConversationKey: conversationKey,
                   msg: m,
                   persist: () => {
                     void personaDb
@@ -5988,24 +6077,26 @@ export function ChatRoom({
               } catch (e) {
                 logger.log('error', `角色撤回落库失败 id=${lastId} err=${e instanceof Error ? e.message : String(e)}`)
               }
-              setItems((prev) => {
-                const next = rebuildWithCurrentTime(
-                  extractMessages(prev).map((msg) =>
-                    msg.id !== lastId
-                      ? msg
-                      : {
-                          ...msg,
-                          text: '',
-                          isRecalled: true,
-                          recalledBy: 'other',
-                          recallTimestamp: recalledAt,
-                          originalText: original,
-                        },
-                  ),
-                )
-                itemsRef.current = next
-                return next
-              })
+              if (conversationKeyLiveRef.current.trim() === flushConversationKey) {
+                setItems((prev) => {
+                  const next = rebuildWithCurrentTime(
+                    extractMessages(prev).map((msg) =>
+                      msg.id !== lastId
+                        ? msg
+                        : {
+                            ...msg,
+                            text: '',
+                            isRecalled: true,
+                            recalledBy: 'other',
+                            recallTimestamp: recalledAt,
+                            originalText: original,
+                          },
+                    ),
+                  )
+                  itemsRef.current = next
+                  return next
+                })
+              }
               setRecallAnimatingIds((prev) => {
                 const next = new Set(prev)
                 next.delete(lastId)
@@ -6055,6 +6146,7 @@ export function ChatRoom({
                   const queuedVoiceMuted = { ...uiVoice, otherAnimated: true as const }
                   enqueueOpponentMessagesSequential([
                     {
+                      forConversationKey: conversationKey,
                       msg: queuedVoiceMuted,
                       persist: () => {
                         void personaDb
@@ -6132,6 +6224,7 @@ export function ChatRoom({
                   : undefined
               let voiceJobs: OpponentRevealJob[] = [
                 {
+                  forConversationKey: conversationKey,
                   msg: incoming,
                   persist: () => {
                     void personaDb
@@ -6188,6 +6281,7 @@ export function ChatRoom({
                 const queuedTxtMuted = { ...uiTxt, otherAnimated: true as const }
                 enqueueOpponentMessagesSequential([
                   {
+                    forConversationKey: conversationKey,
                     msg: queuedTxtMuted,
                     persist: () => {
                       void personaDb
@@ -6317,6 +6411,7 @@ export function ChatRoom({
                 markEmittedThisRound(mid, ts, seg)
                 enqueueOpponentMessagesSequential([
                   {
+                    forConversationKey: conversationKey,
                     msg: incoming,
                     persist: () => {
                       void personaDb
@@ -6374,6 +6469,7 @@ export function ChatRoom({
                 markEmittedThisRound(mid, ts, seg)
                 enqueueOpponentMessagesSequential([
                   {
+                    forConversationKey: conversationKey,
                     msg: incoming,
                     persist: () => {
                       void personaDb
@@ -6456,6 +6552,7 @@ export function ChatRoom({
                     : undefined
                 enqueueOpponentMessagesSequential([
                   {
+                    forConversationKey: conversationKey,
                     msg: incomingSticker,
                     persist: () => {
                       void personaDb
@@ -6555,7 +6652,9 @@ export function ChatRoom({
                       if (ui) queuedUi.push({ ...ui, otherAnimated: true })
                     }
                     emitWeChatStorageChanged()
-                    enqueueOpponentMessagesSequential(queuedUi.map((msg) => ({ msg, persist: () => {} })))
+                    enqueueOpponentMessagesSequential(
+                      queuedUi.map((msg) => ({ forConversationKey: conversationKey, msg, persist: () => {} })),
+                    )
                   } catch {
                     /* ignore smart bot pipeline */
                   }
@@ -6597,6 +6696,7 @@ export function ChatRoom({
                 : undefined
             let plainJobs: OpponentRevealJob[] = [
               {
+                forConversationKey: conversationKey,
                 msg: incoming,
                 persist: () => {
                   void personaDb
@@ -6681,12 +6781,17 @@ export function ChatRoom({
     } finally {
       flushAiRepliesBusyRef.current = false
       setFlushUiBusy(false)
-      setTypingVisible(false)
-      aiCallingRef.current = pendingAiRepliesRef.current > 0
-      if (pendingAiRepliesRef.current > 0) {
+      const stillThisConversation = conversationKeyLiveRef.current.trim() === flushConversationKey
+      if (stillThisConversation) {
+        setTypingVisible(false)
+      }
+      aiCallingRef.current = stillThisConversation && pendingAiRepliesRef.current > 0
+      if (pendingAiRepliesRef.current > 0 && stillThisConversation) {
         queueMicrotask(() => {
           void flushAiReplies()
         })
+      } else if (!stillThisConversation) {
+        pendingAiRepliesRef.current = 0
       }
     }
   }, [

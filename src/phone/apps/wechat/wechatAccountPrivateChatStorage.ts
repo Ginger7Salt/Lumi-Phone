@@ -3,6 +3,7 @@ import { normalizeAccountsBundle, WECHAT_ACCOUNTS_BUNDLE_KV_KEY } from './wechat
 import { resolveAccountSessionIdentityId } from './wechatAccountPersistence'
 import {
   arePlayerIdentitiesBasicsEquivalent,
+  collectWechatAccountPlayerIdentityIds,
   getCharacterBoundPlayerIdentityId,
   isWechatAccountSessionSlotIdentityId,
 } from './wechatCharacterPlayerIdentity'
@@ -14,8 +15,10 @@ import {
   parseWechatAccountPrivateConversationKey,
   resolveGroupWeChatStorageConversationKey,
   resolvePrivateWeChatStorageConversationKey,
+  wechatAccountPrivateConversationKey,
   wechatConversationKey,
 } from './wechatConversationKey'
+import { resolveActivePrivateChatSessionPlayerIdentityId } from './wechatCharacterPlayerIdentity'
 
 const LEGACY_GROUP_CONV_PREFIX = 'wxgrp:'
 
@@ -163,6 +166,125 @@ async function legacyPrivateKeyOwnedByWechatAccount(
   return owner === acc
 }
 
+/** 同马甲、同角色：是否将另一 session 桶并入当前 pid（含老用户 wx-slot 与旧身份分裂桶）。 */
+async function shouldMergeOtherPrivateSessionIntoPid(
+  other: string,
+  pid: string,
+  wechatAccountId: string,
+  bound: string | null,
+  mergeBound: boolean,
+): Promise<boolean> {
+  if (!other || other === '__none__' || other === pid) return true
+  if (!!bound && other === bound && mergeBound) return true
+  const acc = wechatAccountId.trim()
+  if (!acc) return false
+  const owner = await resolveWechatAccountIdForSessionPlayerIdentity(other, acc)
+  if (owner !== acc) return false
+  if (isWechatAccountSessionSlotIdentityId(other)) return true
+  if (await mayMergeBoundSessionIntoPid(other, pid, acc)) return true
+  const pool = await collectWechatAccountPlayerIdentityIds(acc)
+  return pool.includes(other)
+}
+
+/** 列出本马甲 + 角色在库中可能出现的全部私聊 conversationKey（含旧格式，用于已读/恢复）。 */
+export async function listPrivateConversationKeysForAccountCharacter(params: {
+  wechatAccountId: string
+  characterId: string
+}): Promise<string[]> {
+  const acc = params.wechatAccountId.trim()
+  const cid = params.characterId.trim()
+  if (!acc || !cid) return []
+  const out = new Set<string>()
+  const keys = await personaDb.listDistinctWeChatConversationKeysFromMessages()
+  for (const raw of keys) {
+    const k = raw.trim()
+    if (!k) continue
+    const scoped = parseWechatAccountPrivateConversationKey(k)
+    if (scoped?.wechatAccountId === acc && scoped.characterId === cid) {
+      out.add(k)
+      continue
+    }
+    if (isWechatAccountPrivateConversationKey(k)) continue
+    const leg = parsePrivateWeChatConversationCharacterAndSession(k)
+    if (!leg || leg.characterId !== cid) continue
+    const owner = await resolveWechatAccountIdForSessionPlayerIdentity(leg.sessionPlayerId, acc)
+    if (owner === acc) out.add(k)
+  }
+  return [...out]
+}
+
+/**
+ * 进入聊天室后：合并分裂桶并把所有相关键标为已读（修复列表红点与聊天室键不一致）。
+ */
+export async function markPrivateChatConversationReadForAccountCharacter(params: {
+  wechatAccountId: string
+  characterId: string
+  appSessionPlayerIdentityId: string
+}): Promise<string> {
+  const acc = params.wechatAccountId.trim()
+  const cid = params.characterId.trim()
+  const pid = params.appSessionPlayerIdentityId.trim() || '__none__'
+  const canonical = acc
+    ? await ensureAccountScopedPrivateConversation({
+        wechatAccountId: acc,
+        characterId: cid,
+        appSessionPlayerIdentityId: pid,
+      })
+    : resolvePrivateWeChatStorageConversationKey(cid, null, pid)
+
+  const keys = await listPrivateConversationKeysForAccountCharacter({ wechatAccountId: acc, characterId: cid })
+  for (const k of keys) {
+    await personaDb.markWeChatConversationReadToLatest(k)
+  }
+  await personaDb.markWeChatConversationReadToLatest(canonical)
+  return canonical
+}
+
+/**
+ * 启动/切号时：把本马甲下因升级分裂到多个 session 桶的私聊史合并回 canonical（数据仍在 IndexedDB，可自动恢复）。
+ */
+export async function repairSplitPrivateChatHistoriesForWechatAccount(wechatAccountId: string): Promise<number> {
+  const acc = wechatAccountId.trim()
+  if (!acc) return 0
+  const bundle = normalizeAccountsBundle(await personaDb.getPhoneKv(WECHAT_ACCOUNTS_BUNDLE_KV_KEY))
+  const account = bundle?.accounts.find((a) => a.accountId === acc)
+  const appPid = account ? resolveAccountSessionIdentityId(account) : (await personaDb.getCurrentIdentityId()).trim()
+
+  const keys = await personaDb.listDistinctWeChatConversationKeysFromMessages()
+  const charIds = new Set<string>()
+  for (const raw of keys) {
+    const k = raw.trim()
+    if (!k) continue
+    const scoped = parseWechatAccountPrivateConversationKey(k)
+    if (scoped?.wechatAccountId === acc) {
+      charIds.add(scoped.characterId)
+      continue
+    }
+    if (isWechatAccountPrivateConversationKey(k)) continue
+    const leg = parsePrivateWeChatConversationCharacterAndSession(k)
+    if (!leg) continue
+    const owner = await resolveWechatAccountIdForSessionPlayerIdentity(leg.sessionPlayerId, acc)
+    if (owner === acc) charIds.add(leg.characterId)
+  }
+
+  let n = 0
+  for (const cid of charIds) {
+    if (!cid) continue
+    const sid = await resolveActivePrivateChatSessionPlayerIdentityId({
+      characterId: cid,
+      wechatAccountId: acc,
+      appPlayerIdentityId: appPid || '__none__',
+    })
+    await ensureAccountScopedPrivateConversation({
+      wechatAccountId: acc,
+      characterId: cid,
+      appSessionPlayerIdentityId: sid,
+    })
+    n += 1
+  }
+  return n
+}
+
 /** 将旧版（无马甲前缀 / 误用全局绑定身份）私聊会话迁入当前微信账号隔离键。 */
 export async function ensureAccountScopedPrivateConversation(params: {
   wechatAccountId: string
@@ -187,6 +309,23 @@ export async function ensureAccountScopedPrivateConversation(params: {
   if (bound && bound !== pid && mergeBound) {
     legacyKeys.add(wechatConversationKey(cid, bound))
   }
+  /** 老用户升级：转账/红包曾写入马甲槽位 id，而聊天室按 resolveActivePrivateChatSessionPlayerIdentityId 用旧身份读库 */
+  for (const sid of await collectWechatAccountPlayerIdentityIds(acc)) {
+    if (!sid || sid === '__none__' || sid === pid) continue
+    const owner = await resolveWechatAccountIdForSessionPlayerIdentity(sid, acc)
+    if (owner !== acc) continue
+    if (sid === bound && mergeBound) {
+      legacyKeys.add(wechatConversationKey(cid, sid))
+      continue
+    }
+    if (await mayMergeBoundSessionIntoPid(sid, pid, acc)) {
+      legacyKeys.add(wechatConversationKey(cid, sid))
+      continue
+    }
+    if (isWechatAccountSessionSlotIdentityId(sid)) {
+      legacyKeys.add(wechatConversationKey(cid, sid))
+    }
+  }
 
   for (const oldKey of legacyKeys) {
     if (isWechatAccountPrivateConversationKey(oldKey)) continue
@@ -198,18 +337,30 @@ export async function ensureAccountScopedPrivateConversation(params: {
     })
   }
 
-  // 同马甲、同角色：仅合并 __none__ 或未选身份残留；不同 linked 马甲会话键互不相并
   const scopedKeys = await personaDb.listDistinctWeChatConversationKeysFromMessages()
   for (const k of scopedKeys) {
     const parsed = parseWechatAccountPrivateConversationKey(k)
     if (!parsed || parsed.wechatAccountId !== acc || parsed.characterId !== cid) continue
     if (parsed.sessionPlayerId === pid) continue
-    const other = parsed.sessionPlayerId
-    const mergeOther =
-      other === '__none__' || (other === pid) || (!!bound && other === bound && mergeBound)
-    if (!mergeOther) continue
+    if (!(await shouldMergeOtherPrivateSessionIntoPid(parsed.sessionPlayerId, pid, acc, bound, mergeBound))) {
+      continue
+    }
     await personaDb.rekeyWeChatConversation({
       fromConversationKey: k,
+      toConversationKey: newKey,
+      sessionPlayerIdentityId: pid,
+    })
+  }
+
+  for (const sid of await collectWechatAccountPlayerIdentityIds(acc)) {
+    if (!sid || sid === '__none__') continue
+    const scoped = wechatAccountPrivateConversationKey(acc, cid, sid)
+    if (scoped === newKey) continue
+    const recent = await personaDb.listWeChatChatMessagesRecent({ conversationKey: scoped, limit: 1 })
+    if (!recent.length) continue
+    if (!(await shouldMergeOtherPrivateSessionIntoPid(sid, pid, acc, bound, mergeBound))) continue
+    await personaDb.rekeyWeChatConversation({
+      fromConversationKey: scoped,
       toConversationKey: newKey,
       sessionPlayerIdentityId: pid,
     })
@@ -348,6 +499,53 @@ export async function migrateAllLegacyWeChatConversationsToAccountScope(params: 
   }
 
   return total
+}
+
+/** 私聊落库键：与 ChatRoom 一致走马甲隔离，并顺带合并误入的旧格式键。 */
+export async function resolvePrivateChatMessageStorageKey(params: {
+  wechatAccountId: string | null | undefined
+  characterId: string
+  appSessionPlayerIdentityId: string
+}): Promise<string> {
+  const acc = params.wechatAccountId?.trim()
+  const cid = params.characterId.trim()
+  const pid = params.appSessionPlayerIdentityId.trim() || '__none__'
+  if (!cid) return wechatConversationKey('', pid)
+  if (acc) {
+    return ensureAccountScopedPrivateConversation({
+      wechatAccountId: acc,
+      characterId: cid,
+      appSessionPlayerIdentityId: pid,
+    })
+  }
+  return resolvePrivateWeChatStorageConversationKey(cid, null, pid)
+}
+
+/** 红包/转账/亲情卡等从聊天子页写入消息时的会话键（私聊 / 群聊）。 */
+export async function resolveWalletChatMessageStorageKey(params: {
+  wechatAccountId: string | null | undefined
+  groupId?: string | null
+  peerCharacterId: string
+  appSessionPlayerIdentityId: string
+}): Promise<string> {
+  const gid = params.groupId?.trim()
+  const pid = params.appSessionPlayerIdentityId.trim() || '__none__'
+  const acc = params.wechatAccountId?.trim()
+  if (gid) {
+    if (acc) {
+      return ensureAccountScopedGroupConversation({
+        wechatAccountId: acc,
+        groupId: gid,
+        appSessionPlayerIdentityId: pid,
+      })
+    }
+    return resolveGroupWeChatStorageConversationKey(gid, null, pid)
+  }
+  return resolvePrivateChatMessageStorageKey({
+    wechatAccountId: acc,
+    characterId: params.peerCharacterId.trim(),
+    appSessionPlayerIdentityId: pid,
+  })
 }
 
 export async function resolveAccountScopedPrivateConversationKey(params: {

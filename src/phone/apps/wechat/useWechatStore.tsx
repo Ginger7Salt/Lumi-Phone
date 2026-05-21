@@ -31,7 +31,10 @@ import {
   expandCanonicalIdSet,
   runLegacyGlobalCharacterCompatibilityMigration,
 } from './wechatGlobalCharacterRegistry'
-import { migrateAllLegacyWeChatConversationsToAccountScope } from './wechatAccountPrivateChatStorage'
+import {
+  migrateAllLegacyWeChatConversationsToAccountScope,
+  repairSplitPrivateChatHistoriesForWechatAccount,
+} from './wechatAccountPrivateChatStorage'
 import { alignAllStoredWorldBookUserPlaceholders } from './worldBookUserPlaceholderBindings'
 import { alignAllStoredMemoryUserPlaceholders } from './memoryUserPlaceholderBindings'
 import {
@@ -175,6 +178,7 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
           wechatAccountId: account.accountId,
           appSessionPlayerIdentityId: sessionId,
         })
+        await repairSplitPrivateChatHistoriesForWechatAccount(account.accountId)
       }
       if (opts?.bumpRevision) setAccountSwitchRevision((n) => n + 1)
     },

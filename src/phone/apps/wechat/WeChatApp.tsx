@@ -91,10 +91,11 @@ import {
 import {
   ensureAccountScopedGroupConversation,
   ensureAccountScopedPrivateConversation,
+  markPrivateChatConversationReadForAccountCharacter,
   resolveAccountScopedPrivateConversationKey,
+  resolveWalletChatMessageStorageKey,
 } from './wechatAccountPrivateChatStorage'
 import {
-  collectWechatAccountPlayerIdentityIds,
   linkCharacterPlayerIdentityFromAcceptedFriendRequest,
   listFriendRequestsForWechatAccount,
   resolveActivePrivateChatSessionPlayerIdentityId,
@@ -4086,33 +4087,21 @@ function WeChatAppInner({ onBack }: Props) {
       : wechatConversationKey(WECHAT_LUMI_PEER_CHARACTER_ID, pid)
     const lumiRowData = await buildOne(lumiKey, 'lumi', 'Lumi', lumiWechatAvatarUrl, WECHAT_LUMI_PEER_CHARACTER_ID)
 
-    const accountSessionIds = acc ? await collectWechatAccountPlayerIdentityIds(acc) : [pid]
     const personaRowsData = await Promise.all(
       state.wechatPersonaContacts.map(async (c) => {
-        let bestKey = acc
+        const sessionSid = await resolveActivePrivateChatSessionPlayerIdentityId({
+          characterId: c.characterId,
+          wechatAccountId: acc || null,
+          appPlayerIdentityId: pid,
+        })
+        const convKey = acc
           ? await ensureAccountScopedPrivateConversation({
               wechatAccountId: acc,
               characterId: c.characterId,
-              appSessionPlayerIdentityId: pid,
+              appSessionPlayerIdentityId: sessionSid,
             })
-          : resolvePrivateWeChatStorageConversationKey(c.characterId, null, pid)
-        let bestTs = 0
-        for (const sid of accountSessionIds) {
-          const k = acc
-            ? await ensureAccountScopedPrivateConversation({
-                wechatAccountId: acc,
-                characterId: c.characterId,
-                appSessionPlayerIdentityId: sid,
-              })
-            : resolvePrivateWeChatStorageConversationKey(c.characterId, null, sid)
-          const recent = await personaDb.listWeChatChatMessagesRecent({ conversationKey: k, limit: 1 })
-          const ts = recent[recent.length - 1]?.timestamp ?? 0
-          if (ts >= bestTs) {
-            bestTs = ts
-            bestKey = k
-          }
-        }
-        const row = await buildOne(bestKey, 'persona', c.remarkName, c.avatarUrl, c.characterId)
+          : resolvePrivateWeChatStorageConversationKey(c.characterId, null, sessionSid)
+        const row = await buildOne(convKey, 'persona', c.remarkName, c.avatarUrl, c.characterId)
         return row
       }),
     )
@@ -4202,15 +4191,22 @@ function WeChatAppInner({ onBack }: Props) {
       if (!cancelled) setActiveConversationKey(null)
       return
     }
+    if (layer.kind === 'persona' && chatRouteIdentityId === null) {
+      return
+    }
     void (async () => {
+      const sessionPid =
+        layer.kind === 'persona' && chatRouteIdentityId?.trim()
+          ? chatRouteIdentityId.trim()
+          : pid
       if (layer.kind === 'group') {
         const key = acc
           ? await ensureAccountScopedGroupConversation({
               wechatAccountId: acc,
               groupId: layer.groupId,
-              appSessionPlayerIdentityId: pid,
+              appSessionPlayerIdentityId: sessionPid,
             })
-          : resolveGroupWeChatStorageConversationKey(layer.groupId, null, pid)
+          : resolveGroupWeChatStorageConversationKey(layer.groupId, null, sessionPid)
         if (!cancelled) setActiveConversationKey(key)
         return
       }
@@ -4218,15 +4214,15 @@ function WeChatAppInner({ onBack }: Props) {
         ? await ensureAccountScopedPrivateConversation({
             wechatAccountId: acc,
             characterId: activeConversationCharacterId,
-            appSessionPlayerIdentityId: pid,
+            appSessionPlayerIdentityId: sessionPid,
           })
-        : resolvePrivateWeChatStorageConversationKey(activeConversationCharacterId, null, pid)
+        : resolvePrivateWeChatStorageConversationKey(activeConversationCharacterId, null, sessionPid)
       if (!cancelled) setActiveConversationKey(key)
     })()
     return () => {
       cancelled = true
     }
-  }, [wxDockChat, currentAccountId, playerIdentityId, activeConversationCharacterId])
+  }, [wxDockChat, currentAccountId, playerIdentityId, chatRouteIdentityId, activeConversationCharacterId])
 
   // 转发：选择聊天页当前待转发消息（单条/多条）
   const [forwardPendingMessages, setForwardPendingMessages] = useState<WeChatChatMessage[] | null>(null)
@@ -4498,11 +4494,42 @@ function WeChatAppInner({ onBack }: Props) {
       chatMarkOnceForConvKeyRef.current = null
       return
     }
-    if (!activeConversationKey) return
-    if (chatMarkOnceForConvKeyRef.current === activeConversationKey) return
-    chatMarkOnceForConvKeyRef.current = activeConversationKey
-    void personaDb.markWeChatConversationReadToLatest(activeConversationKey).then(() => refreshMessageThreadsMeta())
-  }, [route.name, activeConversationKey, refreshMessageThreadsMeta])
+    if (!activeConversationKey || !activeConversationCharacterId) return
+    const layer = wxDockChat
+    if (layer?.kind === 'persona' && chatRouteIdentityId === null) return
+    if (!layer || layer.kind === 'group') {
+      if (chatMarkOnceForConvKeyRef.current === activeConversationKey) return
+      chatMarkOnceForConvKeyRef.current = activeConversationKey
+      void personaDb.markWeChatConversationReadToLatest(activeConversationKey).then(() => refreshMessageThreadsMeta())
+      return
+    }
+    const acc = currentAccountId?.trim()
+    const sessionPid = (chatRouteIdentityId ?? playerIdentityId ?? '__none__').trim()
+    const markKey = `${activeConversationKey}::${sessionPid}`
+    if (chatMarkOnceForConvKeyRef.current === markKey) return
+    chatMarkOnceForConvKeyRef.current = markKey
+    void (async () => {
+      if (acc && layer.kind === 'persona') {
+        await markPrivateChatConversationReadForAccountCharacter({
+          wechatAccountId: acc,
+          characterId: activeConversationCharacterId,
+          appSessionPlayerIdentityId: sessionPid,
+        })
+      } else {
+        await personaDb.markWeChatConversationReadToLatest(activeConversationKey)
+      }
+      await refreshMessageThreadsMeta()
+    })()
+  }, [
+    route.name,
+    activeConversationKey,
+    activeConversationCharacterId,
+    currentAccountId,
+    wxDockChat,
+    chatRouteIdentityId,
+    playerIdentityId,
+    refreshMessageThreadsMeta,
+  ])
 
   const messagesTabUnreadTotal = useMemo(
     () =>
@@ -5754,7 +5781,8 @@ function WeChatAppInner({ onBack }: Props) {
             />
           ) : route.name === 'affection-pay' ? (
             <motion.div key="affection-pay" className="flex min-h-0 flex-1 flex-col" {...pageProps}>
-              {playerIdentityId === null ? (
+              {playerIdentityId === null ||
+              (route.chat.kind === 'persona' && chatRouteIdentityId === null) ? (
                 <div className="flex flex-1 items-center justify-center px-4 text-[14px]" style={{ color: 'var(--wx-text-muted)' }}>
                   正在加载…
                 </div>
@@ -5765,17 +5793,25 @@ function WeChatAppInner({ onBack }: Props) {
                   onBack={() => setRoute({ name: 'chat', chat: route.chat })}
                   onPaid={async ({ amountYuan, giverName, title }) => {
                     const cid = wxWalletPeerCharacterId(route.chat)
+                    const sessionPid =
+                      route.chat.kind === 'persona' ? chatRouteIdentityId! : playerIdentityId!
                     const ts = getCurrentTimeMs()
                     const msgId = `wx-aff-${ts}-${Math.random().toString(36).slice(2, 7)}`
+                    const conversationKey = await resolveWalletChatMessageStorageKey({
+                      wechatAccountId: currentAccountId,
+                      groupId: route.chat.kind === 'group' ? route.chat.groupId : null,
+                      peerCharacterId: cid,
+                      appSessionPlayerIdentityId: sessionPid,
+                    })
                     await personaDb.appendWeChatChatMessage({
                       id: msgId,
                       characterId: cid,
-                      playerIdentityId,
+                      playerIdentityId: sessionPid,
                       type: 'player',
                       content: `${title}（由亲情卡支付 · ${giverName}） -${amountYuan.toFixed(2)}`,
                       timestamp: ts,
                       isRead: true,
-                      conversationKey: wechatConversationKey(cid, playerIdentityId),
+                      conversationKey,
                     })
                     emitWeChatStorageChanged()
                   }}
@@ -5784,7 +5820,8 @@ function WeChatAppInner({ onBack }: Props) {
             </motion.div>
           ) : route.name === 'red-packet-send' ? (
             <motion.div key="red-packet-send" className="flex min-h-0 flex-1 flex-col" {...pageProps}>
-              {playerIdentityId === null ? (
+              {playerIdentityId === null ||
+              (route.chat.kind === 'persona' && chatRouteIdentityId === null) ? (
                 <div
                   className="flex flex-1 items-center justify-center px-4 text-[14px]"
                   style={{ color: 'var(--wx-text-muted)' }}
@@ -5799,20 +5836,28 @@ function WeChatAppInner({ onBack }: Props) {
                   onBack={() => setRoute({ name: 'chat', chat: route.chat })}
                   onPaidSend={async (payload) => {
                     const cid = wxWalletPeerCharacterId(route.chat)
+                    const sessionPid =
+                      route.chat.kind === 'persona' ? chatRouteIdentityId! : playerIdentityId!
                     const ts = getCurrentTimeMs()
                     const peerName = redPacketPeer?.remarkName?.trim() || '对方'
                     const remark = payload.remark.trim() || 'Best Wishes'
                     const ok = walletSpend(payload.amountYuan, `发红包给${peerName} · ${remark}`)
                     if (!ok) throw new Error('余额不足，支付失败')
+                    const conversationKey = await resolveWalletChatMessageStorageKey({
+                      wechatAccountId: currentAccountId,
+                      groupId: route.chat.kind === 'group' ? route.chat.groupId : null,
+                      peerCharacterId: cid,
+                      appSessionPlayerIdentityId: sessionPid,
+                    })
                     await personaDb.appendWeChatChatMessage({
                       id: payload.packetId,
                       characterId: cid,
-                      playerIdentityId,
+                      playerIdentityId: sessionPid,
                       type: 'player',
                       content: `[红包] ${payload.remark}`,
                       timestamp: ts,
                       isRead: true,
-                      conversationKey: wechatConversationKey(cid, playerIdentityId),
+                      conversationKey,
                       redPacket: {
                         packetId: payload.packetId,
                         amountYuan: payload.amountYuan,
@@ -5827,7 +5872,8 @@ function WeChatAppInner({ onBack }: Props) {
             </motion.div>
           ) : route.name === 'lumi-transfer' ? (
             <motion.div key="lumi-transfer" className="flex min-h-0 flex-1 flex-col" {...pageProps}>
-              {playerIdentityId === null ? (
+              {playerIdentityId === null ||
+              (route.chat.kind === 'persona' && chatRouteIdentityId === null) ? (
                 <div
                   className="flex flex-1 items-center justify-center px-4 text-[14px]"
                   style={{ color: 'var(--wx-text-muted)' }}
@@ -5842,9 +5888,16 @@ function WeChatAppInner({ onBack }: Props) {
                   onBack={() => setRoute({ name: 'chat', chat: route.chat })}
                   onPaidTransfer={async (payload) => {
                     const cid = wxWalletPeerCharacterId(route.chat)
+                    const sessionPid =
+                      route.chat.kind === 'persona' ? chatRouteIdentityId! : playerIdentityId!
                     const ts = getCurrentTimeMs()
                     const expiresAt = ts + 24 * 60 * 60 * 1000
-                    const convKey = wechatConversationKey(cid, playerIdentityId)
+                    const convKey = await resolveWalletChatMessageStorageKey({
+                      wechatAccountId: currentAccountId,
+                      groupId: route.chat.kind === 'group' ? route.chat.groupId : null,
+                      peerCharacterId: cid,
+                      appSessionPlayerIdentityId: sessionPid,
+                    })
                     const peerName = lumiTransferPeer?.remarkName?.trim() || '对方'
                     const remark = payload.remark.trim()
                     const ok = walletSpend(payload.amountYuan, remark ? `转账给${peerName} · ${remark}` : `转账给${peerName}`)
@@ -5853,7 +5906,7 @@ function WeChatAppInner({ onBack }: Props) {
                       id: payload.transferId,
                       amount: payload.amountYuan,
                       remark: payload.remark,
-                      senderId: playerIdentityId,
+                      senderId: sessionPid,
                       receiverId: cid,
                       status: 'pending',
                       createdAt: ts,
@@ -5864,7 +5917,7 @@ function WeChatAppInner({ onBack }: Props) {
                     await personaDb.appendWeChatChatMessage({
                       id: payload.transferId,
                       characterId: cid,
-                      playerIdentityId,
+                      playerIdentityId: sessionPid,
                       type: 'player',
                       content: payload.remark?.trim() ? `[转账] ${payload.remark.trim()}` : '[转账]',
                       timestamp: ts,

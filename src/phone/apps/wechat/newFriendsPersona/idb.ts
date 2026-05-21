@@ -2035,21 +2035,30 @@ export class PersonaDb {
     db.close()
 
     if (hasConvSettings) {
-      const prev = await this.getChatConversationSettings(from)
-      if (prev) {
+      const fromSt = await this.getChatConversationSettings(from)
+      const toSt = await this.getChatConversationSettings(to)
+      if (fromSt || toSt) {
         const db2 = await openDb()
         const tx2 = db2.transaction(CHAT_CONV_SETTINGS_STORE, 'readwrite')
         const css = tx2.objectStore(CHAT_CONV_SETTINGS_STORE)
         css.delete(from)
-        css.put({
-          ...prev,
-          conversationKey: to,
-          playerIdentityId: pid,
-          updatedAt: Date.now(),
-        })
+        const base = { ...(toSt ?? fromSt)!, conversationKey: to, playerIdentityId: pid, updatedAt: Date.now() }
+        /** 分裂桶合并时勿把副桶的「仅 UI 隐藏」裁切带到主桶，避免历史像被删光 */
+        if (toSt?.uiOnlyHiddenBeforeTimestamp) {
+          base.uiOnlyHiddenBeforeTimestamp = toSt.uiOnlyHiddenBeforeTimestamp
+        } else {
+          delete base.uiOnlyHiddenBeforeTimestamp
+        }
+        css.put(base)
         await txDone(tx2)
         db2.close()
       }
+    }
+
+    const fromCursor = await this.getWechatReadCursor(from)
+    const toCursor = await this.getWechatReadCursor(to)
+    if (fromCursor > toCursor) {
+      await this.setWechatReadCursor(to, fromCursor)
     }
 
     emitWeChatStorageChanged()
