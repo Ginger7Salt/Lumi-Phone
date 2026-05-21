@@ -11,11 +11,13 @@ import { uid } from './utils'
 import { useWechatStore } from '../useWechatStore'
 import { loadAccountsBundle, resolveAccountSessionIdentityId } from '../wechatAccountPersistence'
 import {
+  resolveWorldBookUserBinding,
   resolveWorldBookUserInsertContext,
   type WorldBookUserInsertContext,
 } from '../charUserPlaceholders'
 import {
   alignCharacterWorldBookUserPlaceholders,
+  characterWorldBooksNeedUserPlaceholderAlignment,
   normalizeWorldBookItemUserPlaceholders,
   summarizeWorldBookUserPlaceholdersOnCharacter,
 } from '../worldBookUserPlaceholderBindings'
@@ -82,9 +84,12 @@ export function WorldBooksEditor({
         const row = bundle?.accounts.find((a) => a.accountId === acc)
         if (row) sessionPid = resolveAccountSessionIdentityId(row)
       }
+      const wbBinding = await resolveWorldBookUserBinding(character)
       const ctx = await resolveWorldBookUserInsertContext({
         wechatAccountId: acc,
-        playerIdentityId: sessionPid || character.playerIdentityId,
+        character,
+        playerIdentityId:
+          wbBinding?.playerIdentityId || character.playerIdentityId || sessionPid || undefined,
       })
       setWorldBookUserInsertContext(ctx)
     })()
@@ -135,6 +140,24 @@ export function WorldBooksEditor({
   }, [forPlayerIdentity, character.id, character.generatedForCharacterId])
 
   const worldBooks = character.worldBooks ?? []
+
+  const needsUserPlaceholderRepair = useMemo(
+    () => !forPlayerIdentity && characterWorldBooksNeedUserPlaceholderAlignment(character),
+    [forPlayerIdentity, character],
+  )
+
+  /** 老用户自动注册后绑定表可能仍指向 wx-slot；进入编辑器时静默写回具名身份。 */
+  useEffect(() => {
+    if (!needsUserPlaceholderRepair) return
+    let cancelled = false
+    void (async () => {
+      const next = await alignCharacterWorldBookUserPlaceholders(character)
+      if (!cancelled && next) onChange(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [needsUserPlaceholderRepair, character, onChange])
 
   const userPlaceholderSummary = useMemo(
     () => summarizeWorldBookUserPlaceholdersOnCharacter(character),

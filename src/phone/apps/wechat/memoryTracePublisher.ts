@@ -18,7 +18,10 @@ import {
   normalizeMemoryPromptLineScope,
   parseLineScopedUnsummarizedTextForTrace,
 } from './wechatMemoryLineScope'
-import { listUnsummarizedOfflinePlotTraceItems } from './dating/loadOfflineDatingPlotsForWechatPrompt'
+import {
+  listUnsummarizedOfflinePlotTraceItems,
+  stripOfflineDatingPlotsInjectHeaderForTraceDisplay,
+} from './dating/loadOfflineDatingPlotsForWechatPrompt'
 import type {
   MemoryTraceData,
   MemoryTraceWorldBookAfterChat,
@@ -36,7 +39,7 @@ import {
   buildCharacterCard,
   buildWorldBookTextForPrompt,
 } from './wechatChatAi'
-import { splitDatingAssistantOutput } from './dating/plotCoT'
+import { resolveDatingAssistantDisplayText } from './dating/plotCoT'
 
 /** 与 DatingStoryPage 一致：剔除漏出的 VN 语音 JSON 碎片行，避免进思维溯源 */
 function isLikelyVnVoiceParamsArtifactLine(rawLine: string): boolean {
@@ -340,6 +343,15 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
     fullSnippet: true,
     maxItems: 2000,
   })
+  const offlineCtxBody = stripOfflineDatingPlotsInjectHeaderForTraceDisplay(
+    params.offlineDatingPlotsContext,
+  )
+  const offlinePlotRows =
+    offlinePlots.length > 0
+      ? offlinePlots
+      : offlineCtxBody
+        ? [{ date: '—', snippet: offlineCtxBody }]
+        : []
 
   const unsChats: MemoryTraceData['contextMatrix']['recentContext']['unsummarizedChats'] = []
   const privateTraceBlocks = await buildPrivateUnsummarizedTraceBlocks({
@@ -384,14 +396,6 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
       snippet: params.recentGroupChatsReference.trim(),
     })
   }
-  if (params.offlineDatingPlotsContext.trim()) {
-    unsChats.push({
-      type: 'private',
-      source: '线下约会/剧情 · 注入摘录',
-      snippet: params.offlineDatingPlotsContext.trim(),
-    })
-  }
-
   const lastReply = lastNonEmptyBubbleText(params.replyBubbles)
 
   const chatAfterProtocol = hasChatAfterWorldBookItems(params.character)
@@ -425,7 +429,7 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
       },
       recentContext: {
         activeSessionMessages: activeSessionMessageCount(params.transcript),
-        unsummarizedOfflinePlots: offlinePlots.length ? offlinePlots : [],
+        unsummarizedOfflinePlots: offlinePlotRows,
         unsummarizedChats: unsChats,
       },
       deepMemory: {
@@ -495,11 +499,14 @@ export async function publishWeChatGroupMemoryTrace(params: {
       snippet: params.groupUnsummarizedNotes.trim(),
     })
   }
-  if (params.offlinePlotsCombined.trim()) {
+  const offlineCombinedBody = stripOfflineDatingPlotsInjectHeaderForTraceDisplay(
+    params.offlinePlotsCombined,
+  )
+  if (offlineCombinedBody) {
     unsChats.push({
       type: 'group',
       source: '线下剧情摘录（多成员合并）',
-      snippet: params.offlinePlotsCombined.trim(),
+      snippet: offlineCombinedBody,
     })
   }
 
@@ -603,8 +610,8 @@ export async function publishDatingOfflineMemoryTrace(params: {
     unsChats.push({ type: 'group', source: '尚未总结 · 群聊', snippet: params.unsGroupBlock.trim() })
   }
 
-  const body = splitDatingAssistantOutput(params.rawAssistantOutput).content
-  const lastReply = stripDatingVnVoiceParamsForMemoryTrace(body).trim()
+  const { displayBody } = resolveDatingAssistantDisplayText(params.rawAssistantOutput)
+  const lastReply = stripDatingVnVoiceParamsForMemoryTrace(displayBody).trim()
 
   const data: MemoryTraceData = {
     lastReply: lastReply || '（本轮无正文）',
@@ -623,9 +630,12 @@ export async function publishDatingOfflineMemoryTrace(params: {
         activeSessionMessages: Math.min(Math.max(0, params.historyPlotCount), 32),
         unsummarizedOfflinePlots: offlinePlots.length
           ? offlinePlots
-          : params.unsOfflineBlock.trim()
-            ? [{ date: '—', snippet: params.unsOfflineBlock.trim() }]
-            : [],
+          : (() => {
+              const plain =
+                stripOfflineDatingPlotsInjectHeaderForTraceDisplay(params.unsOfflineBlock) ||
+                params.unsOfflineBlock.trim()
+              return plain ? [{ date: '—', snippet: plain }] : []
+            })(),
         unsummarizedChats: unsChats,
       },
       deepMemory: {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { WeChatContactRow } from '../../../../components/WeChatContactsInstagram'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterMemory } from '../newFriendsPersona/types'
@@ -66,13 +66,14 @@ export function MemoryArchivePanel({
   const [tutorialOpen, setTutorialOpen] = useState(false)
   const [coachOpen, setCoachOpen] = useState(false)
   const [coachStepIndex, setCoachStepIndex] = useState(0)
+  /** 仅首次进入当前微信账号时按主/副号设默认身份源；刷新列表勿覆盖用户已选 Tab */
+  const sourceBootstrappedForAccountRef = useRef<string | null>(null)
 
-  const reload = useCallback(async () => {
-    setLoading(true)
+  const reload = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true)
     try {
-      const [memories, bundle, groups, chars] = await Promise.all([
+      const [memories, groups, chars] = await Promise.all([
         personaDb.listAllCharacterMemories(),
-        loadAccountsBundle(),
         personaDb.listGroupChats(),
         personaDb.listCharacters(),
       ])
@@ -96,6 +97,7 @@ export function MemoryArchivePanel({
       gOpts.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'))
       setGroupOptions(gOpts)
 
+      const bundle = await loadAccountsBundle()
       const lookup = buildMemoryArchiveLookup(contacts, charNameById, groupNameById, bundle)
       const rawMap = new Map<string, CharacterMemory>()
       const entries: MemoryEntry[] = []
@@ -126,17 +128,26 @@ export function MemoryArchivePanel({
       entries.sort((a, b) => b.timestamp - a.timestamp)
       setRawById(rawMap)
       setAllEntries(entries)
-
-      const acc = currentWechatAccountId?.trim()
-      if (acc && bundle) {
-        setSource(
-          isSecondaryWechatAccountInBundle(bundle, acc) ? 'sub_wechat' : 'main_wechat',
-        )
-      }
     } finally {
       setLoading(false)
     }
-  }, [contacts, currentWechatAccountId])
+  }, [contacts])
+
+  useEffect(() => {
+    const acc = currentWechatAccountId?.trim()
+    if (!acc) return
+    if (sourceBootstrappedForAccountRef.current === acc) return
+    let cancelled = false
+    void (async () => {
+      const bundle = await loadAccountsBundle()
+      if (cancelled || !bundle) return
+      sourceBootstrappedForAccountRef.current = acc
+      setSource(isSecondaryWechatAccountInBundle(bundle, acc) ? 'sub_wechat' : 'main_wechat')
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [currentWechatAccountId])
 
   useEffect(() => {
     void reload()
@@ -223,7 +234,7 @@ export function MemoryArchivePanel({
   }, [alignUserBusy, reload, userInsertCtx, userPlaceholderSummary.slotCount])
 
   useEffect(() => {
-    const onEvt = () => void reload()
+    const onEvt = () => void reload({ silent: true })
     window.addEventListener('wechat-storage-changed', onEvt)
     return () => window.removeEventListener('wechat-storage-changed', onEvt)
   }, [reload])
@@ -286,7 +297,12 @@ export function MemoryArchivePanel({
 
   const handleDelete = async (entry: MemoryEntry) => {
     await personaDb.deleteCharacterMemory(entry.id)
-    await reload()
+    if (editorOpen && editingEntry?.id === entry.id) {
+      setEditorOpen(false)
+      setEditingEntry(null)
+      setEditingRaw(null)
+    }
+    await reload({ silent: true })
   }
 
   return (

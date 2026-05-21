@@ -454,6 +454,8 @@ function tryParseOpenAiChoiceMessage(data: unknown, depth = 0): string | null {
       const message = msgRaw as Record<string, unknown>
       const out = extractAssistantTextFromMessageObject(message, choice, root)
       if (out?.trim()) return out.trim()
+      const toolText = toolCallArgumentsAsAssistantText(message)
+      if (toolText) return mergeReasoningFieldsIntoVisible(toolText, [message, choice, root])
     }
 
     const chContent = choice.content
@@ -496,6 +498,92 @@ function tryParseOpenAiChoiceMessage(data: unknown, depth = 0): string | null {
   return null
 }
 
+function toolCallArgumentsAsAssistantText(message: Record<string, unknown>): string {
+  const calls = message.tool_calls
+  if (!Array.isArray(calls)) return ''
+  const chunks: string[] = []
+  for (const tc of calls) {
+    const row = tc && typeof tc === 'object' ? (tc as Record<string, unknown>) : null
+    if (!row) continue
+    const fn = row.function && typeof row.function === 'object' ? (row.function as Record<string, unknown>) : null
+    const args = typeof fn?.arguments === 'string' ? fn.arguments.trim() : ''
+    if (args) chunks.push(args)
+  }
+  return chunks.join('\n').trim()
+}
+
+function describeChatCompletionParseFailure(data: unknown): string {
+  const root = data && typeof data === 'object' ? (data as Record<string, unknown>) : null
+  if (!root) return '响应体不是 JSON 对象。'
+  const bits: string[] = []
+  const choices = Array.isArray(root.choices) ? root.choices : []
+  bits.push(`choices=${choices.length}`)
+  const c0 = choices[0] && typeof choices[0] === 'object' ? (choices[0] as Record<string, unknown>) : null
+  if (c0) {
+    if (c0.finish_reason != null) bits.push(`finish_reason=${String(c0.finish_reason)}`)
+    const msg = c0.message && typeof c0.message === 'object' ? (c0.message as Record<string, unknown>) : null
+    if (msg) {
+      const content = msg.content
+      if (typeof content === 'string') {
+        bits.push(`message.content长度=${content.length}`)
+        if (content.length > 0 && !content.trim()) bits.push('message.content仅为空白/换行')
+        else if (content.length <= 24) {
+          const preview = content.replace(/\s/g, '·').slice(0, 24)
+          bits.push(`content预览=${preview || '（空）'}`)
+        }
+      } else if (Array.isArray(content)) bits.push(`message.content为${content.length}段 parts`)
+      else bits.push(`message.content类型=${typeof content}`)
+      const rc = msg.reasoning_content ?? c0.reasoning_content
+      if (typeof rc === 'string' && rc.trim()) bits.push(`reasoning长度=${rc.trim().length}`)
+      const refusal = msg.refusal ?? c0.refusal
+      if (typeof refusal === 'string' && refusal.trim()) bits.push(`refusal=${refusal.trim().slice(0, 80)}`)
+    } else if (typeof c0.text === 'string') {
+      bits.push(`choice.text长度=${c0.text.length}`)
+    }
+  }
+  const loose = tryLooseGatewayAssistantText(root)
+  if (loose?.trim()) bits.push('顶层 answer/response 等字段有字但未映射到 choices')
+  return bits.join('；') || '无可用诊断字段'
+}
+
+function throwIfModelRefusalInChoices(data: unknown): void {
+  const root = data && typeof data === 'object' ? (data as Record<string, unknown>) : null
+  if (!root) return
+  const choices = Array.isArray(root.choices) ? root.choices : []
+  for (const ch of choices) {
+    const choice = ch && typeof ch === 'object' ? (ch as Record<string, unknown>) : null
+    if (!choice) continue
+    const msg = choice.message && typeof choice.message === 'object' ? (choice.message as Record<string, unknown>) : null
+    const refusal =
+      (msg && typeof msg.refusal === 'string' ? msg.refusal : '') ||
+      (typeof choice.refusal === 'string' ? choice.refusal : '')
+    if (refusal.trim()) {
+      throw new Error(`模型拒绝生成：${refusal.trim().slice(0, 400)}`)
+    }
+  }
+}
+
+/** 网关仅回空白 content 时，供约会等链路重试而非立刻抛错 */
+export function tryParseOpenAiChoiceMessageSafe(data: unknown): string {
+  try {
+    return parseOpenAiChoiceMessage(data)
+  } catch {
+    return ''
+  }
+}
+
+export function isOpenAiEmptyAssistantParseError(err: unknown): boolean {
+  const m = err instanceof Error ? err.message : String(err ?? '')
+  return /未解析到模型正文|返回格式不符合预期/.test(m)
+}
+
+function applyChatCompletionTokenLimits(body: Record<string, unknown>, maxTokens: number): void {
+  const n = Math.max(1, Math.floor(maxTokens))
+  body.max_tokens = n
+  /** OpenAI 新接口与部分中转站只认 max_completion_tokens */
+  body.max_completion_tokens = n
+}
+
 function parseOpenAiChoiceMessage(data: unknown): string {
   if (typeof data === 'string') {
     const t = data.trim()
@@ -509,6 +597,8 @@ function parseOpenAiChoiceMessage(data: unknown): string {
     }
   }
 
+  throwIfModelRefusalInChoices(data)
+
   const direct = tryParseOpenAiChoiceMessage(data, 0)
   if (direct?.trim()) return direct.trim()
 
@@ -518,8 +608,12 @@ function parseOpenAiChoiceMessage(data: unknown): string {
     // 非 Gemini 结构
   }
 
+  const diag = describeChatCompletionParseFailure(data)
+  const emptyHint = /content长度=[1-9][^0-9]|仅为空白|reasoning长度=0/.test(diag)
+    ? ' 本次响应几乎无正文，多为：上下文过长被截断、线路限流、模型名错误、或聊天卡片里「最大回复 token」过小（建议 ≥4096）。'
+    : ''
   throw new Error(
-    '返回格式不符合预期（未解析到模型正文）。客户端已尝试：嵌套 JSON、choices[].message 为字符串、answer/response 等常见网关字段、Gemini 结构。HTTP 200 仍失败时常见于：网关套壳字段名不兼容、`choices[].message.content` / `choices[].text` 为空字符串（审查/过载/上下文过长截断）、或配置了流式 SSE 却走了非流式路径。若仍失败，请确认网关返回可与 OpenAI `chat/completions` 对齐的 JSON。',
+    `返回格式不符合预期（未解析到模型正文）。诊断：${diag}。客户端已尝试：嵌套 JSON、choices[].message 为字符串、answer/response、tool_calls、Gemini 结构。${emptyHint} 约会剧情只要求写正文，记忆在生成成功后后台写入；请换稳定聊天模型或检查 API 地址是否为非流式 chat/completions。`,
   )
 }
 
@@ -690,7 +784,7 @@ export async function openAiCompatibleChatAny(
     messages,
     temperature: options?.temperature ?? 0.7,
   }
-  if (options?.max_tokens != null) body.max_tokens = options.max_tokens
+  if (options?.max_tokens != null) applyChatCompletionTokenLimits(body, options.max_tokens)
   const resp = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -708,6 +802,55 @@ export async function openAiCompatibleChatAny(
   }
   bumpLumiSysTokensFromChatResponse(data)
   return parseOpenAiChoiceMessage(data)
+}
+
+/** 与 {@link openAiCompatibleChat} 相同，但解析失败时返回空串（由调用方重试/降级） */
+export async function openAiCompatibleChatLenient(
+  cfg: ApiConfig,
+  messages: OpenAiCompatibleMessage[],
+  options?: { temperature?: number; max_tokens?: number },
+): Promise<string> {
+  if (isGeminiGenerateContentUrl(cfg.apiUrl)) {
+    try {
+      return await openAiCompatibleChat(cfg, messages, options)
+    } catch (e) {
+      if (isOpenAiEmptyAssistantParseError(e)) return ''
+      throw e
+    }
+  }
+
+  const base = cfg.apiUrl.trim().replace(/\/+$/, '')
+  const endpoint = /\/v1$/i.test(base)
+    ? `${base}/chat/completions`
+    : /\/v1\/chat\/completions$/i.test(base)
+      ? base
+      : `${base}/v1/chat/completions`
+  const body: Record<string, unknown> = {
+    model: cfg.modelId || undefined,
+    messages,
+    temperature: options?.temperature ?? 0.7,
+  }
+  if (options?.max_tokens != null) applyChatCompletionTokenLimits(body, options.max_tokens)
+  const resp = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${cfg.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  const data: unknown = await readFetchJsonBody(resp)
+  if (!resp.ok) {
+    const rec = data && typeof data === 'object' ? (data as Record<string, unknown>) : null
+    const errObj = rec?.error && typeof rec.error === 'object' ? (rec.error as Record<string, unknown>) : null
+    const msg =
+      (typeof errObj?.message === 'string' ? errObj.message : '') ||
+      (typeof rec?.message === 'string' ? rec.message : '') ||
+      `请求失败（HTTP ${resp.status}）`
+    throw new Error(typeof msg === 'string' ? msg : '请求失败')
+  }
+  bumpLumiSysTokensFromChatResponse(data)
+  return tryParseOpenAiChoiceMessageSafe(data)
 }
 
 export async function openAiCompatibleChat(
@@ -755,7 +898,7 @@ export async function openAiCompatibleChat(
     messages,
     temperature: options?.temperature ?? 0.7,
   }
-  if (options?.max_tokens != null) body.max_tokens = options.max_tokens
+  if (options?.max_tokens != null) applyChatCompletionTokenLimits(body, options.max_tokens)
   const resp = await fetch(endpoint, {
     method: 'POST',
     headers: {

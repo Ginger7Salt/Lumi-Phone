@@ -9,10 +9,13 @@ import type { Character, GroupChatRow, PlayerIdentity } from '../newFriendsPerso
 import type { WorldBookUserInsertContext } from '../charUserPlaceholders'
 import {
   attachMemoryUserPlaceholderBindings,
+  hasMemoryUserPlaceholderBindIds,
+  resolveDatingLinkedMemoryUserBindCtx,
   type SanitizedMemoryBody,
 } from '../memoryUserPlaceholderBindings'
 import { WECHAT_GROUP_BOT_CHARACTER_ID, WECHAT_GROUP_USER_CHAR_ID } from '../wechatConversationKey'
 import { normalizeMemorySummaryBodyAfterModel } from './memorySummaryContentNormalize'
+import { repairMemorySummaryBodyFromModel } from './memorySummarySchemaLeakRepair'
 
 const MIN_TOKEN_LEN = 2
 
@@ -63,15 +66,23 @@ function pushCharRules(out: Array<{ token: string; ph: string }>, ch: Character 
   for (const t of displayTokensForCharacter(ch)) out.push({ token: t, ph })
 }
 
+function isUsableUserDisplayName(name: string | null | undefined): boolean {
+  const n = String(name ?? '').trim()
+  return !!n && n !== '未命名身份' && n !== '微信账号槽位' && n !== '用户'
+}
+
 async function loadPlayerIdentityForPeer(peerCharacterId: string): Promise<PlayerIdentity | null> {
   try {
+    let iden: PlayerIdentity | null = null
     const row = await personaDb.getCharacter(peerCharacterId.trim())
     const pid = row?.playerIdentityId?.trim()
     if (pid && pid !== '__none__') {
-      const iden = await personaDb.getPlayerIdentity(pid)
-      if (iden) return iden
+      iden = await personaDb.getPlayerIdentity(pid)
+      if (iden && isUsableUserDisplayName(iden.wechatNickname || iden.name)) return iden
     }
-    return await personaDb.getCurrentIdentity()
+    const cur = await personaDb.getCurrentIdentity()
+    if (cur && isUsableUserDisplayName(cur.wechatNickname || cur.name)) return cur
+    return iden ?? cur ?? null
   } catch {
     return null
   }
@@ -90,7 +101,7 @@ export async function sanitizeUnifiedPrimaryMemoryBody(
     return { content: body, userPlaceholderBindings: [] }
   }
 
-  let text = normalizeMemorySummaryBodyAfterModel(body)
+  let text = normalizeMemorySummaryBodyAfterModel(repairMemorySummaryBodyFromModel(body))
 
   const ordered: Array<{ token: string; ph: string }> = []
   if (userBindCtx) {
@@ -125,6 +136,7 @@ export async function sanitizeUnifiedLinkedMemoryBody(
   archiveRootId: string,
   datingPeerCharacterId: string,
   userBindCtx?: WorldBookUserInsertContext | null,
+  opts?: { conversationKey?: string | null },
 ): Promise<SanitizedMemoryBody> {
   const npc = linkedNpcId.trim()
   const arch = archiveRootId.trim()
@@ -133,11 +145,24 @@ export async function sanitizeUnifiedLinkedMemoryBody(
     return { content: body, userPlaceholderBindings: [] }
   }
 
-  let text = normalizeMemorySummaryBodyAfterModel(body)
+  let text = normalizeMemorySummaryBodyAfterModel(repairMemorySummaryBodyFromModel(body))
+
+  let bindCtx = userBindCtx ?? null
+  if (!hasMemoryUserPlaceholderBindIds(bindCtx)) {
+    const ck = opts?.conversationKey?.trim()
+    if (ck) {
+      bindCtx = await resolveDatingLinkedMemoryUserBindCtx({
+        conversationKey: ck,
+        datingPeerCharacterId: peer,
+        archiveRootId: arch,
+      })
+    }
+  }
+  const attachCtx = hasMemoryUserPlaceholderBindIds(bindCtx) ? bindCtx : null
 
   const ordered: Array<{ token: string; ph: string }> = []
-  if (userBindCtx) {
-    const dn = userBindCtx.displayName?.trim()
+  if (attachCtx) {
+    const dn = attachCtx.displayName?.trim()
     if (dn.length >= MIN_TOKEN_LEN) ordered.push({ token: dn, ph: '{{user}}' })
   } else {
     pushCharRules(ordered, await loadPlayerIdentityForPeer(peer), '{{user}}')
@@ -160,7 +185,7 @@ export async function sanitizeUnifiedLinkedMemoryBody(
     pushCharRules(ordered, await personaDb.getCharacter(peer), `{{id:${peer}}}`)
   }
   const content = applyRules(text, mergeRules(ordered))
-  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx ?? null)
+  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, attachCtx)
 }
 
 /** 群聊总结：他人一律 {{id:…}}，玩家 {{user}} */

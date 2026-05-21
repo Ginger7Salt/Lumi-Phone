@@ -6,6 +6,7 @@ import {
   formatPlayerIdentityDisplayName,
   getCharacterBoundPlayerIdentityId,
   getCharacterLinkedPlayerIdentityIds,
+  isNamedPlayerIdentity,
   isWechatAccountSessionSlotIdentityId,
 } from './wechatCharacterPlayerIdentity'
 import { loadAccountsBundle } from './wechatAccountPersistence'
@@ -75,10 +76,95 @@ export async function expandScopedWorldBookUserPlaceholdersInText(text: string):
   return s
 }
 
+/**
+ * 世界书 {{user}}：若候选为微信槽位 `wx-slot-*`，回落到角色档案主/关联具名身份或同账号具名列表。
+ */
+export async function resolveWorldBookPlayerIdentityCandidate(params: {
+  character?: Character | null
+  wechatAccountId: string | null | undefined
+  playerIdentityId?: string | null | undefined
+}): Promise<{ playerIdentityId: string; row: PlayerIdentity | null; wechatAccountId: string } | null> {
+  let acc = params.wechatAccountId?.trim() || ''
+  let pid = params.playerIdentityId?.trim() || ''
+  if (!pid || pid === '__none__') {
+    try {
+      pid = (await personaDb.getCurrentIdentityId()).trim()
+    } catch {
+      pid = ''
+    }
+  }
+  if (!pid || pid === '__none__') return null
+
+  let row: PlayerIdentity | null = null
+  try {
+    row = await personaDb.getPlayerIdentity(pid)
+  } catch {
+    row = null
+  }
+  if (!acc) acc = row?.wechatAccountId?.trim() || ''
+  if (!acc) return null
+
+  if (isNamedPlayerIdentity(row, pid)) {
+    return { playerIdentityId: pid, row, wechatAccountId: acc }
+  }
+
+  if (params.character) {
+    const binding = await resolveWorldBookUserBinding(params.character)
+    if (binding?.playerIdentityId && binding.wechatAccountId === acc) {
+      return {
+        playerIdentityId: binding.playerIdentityId,
+        row: binding.row,
+        wechatAccountId: acc,
+      }
+    }
+    if (binding?.playerIdentityId) {
+      const bindRow = binding.row ?? (await personaDb.getPlayerIdentity(binding.playerIdentityId))
+      const bindAcc = binding.wechatAccountId.trim() || bindRow?.wechatAccountId?.trim() || ''
+      if (bindAcc && isNamedPlayerIdentity(bindRow, binding.playerIdentityId)) {
+        return {
+          playerIdentityId: binding.playerIdentityId,
+          row: bindRow,
+          wechatAccountId: bindAcc,
+        }
+      }
+    }
+    const primaryId = getCharacterBoundPlayerIdentityId(params.character)
+    if (primaryId && !isWechatAccountSessionSlotIdentityId(primaryId)) {
+      const primaryRow = await personaDb.getPlayerIdentity(primaryId)
+      const primaryAcc =
+        params.character.playerIdentityLinkMeta?.find((m) => m.playerIdentityId === primaryId)
+          ?.wechatAccountId?.trim() ||
+        primaryRow?.wechatAccountId?.trim() ||
+        ''
+      if (primaryAcc === acc && isNamedPlayerIdentity(primaryRow, primaryId)) {
+        return { playerIdentityId: primaryId, row: primaryRow, wechatAccountId: acc }
+      }
+    }
+    for (const lid of getCharacterLinkedPlayerIdentityIds(params.character)) {
+      if (isWechatAccountSessionSlotIdentityId(lid)) continue
+      const linkRow = await personaDb.getPlayerIdentity(lid)
+      const linkAcc = linkRow?.wechatAccountId?.trim() || ''
+      if (linkAcc === acc && isNamedPlayerIdentity(linkRow, lid)) {
+        return { playerIdentityId: lid, row: linkRow, wechatAccountId: acc }
+      }
+    }
+  }
+
+  for (const listed of await personaDb.listPlayerIdentities(acc)) {
+    const id = listed.id?.trim()
+    if (!id || !isNamedPlayerIdentity(listed, id)) continue
+    return { playerIdentityId: id, row: listed, wechatAccountId: acc }
+  }
+
+  return { playerIdentityId: pid, row, wechatAccountId: acc }
+}
+
 /** 世界书编辑页插入 {{user}} 时：取当前微信账号 + 当前选用的扮演身份。 */
 export async function resolveWorldBookUserInsertContext(params: {
   wechatAccountId: string | null | undefined
   playerIdentityId?: string | null | undefined
+  /** 人设档案：槽位 id 时回落档案主/关联具名身份 */
+  character?: Character | null
   /** 玩家身份专属世界书：直接用该身份 */
   playerIdentityRow?: PlayerIdentity | null
 }): Promise<WorldBookUserInsertContext | null> {
@@ -97,21 +183,14 @@ export async function resolveWorldBookUserInsertContext(params: {
     }
   }
 
-  let acc = params.wechatAccountId?.trim() || ''
-  let pid = params.playerIdentityId?.trim() || ''
-  if (!pid || pid === '__none__') {
-    try {
-      pid = (await personaDb.getCurrentIdentityId()).trim()
-    } catch {
-      pid = ''
-    }
-  }
-  if (!pid || pid === '__none__') return null
+  const resolved = await resolveWorldBookPlayerIdentityCandidate({
+    character: params.character,
+    wechatAccountId: params.wechatAccountId,
+    playerIdentityId: params.playerIdentityId,
+  })
+  if (!resolved) return null
 
-  const row = await personaDb.getPlayerIdentity(pid)
-  if (!acc) acc = row?.wechatAccountId?.trim() || ''
-  if (!acc) return null
-
+  const { playerIdentityId: pid, row, wechatAccountId: acc } = resolved
   const scope = { wechatAccountId: acc, sessionPlayerIdentityId: pid }
   const bundle = await loadAccountsBundle()
   return {

@@ -83,6 +83,7 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [subTab, setSubTab] = useState<'own' | 'linked'>('own')
+  const prevSelectedIdForSubTabRef = useRef<string | null>(null)
 
   const reload = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent === true
@@ -139,7 +140,10 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
     setSelectedId(filteredRows[0]!.id)
   }, [rows, filteredRows, selectedId])
 
+  /** 仅切换左侧联系人时回到「角色记忆」；同一人下编辑/删除后刷新勿改 Tab */
   useEffect(() => {
+    if (selectedId === prevSelectedIdForSubTabRef.current) return
+    prevSelectedIdForSubTabRef.current = selectedId
     setSubTab('own')
   }, [selectedId])
 

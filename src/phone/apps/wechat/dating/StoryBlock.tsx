@@ -3,10 +3,9 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { getAiPlotVersionSlices, getAiVersionArrays } from './plotVersions'
-import { splitDatingAssistantOutput } from './plotCoT'
+import { resolveDatingPlotDisplayFromItem } from './plotCoT'
 import { PlotRichParagraph } from './plotRichText'
 import type { BranchOption, PlotItem } from './types'
-import { stripVnVoiceParamsPayload } from './vnVoiceParamsStrip'
 
 export type BranchChoicesSlot = {
   loading: boolean
@@ -89,12 +88,7 @@ export function StoryBlock({
 }: Props) {
   const aiSplit = useMemo(() => {
     if (plot.type !== 'ai') return { thinkingText: '', displayBody: plot.content }
-    const stored = plot.logicPass?.trim()
-    const sp = splitDatingAssistantOutput(plot.content)
-    const thinkingText = (stored || sp.logicPass || plot.planSummary?.trim() || sp.planSummary || '').trim()
-    // 始终走 split 后的正文：即使 logicPass 已单独存盘，plot.content 里仍可能残留思维链标签或需剥离的壳层
-    const displayBody = stripVnVoiceParamsPayload(sp.content.trim() ? sp.content : plot.content)
-    return { thinkingText, displayBody }
+    return resolveDatingPlotDisplayFromItem(plot)
   }, [plot])
 
   const versionInfo = useMemo(() => {

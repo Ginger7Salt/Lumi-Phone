@@ -2938,18 +2938,19 @@ export function ChatRoom({
   const hydrateMessagesRef = useRef(hydrateMessages)
   hydrateMessagesRef.current = hydrateMessages
 
+  /** 须早于依赖它的 storage 监听；与 {@link flushAiReplies} 共用 */
+  const flushAiRepliesBusyRef = useRef(false)
+  const storageHydrateDebounceRef = useRef<number | null>(null)
+  const storageGroupSyncDebounceRef = useRef<number | null>(null)
+
   const opponentRevealTimerRef = useRef<number | null>(null)
+
   const cancelOpponentRevealTimer = useCallback(() => {
     if (opponentRevealTimerRef.current != null) {
       window.clearTimeout(opponentRevealTimerRef.current)
       opponentRevealTimerRef.current = null
     }
   }, [])
-
-  /** 须早于依赖它的 storage 监听；与 {@link flushAiReplies} 共用 */
-  const flushAiRepliesBusyRef = useRef(false)
-  const storageHydrateDebounceRef = useRef<number | null>(null)
-  const storageGroupSyncDebounceRef = useRef<number | null>(null)
 
   const [typingVisible, setTypingVisibleState] = useState(false)
   const [typingFooterInterrupt, setTypingFooterInterrupt] = useState(false)
@@ -6653,7 +6654,11 @@ export function ChatRoom({
                     }
                     emitWeChatStorageChanged()
                     enqueueOpponentMessagesSequential(
-                      queuedUi.map((msg) => ({ forConversationKey: conversationKey, msg, persist: () => {} })),
+                      queuedUi.map((msg) => ({
+                        forConversationKey: conversationKey,
+                        msg,
+                        persist: () => {},
+                      })),
                     )
                   } catch {
                     /* ignore smart bot pipeline */

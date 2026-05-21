@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown } from 'lucide-react'
+import { CircleHelp } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { fetchModels } from '../../api/apiSim'
 import type { ApiConfig } from '../../api/types'
@@ -66,18 +66,106 @@ function SettingRow({
   label,
   hint,
   control,
+  labelExtra,
 }: {
   label: string
   hint?: string
   control: ReactNode
+  /** 标题右侧（如 ? 说明按钮） */
+  labelExtra?: ReactNode
 }) {
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0 flex-1">
-        <p className="text-[14px] font-medium text-gray-900">{label}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-[14px] font-medium text-gray-900">{label}</p>
+          {labelExtra}
+        </div>
         {hint ? <p className="mt-1 text-[11px] leading-relaxed text-gray-500">{hint}</p> : null}
       </div>
-      <div className="shrink-0">{control}</div>
+      <div className="shrink-0 pt-0.5">{control}</div>
+    </div>
+  )
+}
+
+const LINKED_MEMORY_HELP_SECTIONS: { title: string; body: string }[] = [
+  {
+    title: '是什么',
+    body: '主角在约会里推剧情时，系统可给人脉 NPC 单独写一条「关联记忆」，挂在该 NPC 档案下，便于之后和 TA 私聊时接上线下发生过的事。',
+  },
+  {
+    title: '和主角记忆的区别',
+    body: '「角色记忆」挂在当前私聊对象名下；「关联记忆」挂在人脉配角名下，其它角色私聊不会自动看见。正文里用 {{user}} 等占位符指人。',
+  },
+  {
+    title: '开关说明',
+    body: '关闭后不再自动写入新的关联条；微信私聊按「总结间隔」的合并总结不受影响。约会推剧情时自动记记忆由下方另一项开关控制。',
+  },
+]
+
+function MemoryTriggerModePicker({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: CharacterMemoryTriggerMode
+  disabled?: boolean
+  onChange: (mode: CharacterMemoryTriggerMode) => void
+}) {
+  const options: {
+    mode: CharacterMemoryTriggerMode
+    title: string
+    desc: string
+  }[] = [
+    {
+      mode: 'keyword',
+      title: '关键词触发',
+      desc: '注入时按聊天内容与记忆触发词匹配，更省 token',
+    },
+    {
+      mode: 'always',
+      title: '始终触发',
+      desc: '与该角色私聊时，尽量带上其长期记忆',
+    },
+  ]
+
+  return (
+    <div
+      className={`rounded-2xl border border-gray-100 bg-gray-50/90 p-1 ${disabled ? 'opacity-50' : ''}`}
+      role="radiogroup"
+      aria-label="新记忆默认触发方式"
+    >
+      <p className="px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.14em] text-gray-400">
+        新记忆默认触发方式
+      </p>
+      <div className="grid grid-cols-2 gap-1">
+        {options.map((opt) => {
+          const active = value === opt.mode
+          return (
+            <button
+              key={opt.mode}
+              type="button"
+              disabled={disabled}
+              role="radio"
+              aria-checked={active}
+              onClick={() => onChange(opt.mode)}
+              className={`rounded-xl px-3 py-2.5 text-left transition-all ${
+                active
+                  ? 'bg-white text-gray-900 shadow-[0_2px_12px_rgba(0,0,0,0.06)] ring-1 ring-gray-200/80'
+                  : 'text-gray-600 hover:bg-white/60'
+              }`}
+            >
+              <span className="block text-[13px] font-semibold">{opt.title}</span>
+              <span className={`mt-0.5 block text-[10px] leading-snug ${active ? 'text-gray-500' : 'text-gray-400'}`}>
+                {opt.desc}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      <p className="px-3 pb-2 pt-1 text-[10px] leading-relaxed text-gray-400">
+        不论选哪种，自动总结入库时仍会保存模型提炼的触发词备份。
+      </p>
     </div>
   )
 }
@@ -109,6 +197,7 @@ export function MemoryEngineConfig({ loading }: { loading?: boolean }) {
   const [savedSettings, setSavedSettings] = useState<Awaited<ReturnType<typeof personaDb.getMemorySettings>> | null>(
     null,
   )
+  const [configHydrated, setConfigHydrated] = useState(false)
   const [saveBusy, setSaveBusy] = useState(false)
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [tutorialOpen, setTutorialOpen] = useState(false)
@@ -117,6 +206,7 @@ export function MemoryEngineConfig({ loading }: { loading?: boolean }) {
 
   const reload = useCallback(async () => {
     const settings = await personaDb.getMemorySettings()
+    const savedModel = settings.memoryEmbeddingModelId?.trim() || ''
     setAutoSummaryEnabled(settings.autoSummaryEnabled !== false)
     setAutoSummaryDefaultTrigger(
       settings.autoSummaryDefaultMemoryTriggerMode === 'always' ? 'always' : 'keyword',
@@ -132,9 +222,15 @@ export function MemoryEngineConfig({ loading }: { loading?: boolean }) {
       collection: settings.memoryVectorCollection?.trim() || '',
     })
     setHasSavedEmbeddingKey(Boolean(settings.memoryEmbeddingApiKey?.trim()))
-    setEmbeddingModelDraft(settings.memoryEmbeddingModelId?.trim() || '')
+    setEmbeddingModelDraft(savedModel)
+    setEmbeddingModelList((prev) => {
+      if (!savedModel) return prev
+      if (prev.includes(savedModel)) return prev
+      return [savedModel, ...prev]
+    })
     setSavedSettings(settings)
     setConnectionStatus('idle')
+    setConfigHydrated(true)
   }, [])
 
   const pullSource = useMemo(
@@ -256,6 +352,8 @@ export function MemoryEngineConfig({ loading }: { loading?: boolean }) {
       setVectorConfig((v) => ({ ...v, apiKey: '' }))
       setHasSavedEmbeddingKey(true)
     }
+    const fresh = await personaDb.getMemorySettings()
+    setSavedSettings(fresh)
   }
 
   const pullEmbeddingModels = async () => {
@@ -340,6 +438,8 @@ export function MemoryEngineConfig({ loading }: { loading?: boolean }) {
       const n = Math.max(1, Math.min(100, Math.floor(Number.isFinite(intervalN) ? intervalN : 10)))
       const v = vectorConfigFromDraft(vectorConfig)
       const keyTyped = v.apiKey
+      const modelToSave =
+        embeddingModelDraft.trim() || savedSettings?.memoryEmbeddingModelId?.trim() || ''
       await personaDb.putMemorySettings({
         autoSummaryEnabled,
         autoSummaryInterval: n,
@@ -348,12 +448,8 @@ export function MemoryEngineConfig({ loading }: { loading?: boolean }) {
         datingAutoSummaryEnabled,
         memoryVectorRecallEnabled: vectorRecallEnabled,
         memoryEmbeddingUseDedicatedApi: vectorDedicatedApiEnabled,
-        ...(vectorRecallEnabled
-          ? {
-              memoryEmbeddingModelId: embeddingModelDraft.trim()
-                ? embeddingModelDraft.trim().slice(0, 120)
-                : undefined,
-            }
+        ...(vectorRecallEnabled && modelToSave
+          ? { memoryEmbeddingModelId: modelToSave.slice(0, 120) }
           : {}),
         ...(vectorDedicatedApiEnabled
           ? {
@@ -361,7 +457,9 @@ export function MemoryEngineConfig({ loading }: { loading?: boolean }) {
               memoryVectorCollection: v.collection ? v.collection.slice(0, 128) : undefined,
               ...(keyTyped ? { memoryEmbeddingApiKey: keyTyped.slice(0, 2048) } : {}),
             }
-          : {}),
+          : vectorRecallEnabled
+            ? {}
+            : {}),
       })
       setIntervalN(n)
       if (keyTyped) {
@@ -377,7 +475,11 @@ export function MemoryEngineConfig({ loading }: { loading?: boolean }) {
     }
   }
 
-  if (loading) {
+  const savedModelLabel = savedSettings?.memoryEmbeddingModelId?.trim() || ''
+  const savedEndpointLabel = savedSettings?.memoryEmbeddingApiUrl?.trim() || ''
+  const savedDedicated = savedSettings?.memoryEmbeddingUseDedicatedApi === true
+
+  if (loading || !configHydrated) {
     return (
       <div
         className="flex min-h-[200px] items-center justify-center text-[13px] text-gray-400"
@@ -432,78 +534,70 @@ export function MemoryEngineConfig({ loading }: { loading?: boolean }) {
             }
           />
         </div>
-        <div className="flex flex-wrap justify-end gap-2" data-memory-coach="trigger-mode">
-          {(['keyword', 'always'] as const).map((mode) => {
-            const active = autoSummaryDefaultTrigger === mode
-            return (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => void commitAutoSummaryDefaultTrigger(mode)}
-                className={`rounded-full px-3.5 py-1.5 text-[12px] font-medium transition-colors ${
-                  active ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600'
-                }`}
-              >
-                {mode === 'keyword' ? '关键词' : '始终'}
-              </button>
-            )
-          })}
+        <div data-memory-coach="trigger-mode">
+          <MemoryTriggerModePicker
+            value={autoSummaryDefaultTrigger}
+            disabled={!autoSummaryEnabled}
+            onChange={(mode) => void commitAutoSummaryDefaultTrigger(mode)}
+          />
         </div>
-        <div data-memory-coach="linked-summary">
+        <div data-memory-coach="linked-summary" className="space-y-0">
           <SettingRow
             label="关联记忆总结"
             hint="约会推剧情时，给人脉配角顺带记关联记忆"
+            labelExtra={
+              <button
+                type="button"
+                onClick={() => setLinkedMemExplainExpanded((v) => !v)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+                aria-label="关联记忆总结说明"
+                aria-expanded={linkedMemExplainExpanded}
+              >
+                <CircleHelp className="size-4" strokeWidth={1.5} aria-hidden />
+              </button>
+            }
             control={
-            <MemoryEngineSoftSwitch
-              on={linkedMemoryAutoSummaryEnabled}
-              onToggle={() => void toggleLinkedMemoryAutoSummary()}
-            />
-          }
+              <MemoryEngineSoftSwitch
+                on={linkedMemoryAutoSummaryEnabled}
+                onToggle={() => void toggleLinkedMemoryAutoSummary()}
+              />
+            }
           />
+          <AnimatePresence initial={false}>
+            {linkedMemExplainExpanded ? (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-2 space-y-3 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3">
+                  {LINKED_MEMORY_HELP_SECTIONS.map((sec) => (
+                    <div key={sec.title}>
+                      <p className="text-[11px] font-semibold text-gray-800">{sec.title}</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-gray-600">{sec.body}</p>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
         </div>
         <div data-memory-coach="dating-summary">
           <SettingRow
             label="约会推剧情时自动记记忆"
             hint="关闭后仅聊满总结间隔轮数才跑合并总结"
             control={
-            <MemoryEngineSoftSwitch
-              on={datingAutoSummaryEnabled && autoSummaryEnabled}
-              onToggle={() => {
-                if (!autoSummaryEnabled) return
-                void toggleDatingAutoSummary()
-              }}
-            />
-          }
+              <MemoryEngineSoftSwitch
+                on={datingAutoSummaryEnabled && autoSummaryEnabled}
+                onToggle={() => {
+                  if (!autoSummaryEnabled) return
+                  void toggleDatingAutoSummary()
+                }}
+              />
+            }
           />
         </div>
-        <button
-          type="button"
-          onClick={() => setLinkedMemExplainExpanded((v) => !v)}
-          className="flex w-full items-center justify-between gap-2 rounded-2xl bg-gray-50 px-4 py-3 text-left text-[13px] font-medium text-gray-800 transition-colors hover:bg-gray-100"
-          aria-expanded={linkedMemExplainExpanded}
-        >
-          <span>{linkedMemExplainExpanded ? '收起说明' : '关联记忆是什么？'}</span>
-          <ChevronDown
-            className={`size-4 shrink-0 text-gray-400 transition-transform duration-200 ${
-              linkedMemExplainExpanded ? 'rotate-180' : ''
-            }`}
-          />
-        </button>
-        <AnimatePresence initial={false}>
-          {linkedMemExplainExpanded ? (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="space-y-2 rounded-2xl bg-gray-50 px-4 py-3 text-[11px] leading-relaxed text-gray-600">
-                <p>主角约会推进时，系统可为人脉配角记一条「关联记忆」，便于之后私聊接上剧情。</p>
-                <p>关闭后不再自动写入关联条；微信私聊按下方间隔总结不受影响。</p>
-              </div>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
         <div data-memory-coach="vector-recall">
           <SettingRow
             label="语义向量召回"
@@ -527,12 +621,33 @@ export function MemoryEngineConfig({ loading }: { loading?: boolean }) {
         ) : null}
       </EngineCard>
 
+      {vectorRecallEnabled && (savedModelLabel || savedEndpointLabel || savedDedicated) ? (
+        <div className="rounded-[20px] border border-gray-100 bg-gray-50/90 px-4 py-3 text-[11px] leading-relaxed text-gray-600">
+          <p className="font-medium text-gray-800">已写入本机的向量配置</p>
+          <ul className="mt-1.5 list-inside list-disc space-y-0.5">
+            {savedModelLabel ? <li>模型：{savedModelLabel}</li> : null}
+            {savedDedicated && savedEndpointLabel ? (
+              <li>专用接口：{savedEndpointLabel}</li>
+            ) : savedDedicated ? (
+              <li>已开启专用接口（地址见下方表单）</li>
+            ) : (
+              <li>沿用聊天主接口做向量化</li>
+            )}
+            {savedSettings?.memoryVectorCollection?.trim() ? (
+              <li>记忆库：{savedSettings.memoryVectorCollection.trim()}</li>
+            ) : null}
+            {hasSavedEmbeddingKey ? <li>专用密钥：已保存（出于安全不在此显示）</li> : null}
+          </ul>
+        </div>
+      ) : null}
+
       {vectorRecallEnabled ? (
         <div data-memory-coach="vector-model">
           <VectorBridgeConfig
           mode={vectorDedicatedApiEnabled ? 'dedicated' : 'main'}
           config={vectorDedicatedApiEnabled ? vectorConfig : undefined}
           onConfigChange={vectorDedicatedApiEnabled ? patchVector : undefined}
+          onVectorFieldsBlur={vectorDedicatedApiEnabled ? () => void commitVectorFields() : undefined}
           hasSavedKey={vectorDedicatedApiEnabled ? hasSavedEmbeddingKey : undefined}
           connectionStatus={vectorDedicatedApiEnabled ? connectionStatus : undefined}
           onConnectionStatusChange={vectorDedicatedApiEnabled ? setConnectionStatus : undefined}
@@ -542,7 +657,11 @@ export function MemoryEngineConfig({ loading }: { loading?: boolean }) {
           onEmbeddingModelChange={(m) => {
             setEmbeddingModelDraft(m)
             setEmbeddingModelDropdownOpen(false)
-            void personaDb.putMemorySettings({ memoryEmbeddingModelId: m })
+            setEmbeddingModelList((prev) => (prev.includes(m) ? prev : [m, ...prev]))
+            void (async () => {
+              await personaDb.putMemorySettings({ memoryEmbeddingModelId: m })
+              setSavedSettings(await personaDb.getMemorySettings())
+            })()
           }}
           embeddingModelList={embeddingModelList}
           embeddingModelsLoading={embeddingModelsLoading}

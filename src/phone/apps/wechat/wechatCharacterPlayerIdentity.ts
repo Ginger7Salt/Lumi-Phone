@@ -372,6 +372,15 @@ function identityHasDisplayName(identity: Pick<PlayerIdentity, 'name' | 'wechatN
   return !!(identity?.wechatNickname?.trim() || identity?.name?.trim())
 }
 
+/** 可用于世界书 {{user}} 绑定的具名扮演身份（非微信槽位、非空名）。 */
+export function isNamedPlayerIdentity(
+  identity: Pick<PlayerIdentity, 'name' | 'wechatNickname'> | null | undefined,
+  identityId?: string | null,
+): boolean {
+  if (isWechatAccountSessionSlotIdentityId(identityId)) return false
+  return identityHasDisplayName(identity)
+}
+
 /** 修复：主绑定误为 wx-slot，但 linked 里已有具名身份时，提升为主绑定（列表展示用）。 */
 export async function repairCharacterSlotPrimaryBindingFromLinked(characterId: string): Promise<boolean> {
   const cid = characterId.trim()

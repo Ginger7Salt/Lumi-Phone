@@ -32,6 +32,9 @@ export type MemoryTraceWorldBookAfterChat = {
 /** 相对当前私聊会话：记忆/摘录来自哪条微信线+扮演马甲 */
 export type MemoryTraceLineRelation = 'current' | 'other' | 'unlabeled'
 
+/** 长期记忆分轨：角色自有 vs 线下关联（人脉 NPC） */
+export type MemoryTraceMemoryBucket = 'own' | 'linked'
+
 export type MemoryTraceLineScopedMeta = {
   sourceLineLabel: string
   lineRelation: MemoryTraceLineRelation
@@ -74,12 +77,15 @@ export type MemoryTraceData = {
         content: string
         sourceLineLabel?: string
         lineRelation?: MemoryTraceLineRelation
+        /** 可选：旧持久化无此字段时视为自有记忆 */
+        memoryBucket?: MemoryTraceMemoryBucket
       }>
       vectorRetrievals: Array<{
         relevanceScore: number
         content: string
         sourceLineLabel?: string
         lineRelation?: MemoryTraceLineRelation
+        memoryBucket?: MemoryTraceMemoryBucket
       }>
     }
   }
@@ -168,11 +174,15 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
       const kRel = k.lineRelation
       const kLineRel: MemoryTraceLineRelation | undefined =
         kRel === 'current' || kRel === 'other' || kRel === 'unlabeled' ? kRel : undefined
+      const kBucket = k.memoryBucket
+      const kMemBucket: MemoryTraceMemoryBucket | undefined =
+        kBucket === 'own' || kBucket === 'linked' ? kBucket : undefined
       keywordHits.push({
         keyword: asStr(k.keyword),
         content: asStr(k.content),
         sourceLineLabel: asStr(k.sourceLineLabel) || undefined,
         lineRelation: kLineRel,
+        memoryBucket: kMemBucket,
       })
     }
   }
@@ -185,11 +195,15 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
       const vRel = v.lineRelation
       const vLineRel: MemoryTraceLineRelation | undefined =
         vRel === 'current' || vRel === 'other' || vRel === 'unlabeled' ? vRel : undefined
+      const vBucket = v.memoryBucket
+      const vMemBucket: MemoryTraceMemoryBucket | undefined =
+        vBucket === 'own' || vBucket === 'linked' ? vBucket : undefined
       vectorRetrievals.push({
         relevanceScore,
         content: asStr(v.content),
         sourceLineLabel: asStr(v.sourceLineLabel) || undefined,
         lineRelation: vLineRel,
+        memoryBucket: vMemBucket,
       })
     }
   }

@@ -1,17 +1,42 @@
 export type DateMode = 'normal' | 'vn'
 export type NarrativePerspective = 'first' | 'second' | 'third'
-/** 剧情 AI 目标正文字数（汉字）：与 DatingStoryPage、generateDatingAi 共用，避免 UI 选 1000 却被后端钳成 600 */
+/** 剧情 AI 目标正文字数（汉字）：与 DatingStoryPage、generateDatingAi 共用 */
 export const DATING_AI_LENGTH_TARGET_MIN = 60
-export const DATING_AI_LENGTH_TARGET_MAX = 2000
-/** 剧情续写单次 completion 上限（token；仍受所选模型/API 限制） */
-export const DATING_AI_MAX_OUTPUT_TOKENS = 30000
+/** UI 可设上限；模型正文约落在目标的 88%～118%（不含思维链 / VN 语音参数） */
+export const DATING_AI_LENGTH_TARGET_MAX = 10_000
+
+export function clampDatingLengthTargetChars(raw: number): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return 500
+  return Math.max(
+    DATING_AI_LENGTH_TARGET_MIN,
+    Math.min(DATING_AI_LENGTH_TARGET_MAX, Math.round(n)),
+  )
+}
+/** 送入约会剧情模型的上下文预算（词符/token；仍受 API/模型实际上限） */
+export const DATING_AI_MAX_CONTEXT_TOKENS = 200_000
+
+/** 剧情续写单次 completion 最大回复（词符/token；仍受所选模型/API 限制） */
+export const DATING_AI_MAX_OUTPUT_TOKENS = 30_000
 
 /**
- * 线下约会「参考资料」按段的汉字软上限：不再使用 2200/2600 等细碎裁剪；
- * 仅在极端长度下防爆（浏览器与网关）；实际可用上下文以所选模型的 context window 为准。
- * 约等价：数十万字级输入量级的上限锚点，多数人设/聊天记录远低于此。
+ * 参考资料汉字总预算（按 {@link DATING_AI_MAX_CONTEXT_TOKENS} 估算，预留 system/思维链指令）。
+ * 各段独立裁剪，合计可接近该预算。
  */
-export const DATING_AI_REFERENCE_SECTION_CHAR_CAP = 180_000
+export const DATING_AI_REFERENCE_TOTAL_CHAR_BUDGET = 150_000
+
+/**
+ * 长期记忆 / 尚未总结·私聊 / 群聊 等按段软上限。
+ */
+export const DATING_AI_REFERENCE_SECTION_CHAR_CAP = 30_000
+
+/** 「尚未总结·线下剧情」正文摘录软上限（游标后全文） */
+export const DATING_AI_OFFLINE_UNSUMMARIZED_CHAR_CAP = 80_000
+
+/** 「最近剧情」「场景人物线索」注入软上限 */
+export const DATING_AI_HISTORY_PROMPT_MAX = 60_000
+
+export const DATING_AI_SCENE_HINTS_PROMPT_MAX = 20_000
 
 export type NarrativeGenOptions = {
   /** 期望字数（大概值，非硬性） */

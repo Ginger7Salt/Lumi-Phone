@@ -263,43 +263,12 @@ export const PROSE_FORBIDDEN_SCAN_TERM_COUNT = PROSE_FORBIDDEN_SCAN_TERMS.length
 export const LUMI_COT_LEXICON_SCAN: readonly string[] = PROSE_FORBIDDEN_SCAN_TERMS
 
 /**
- * 对「可见剧情正文」做禁词全表扫描（不含思维链；调用方应先 `splitDatingAssistantOutput` 等）。
- * @returns 命中词或结构标签（稳定排序，便于提示与去重）
- */
-export function findProseForbiddenHits(proseBody: string): string[] {
-  const text = String(proseBody ?? '')
-  const hits = new Set<string>()
-  for (const term of PROSE_FORBIDDEN_SCAN_TERMS) {
-    if (term.length >= 2 && text.includes(term)) hits.add(term)
-  }
-  for (const { label, pattern } of PROSE_FORBIDDEN_STRUCTURE_PATTERNS) {
-    if (pattern.test(text)) hits.add(`〔结构〕${label}`)
-  }
-  return [...hits].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
-}
-
-/** 禁词复检轮：追加在 assistant 之后，要求模型整段重写 */
-export function buildProseForbiddenRepairUserPrompt(forbiddenHits: readonly string[]): string {
-  const list = [...forbiddenHits].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')).join('、')
-  return (
-    `【程序复检·写作禁词未通过】客户端已对上一轮「正文」做**全表 substring / 结构句式**扫描（已排除思维链与 VN 语音参数块）。\n` +
-    `下列词条或结构仍出现在正文，与 system【线下/VN·文风与禁词】冲突，**你必须全部消除**（禁止同音、繁简、空格拆字、近形糊弄）。\n\n` +
-    `**命中清单**：${list}\n\n` +
-    `请**重新输出一整份**符合原请求的回复：\n` +
-    `1) 仍须先输出完整的 \`<thinking>…</thinking>\`（遵守篇幅与 Lumi 分册要求）；\n` +
-    `2) 紧接输出正文：**零比喻**、句法贴近 system 汪曾祺/萧红**唯二范文**，**不得**再含上列任一命中项；\n` +
-    `3) VN 若启用：标签与语音参数块格式不变；\n` +
-    `4) 剧情承接、人设、原 user 消息中的字数、对白占比与模式约束须全部满足。\n`
-  )
-}
-
-/**
- * 文风：短文条化 + 汪/萧两篇为唯一示范；硬核规则主要靠文末扫描词表程序化约束。
+ * 文风：短文条化 + 汪/萧两篇为唯一示范；禁词靠 system 词表 + 思维链自检，客户端不再二次请求重写。
  */
 export const PROSE_FORBIDDEN_LEXICON_PROMPT = `
 ---------------------
 【线下/VN 剧情｜文风与禁词（不约束微信线上聊天气泡）】
-违禁串须改写；文末【完整程序扫描词表】与程序 substring / 少量结构正则同源，命中退回重写。<thinking> 内勿复述冗长教条，对照本段**总则 + 唯二范文句法**即可。
+违禁串须在输出前自行改写规避；文末【完整程序扫描词表】为硬清单，须在 <thinking> 内逐项自检，**客户端不会**因命中而自动打回或追加重写请求。<thinking> 内勿复述冗长教条，对照本段**总则 + 唯二范文句法**即可。
 
 ---
 
@@ -321,6 +290,10 @@ export const PROSE_FORBIDDEN_LEXICON_PROMPT = `
 ---
 
 【自检四项】对白占比是否够；正文是否零比喻；是否躲过全文扫描违禁串；**句长与修饰密度是否贴近以上三段**，而非网文排比。
+
+---
+
+【禁止句式骨架｜同构亦禁】${PROSE_FORBIDDEN_STRUCTURE_PATTERNS.map((p) => p.label).join('、')}
 
 ---
 

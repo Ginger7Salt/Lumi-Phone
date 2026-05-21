@@ -15,12 +15,22 @@ import type {
   WeChatReplyToMeta,
 } from './newFriendsPersona/types'
 import { genderLabelZh } from './newFriendsPersona/utils'
+import { buildPrivateChatNetworkNpcPronounBlock } from './privateChatNetworkNpcPronoun'
 import {
   buildMemorySummaryCharGenderDirective,
   normalizeMemorySummaryBodyAfterModel,
 } from './memory/memorySummaryContentNormalize'
+import {
+  looksLikeMemoryJsonSchemaLeak,
+  repairMemorySummaryBodyFromModel,
+} from './memory/memorySummarySchemaLeakRepair'
 import { personaDb } from './newFriendsPersona/idb'
-import { openAiCompatibleChat, openAiCompatibleChatAny, type OpenAiCompatibleMessage } from './newFriendsPersona/ai'
+import {
+  openAiCompatibleChat,
+  openAiCompatibleChatAny,
+  openAiCompatibleChatLenient,
+  type OpenAiCompatibleMessage,
+} from './newFriendsPersona/ai'
 import { LUMI_ASSISTANT_SYSTEM_PROMPT } from './lumiAssistantPrompt'
 import {
   WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX,
@@ -426,12 +436,14 @@ export function buildWeChatPlayerThirdPersonPronounIronRule(playerIdentity: Play
   const g = playerIdentity.gender
   if (g === 'female') {
     return (
-      `\n【第三人称·用户本人·铁律】身份卡性别：**女**。凡指**玩家/用户本人**（含 NPC 对白里背称用户、群内提到用户时）必须用「**她**」，**禁止**用「他」；多人同场勿把代词接到男性 NPC 身上。\n`
+      `\n【第三人称·用户本人·铁律】身份卡性别：**女**。凡指**玩家/用户本人**（含 NPC 对白里背称用户、群内提到用户时）必须用「**她**」，**禁止**用「他」。` +
+      `提到**同人脉其他姓名**（如司予、室友等）时，以【同人脉·第三人他/她分轨】表为准，**禁止**把用户本人的「她」套到男性第三者身上。\n`
     )
   }
   if (g === 'male') {
     return (
-      `\n【第三人称·用户本人·铁律】身份卡性别：**男**。凡指**玩家/用户本人**（含 NPC 对白里背称用户、群内提到用户时）必须用「**他**」，**禁止**用「她」；**禁止**因场上有女性 NPC、「总裁/总」等称谓而把用户写成女性人称。\n`
+      `\n【第三人称·用户本人·铁律】身份卡性别：**男**。凡指**玩家/用户本人**（含 NPC 对白里背称用户、群内提到用户时）必须用「**他**」，**禁止**用「她」；**禁止**因场上有女性 NPC、「总裁/总」等称谓而把用户写成女性人称。` +
+      `提到**同人脉其他姓名**时，以【同人脉·第三人他/她分轨】表为准，勿与用户本人人称混淆。\n`
     )
   }
   return `\n【第三人称·用户本人】身份卡为**非二元/其它**：背称用户优先用「其」、职位或「对方」，避免错配「他/她」。\n`
@@ -559,6 +571,8 @@ export function buildSystemContent(params: {
   worldBookPlayerIdentity?: PlayerIdentity | null
   /** 世界书 {{user}} 分线标签，如「微信号A · 扮演「社长」」 */
   worldBookUserLineLabel?: string
+  /** 同人脉第三人他/她分轨表（由 materializeSystemContent 预组装） */
+  networkNpcPronounBlock?: string
 }): string {
   const worldBookIdentity = params.worldBookPlayerIdentity ?? params.playerIdentity
   const expandNames = resolveCharUserNamesForPrompt({
@@ -679,7 +693,9 @@ export function buildSystemContent(params: {
     extra += `\n\n---\n【当前状态】未绑定完整人设档案（无世界书）。请以友善、有分寸的微信好友身份交谈，仍须遵守上述通用铁则，且绝不暴露非人类身份。\n`
   }
 
-  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${unsPriv}${unsGrp}${unsMeet}${offlinePlots}${meetEncounter}${meetContinuity}${altProbe}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
+  const networkNpcPronoun =
+    params.promptMode === 'persona' ? params.networkNpcPronounBlock?.trim() || '' : ''
+  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${unsPriv}${unsGrp}${unsMeet}${offlinePlots}${meetEncounter}${meetContinuity}${altProbe}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${networkNpcPronoun}${peerLine}`
   return linkedExpand(rawMain)
 }
 
@@ -690,9 +706,17 @@ async function materializeSystemContent(params: BuildSystemContentParams): Promi
   const worldBookTextForPrompt = params.character
     ? await buildWorldBookTextForPrompt(params.character)
     : ''
+  const networkNpcPronounBlock =
+    params.character && params.promptMode === 'persona'
+      ? await buildPrivateChatNetworkNpcPronounBlock({
+          character: params.character,
+          playerThirdPersonRule: buildWeChatPlayerThirdPersonPronounIronRule(params.playerIdentity),
+        })
+      : ''
   const raw = buildSystemContent({
     ...params,
     worldBookTextForPrompt,
+    networkNpcPronounBlock,
   })
   const wbIden = params.worldBookPlayerIdentity ?? params.playerIdentity ?? null
   return expandSystemPromptPlaceholders(raw, {
@@ -1998,9 +2022,16 @@ export type MemoryAutoSummaryResult = {
   memorySupplementKeywords?: string[]
 }
 
+function finalizeMemorySummaryContent(raw: string): string {
+  const repaired = repairMemorySummaryBodyFromModel(raw)
+  if (!repaired.trim()) return ''
+  if (looksLikeMemoryJsonSchemaLeak(repaired)) return ''
+  return repaired.trim()
+}
+
 function clampMemorySummaryTriggers(o: MemoryAutoSummaryResult): MemoryAutoSummaryResult {
   return {
-    content: o.content.trim(),
+    content: finalizeMemorySummaryContent(o.content),
     memoryTriggerCategory: clampModelMemoryTriggerCategory(o.memoryTriggerCategory),
     memoryTriggerPrecise: clampModelMemoryTriggerPrecise(o.memoryTriggerPrecise),
     memoryTriggerEmotionNeed: clampModelMemoryEmotionNeedList(o.memoryTriggerEmotionNeed),
@@ -2180,12 +2211,14 @@ export async function requestUnifiedMemorySummary(params: {
 }
 
 function sanitizeUnifiedMemorySummaryPlainContent(raw: string): string {
-  return normalizeMemorySummaryBodyAfterModel(
+  const stripped = repairMemorySummaryBodyFromModel(
     String(raw ?? '')
       .replace(/^\s*【[^】]+】\s*/g, '')
       .replace(/^\s*(\[遇见\]|\[私聊\]|\[线上\]|\[线下\]|\[群聊\]|\[关联线下\])+\s*/g, '')
       .trim(),
   )
+  if (!stripped || looksLikeMemoryJsonSchemaLeak(stripped)) return ''
+  return normalizeMemorySummaryBodyAfterModel(stripped)
 }
 
 async function buildMemorySummaryPeerGenderAppendix(peerCharacterId: string | null | undefined): Promise<string> {
@@ -2286,7 +2319,7 @@ export function buildDatingCombinedMemoryUserAppendix(params: {
   return `
 ---------------------
 【同一回复内追加：合并长期记忆 JSON（必须执行）】
-在你写完完整剧情正文之后：若本轮包含 VN「【VN语音参数】…【VN语音参数结束】」隐藏块，须放在剧情正文之后、本 JSON 之前；否则紧接在剧情正文最后一行之后。**另起一行**输出且**仅一行**分隔符（勿加前后空格）：
+在你写完完整剧情正文之后：若本轮包含 VN「【VN语音参数】…【VN语音参数结束】」隐藏块，须放在剧情正文之后；**另起一行**输出且**仅一行**分隔符（勿加前后空格）：
 ${DATING_UNIFIED_MEMORY_JSON_DELIMITER}
 分隔符之后直到全文结束，输出**恰好一个** JSON 对象（禁止 markdown 围栏、禁止 JSON 前后解释），结构如下：
 ${UNIFIED_MEMORY_LINKED_JSON_RULE}
@@ -2308,7 +2341,7 @@ ${roster}
 【线上聊天摘录（未总结）】
 ${onlineBlock}
 
-【线下·游标后已有剧情（不含你本轮将写的正文；本轮正文以上文输出为准）】
+【线下·游标后已有剧情（不含你本轮将写的正文）】
 ${off}
 
 【人脉 NPC 线下关联摘录】
@@ -2390,6 +2423,74 @@ export function parseUnifiedMemorySummaryWithLinkedModelOutput(raw: string): Uni
   }
 }
 
+const DATING_LINKED_MEMORY_FALLBACK_SYSTEM = `
+你是「人脉关联长期记忆」提取助手。用户会提供「线下约会剧情摘录」「人脉 NPC 线下关联摘录」与可关联角色 id 表。
+要求：
+- primary.content 必须为 ""（空字符串，不写主角备忘）。
+- linked：综合「线下约会剧情摘录」全文与「人脉 NPC 摘录」；为 id 表中在本段材料里有可核对事实的 NPC 各写一条；**全文第三人称**；指称须 {{user}}/{{char}}/{{archive_char}}/{{id:UUID}}，禁止材料真名与「我」。
+- **约会特则**：即使「人脉 NPC 摘录」为（无），只要「线下约会剧情摘录」中出现该 id 对应角色的可核对言行或互动，仍须写 linked；勿因摘录为（无）就整段 linked 留空。
+- linked.character_id **只能**使用用户给出的 id 表反引号内的 id；禁止编造；**禁止**把当前约会对象 id 写入 linked。
+- 只总结材料中可直接核对的事实；禁止臆造；每条 linked 约 40～160 字。
+${UNIFIED_MEMORY_LINKED_JSON_RULE}
+`.trim()
+
+/**
+ * 约会剧情模型未输出尾部 JSON 时的补救：仅补写人脉 linked（primary 留空），prompt 含约会特则（摘录为（无）仍可写 linked）。
+ */
+export async function requestDatingLinkedMemoryFallbackSummary(params: {
+  apiConfig: ApiConfig | null
+  offlineTextBlock: string
+  npcLinkedExcerptsBlock: string
+  eligibleLinkedNpcRoster: string
+  datingPeerCharacterId: string
+  peerFallback?: string
+  peerCharacterId?: string
+  /** 本轮刚生成的 AI 剧情正文（去思维链），补救时优先核对 */
+  latestAiPlotBody?: string
+}): Promise<UnifiedMemorySummaryWithLinkedResult> {
+  const cfg = params.apiConfig
+  if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
+    throw new Error('未配置 AI API')
+  }
+  let offlineBlock = String(params.offlineTextBlock || '').trim()
+  if (!offlineBlock) offlineBlock = '（无）'
+  if (offlineBlock.length > 8000) offlineBlock = `${offlineBlock.slice(0, 8000)}\n\n（以下线下摘录因长度已截断）`
+  let npcBlock = String(params.npcLinkedExcerptsBlock || '').trim()
+  if (!npcBlock) npcBlock = '（无）'
+  if (npcBlock.length > 12000) npcBlock = `${npcBlock.slice(0, 12000)}\n\n（人脉 NPC 摘录因长度已截断）`
+  const peerId = String(params.datingPeerCharacterId || '').trim() || '（当前视角）'
+  const roster = String(params.eligibleLinkedNpcRoster || '').trim() || '（当前无人脉子角色）'
+  const genderAppendix = await buildMemorySummaryPeerGenderAppendix(params.peerCharacterId)
+  let latestRound = String(params.latestAiPlotBody || '').trim()
+  if (latestRound.length > 6000) {
+    latestRound = `${latestRound.slice(0, 6000)}\n\n（本轮正文因长度已截断）`
+  }
+  const latestRoundBlock = latestRound
+    ? `【本轮刚生成的约会剧情正文（优先据此写 linked）】\n${latestRound}\n\n`
+    : ''
+  const messages: OpenAiCompatibleMessage[] = [
+    { role: 'system', content: DATING_LINKED_MEMORY_FALLBACK_SYSTEM },
+    {
+      role: 'user',
+      content:
+        `请仅基于下列材料输出 JSON（primary.content 必须为 ""）：\n\n` +
+        `【人脉可关联角色 id 表】（linked.character_id 仅可从中选择；勿选 \`${peerId}\`）\n${roster}\n\n` +
+        latestRoundBlock +
+        `【线下约会剧情摘录（含本轮）】\n${offlineBlock}\n\n` +
+        `【人脉 NPC 线下关联摘录】\n${npcBlock}\n\n` +
+        `【指称】材料真名不得写入 content；须占位符；禁止「我」。${genderAppendix}`,
+    },
+  ]
+  const text = await openAiCompatibleChatLenient(cfg, messages, {
+    temperature: 0.35,
+    max_tokens: 1800,
+  })
+  if (!text.trim()) {
+    throw new Error('关联记忆补救：模型返回为空或无法解析')
+  }
+  return parseUnifiedMemorySummaryWithLinkedModelOutput(text)
+}
+
 /**
  * 微信线上 + 约会线下 + 人脉 NPC 关联线下摘录，**单次模型调用**合并总结（primary 写入当前私聊对象；linked 由调用方校验 id 后写入各 NPC）。
  */
@@ -2444,10 +2545,13 @@ export async function requestUnifiedMemorySummaryWithLinked(params: {
         pointerHint,
     },
   ]
-  const text = await openAiCompatibleChat(cfg, messages, {
+  const text = await openAiCompatibleChatLenient(cfg, messages, {
     temperature: 0.35,
     max_tokens: 2200,
   })
+  if (!text.trim()) {
+    throw new Error('合并记忆总结：模型返回为空或无法解析')
+  }
   return parseUnifiedMemorySummaryWithLinkedModelOutput(text)
 }
 

@@ -43,7 +43,13 @@ export async function getCharacterMemoryRelevanceTraceForPromptInjection(
     }),
   ])
   return {
-    keywordHits: [...own.keywordHits, ...linked.keywordHits],
-    vectorRetrievals: [...own.vectorRetrievals, ...linked.vectorRetrievals],
+    keywordHits: [
+      ...own.keywordHits.map((h) => ({ ...h, memoryBucket: 'own' as const })),
+      ...linked.keywordHits.map((h) => ({ ...h, memoryBucket: 'linked' as const })),
+    ],
+    vectorRetrievals: [
+      ...own.vectorRetrievals.map((h) => ({ ...h, memoryBucket: 'own' as const })),
+      ...linked.vectorRetrievals.map((h) => ({ ...h, memoryBucket: 'linked' as const })),
+    ],
   }
 }

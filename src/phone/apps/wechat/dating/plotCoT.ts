@@ -3,6 +3,11 @@
  * 供存盘（DatingContext）与展示兜底（DatingStoryPage）共用。
  */
 
+import { stripVnVoiceParamsPayload } from './vnVoiceParamsStrip'
+
+import type { PlotItem } from './types'
+import { getAiPlotVersionSlices } from './plotVersions'
+
 export const DATING_COT_TAG_PATTERNS: RegExp[] = [
   /<thinking\b[^>]*>([\s\S]*?)<\/thinking>/i,
   /** 少数网关/模型误用短闭合标签 */
@@ -56,6 +61,15 @@ function stripFirstCoTBlock(src: string): { inner: string; rest: string } | null
  * 旧逻辑：把 `<thinking>` 之后**整段**当思维链 → 正文恒为空，界面变成「剧情进思维链、字数 0」。
  * 现改为：仅在与「典型分册思维链」体量一致时才吞掉；过长或不像分册结构则放弃本条路径，避免误吞正文。
  */
+/** VN/普通约会剧情标签，不应计入 Lumi 分册思维链的【】计数 */
+const VN_OR_PLOT_SCENE_BRACKET_RE =
+  /^【\s*(?:旁白|对白|内心|心声|OS|os|VN语音参数|VN语音参数结束)(?:\s*[｜|][^】]*)?\s*】$/u
+
+function countLumiStyleCoTMarkers(text: string): number {
+  const brackets = text.match(/【[^】]{2,120}】/g) || []
+  return brackets.filter((b) => !VN_OR_PLOT_SCENE_BRACKET_RE.test(String(b).trim())).length
+}
+
 function stripUnclosedThinkingBlock(src: string): { inner: string; rest: string } | null {
   if (/<\/thinking>/i.test(src)) return null
   const open = /<thinking\b[^>]*>/i.exec(src)
@@ -63,8 +77,12 @@ function stripUnclosedThinkingBlock(src: string): { inner: string; rest: string 
   const after = src.slice(open.index + open[0].length).trim()
   if (!after) return null
   if (after.length > 4200) return null
-  const bracketChunks = after.match(/【[^】]+】/g) || []
-  if (after.length > 700 && bracketChunks.length < 2) return null
+  const lumiMarkers = countLumiStyleCoTMarkers(after)
+  const plotSceneTags = (after.match(/【\s*(?:旁白|对白|内心|心声|OS|os)\b/gu) || []).length
+  /** 未闭合 thinking 里若是 VN 剧情（旁白/对白等），整段当正文，避免主区域空白、字数只在折叠里 */
+  if (plotSceneTags >= 1 && lumiMarkers < 2) return null
+  if (after.length > 700 && lumiMarkers < 2) return null
+  if (lumiMarkers < 2 && after.length < 4500) return null
   return { inner: after, rest: '' }
 }
 
@@ -72,9 +90,11 @@ function stripUnclosedThinkingBlock(src: string): { inner: string; rest: string 
 function looksLikeStructuredCoT(s: string): boolean {
   const t = String(s || '').trim()
   if (!t) return false
-  if (t.length < 160) return true
-  const brackets = (t.match(/【[^】]{2,120}】/g) || []).length
-  if (brackets >= 4) return true
+  const lumiMarkers = countLumiStyleCoTMarkers(t)
+  const plotSceneTags = (t.match(/【\s*(?:旁白|对白|内心|心声|OS|os)\b/gu) || []).length
+  if (plotSceneTags >= 2 && lumiMarkers < 2) return false
+  if (t.length < 160) return lumiMarkers >= 1
+  if (lumiMarkers >= 3) return true
   if (/【\s*Lumi终检单\s*】|终检单】|【\s*篇幅/.test(t)) return true
   return false
 }
@@ -141,5 +161,50 @@ export function splitDatingAssistantOutput(raw: string): {
     }
   }
 
+  finalContent = finalContent.replace(/\n?【本节梗概】\s*[^\n]{0,400}\s*$/u, '').trimEnd()
+
   return { logicPass, planSummary, content: finalContent }
+}
+
+/** 思维溯源 / 主界面展示：与 split 规则一致，并剥离 VN 语音参数块 */
+export function resolveDatingAssistantDisplayText(raw: string): {
+  thinkingText: string
+  displayBody: string
+} {
+  const sp = splitDatingAssistantOutput(raw)
+  let thinkingText = (sp.logicPass || sp.planSummary || '').trim()
+  let displayBody = stripVnVoiceParamsPayload(sp.content)
+  if (!displayBody.trim() && thinkingText.trim()) {
+    const lp = thinkingText.trim()
+    if (!looksLikeStructuredCoT(lp) && lp.length > 35) {
+      displayBody = stripVnVoiceParamsPayload(lp)
+      thinkingText = ''
+    }
+  }
+  return { thinkingText, displayBody }
+}
+
+/** StoryBlock 展示：优先当前版本正文，并与 resolveDatingAssistantDisplayText 对齐 */
+export function resolveDatingPlotDisplayFromItem(plot: PlotItem): {
+  thinkingText: string
+  displayBody: string
+} {
+  if (plot.type !== 'ai') {
+    return { thinkingText: '', displayBody: String(plot.content || '') }
+  }
+  const { body } = getAiPlotVersionSlices(plot)
+  const raw = String(body || plot.content || '').trim()
+  const storedCoT = plot.logicPass?.trim()
+  const resolved = resolveDatingAssistantDisplayText(raw)
+  let thinkingText =
+    (storedCoT || resolved.thinkingText || plot.planSummary?.trim() || '').trim()
+  let displayBody = resolved.displayBody
+  if (!displayBody.trim() && thinkingText.trim()) {
+    const promoted = resolveDatingAssistantDisplayText(thinkingText)
+    if (promoted.displayBody.trim()) {
+      displayBody = promoted.displayBody
+      if (!looksLikeStructuredCoT(thinkingText)) thinkingText = promoted.thinkingText
+    }
+  }
+  return { thinkingText, displayBody }
 }

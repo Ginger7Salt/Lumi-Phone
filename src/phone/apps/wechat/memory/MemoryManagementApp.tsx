@@ -1,8 +1,7 @@
 import { ArrowLeft } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { WeChatContactRow } from '../../../../components/WeChatContactsInstagram'
 import { Pressable } from '../../../components/Pressable'
-import { personaDb } from '../newFriendsPersona/idb'
 import { MemoryDashboard } from './MemoryDashboard'
 import { MemoryEngineConfig } from './MemoryEngineConfig'
 import { ARCHIVE_BG } from './memoryArchiveTheme'
@@ -64,28 +63,8 @@ export function MemoryManagementApp({
   currentWechatAccountId?: string
   onBack: () => void
 }) {
-  const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'config' | 'memories'>('config')
   const [hubTutorialOpen, setHubTutorialOpen] = useState(false)
-
-  const reload = useCallback(async () => {
-    setLoading(true)
-    try {
-      await personaDb.getMemorySettings()
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void reload()
-  }, [reload])
-
-  useEffect(() => {
-    const onEvt = () => void reload()
-    window.addEventListener('wechat-storage-changed', onEvt)
-    return () => window.removeEventListener('wechat-storage-changed', onEvt)
-  }, [reload])
 
   const pid = playerIdentityId?.trim() ?? ''
 
@@ -140,24 +119,26 @@ export function MemoryManagementApp({
             </Pressable>
           </div>
         </div>
-        {activeTab === 'config' ? (
-          <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch]">
-            <MemoryEngineConfig />
-          </div>
-        ) : loading ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center text-[13px] text-gray-400">
-            加载中…
-          </div>
-        ) : (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <MemoryDashboard
-              contacts={contacts}
-              playerIdentityId={pid || '__none__'}
-              playerDisplayName={playerDisplayName.trim() || '我'}
-              currentWechatAccountId={currentWechatAccountId}
-            />
-          </div>
-        )}
+        <div
+          className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch] ${
+            activeTab === 'config' ? '' : 'hidden'
+          }`}
+          aria-hidden={activeTab !== 'config'}
+        >
+          <MemoryEngineConfig />
+        </div>
+        <div
+          className={`flex min-h-0 flex-1 flex-col overflow-hidden ${activeTab === 'memories' ? '' : 'hidden'}`}
+          aria-hidden={activeTab !== 'memories'}
+        >
+          {/* 保持挂载：删除/保存会广播 wechat-storage-changed，勿因 loading 卸载导致 Tab 回到默认 */}
+          <MemoryDashboard
+            contacts={contacts}
+            playerIdentityId={pid || '__none__'}
+            playerDisplayName={playerDisplayName.trim() || '我'}
+            currentWechatAccountId={currentWechatAccountId}
+          />
+        </div>
       </div>
     </div>
   )

@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, X } from 'lucide-react'
-import type { MemoryTraceData, MemoryTraceLineRelation } from './memoryTraceTypes'
+import type {
+  MemoryTraceData,
+  MemoryTraceLineRelation,
+  MemoryTraceMemoryBucket,
+} from './memoryTraceTypes'
 import { lineRelationUiLabel } from './wechatMemoryLineScope'
 
 export type { MemoryTraceData } from './memoryTraceTypes'
@@ -16,9 +20,27 @@ function pct(score: number): string {
   return `${Math.round(score * 1000) / 10}%`
 }
 
+function MemoryBucketBadge(props: { memoryBucket?: MemoryTraceMemoryBucket }) {
+  const bucket = props.memoryBucket
+  if (!bucket) return null
+  const isLinked = bucket === 'linked'
+  return (
+    <span
+      className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold tracking-wide"
+      style={{
+        background: isLinked ? 'rgba(99,102,241,0.12)' : 'rgba(212,175,55,0.1)',
+        color: isLinked ? '#4338ca' : '#8B6914',
+      }}
+    >
+      {isLinked ? '关联记忆' : '角色记忆'}
+    </span>
+  )
+}
+
 function LineScopeBadge(props: {
   sourceLineLabel?: string
   lineRelation?: MemoryTraceLineRelation
+  memoryBucket?: MemoryTraceMemoryBucket
 }) {
   const label = props.sourceLineLabel?.trim()
   const rel = props.lineRelation
@@ -28,6 +50,7 @@ function LineScopeBadge(props: {
   const isOther = rel === 'other'
   return (
     <p className="mb-1 flex flex-wrap items-center gap-1.5">
+      <MemoryBucketBadge memoryBucket={props.memoryBucket} />
       {relText ? (
         <span
           className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold tracking-wide"
@@ -404,6 +427,9 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                       </p>
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">尚未总结 · 线下剧情</p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+                          仅展示注入模型的剧情正文摘录；节选规则与禁止编造等说明仅写入 prompt，不在此重复。
+                        </p>
                         <ul className="mt-2 space-y-3">
                           {matrix.recentContext.unsummarizedOfflinePlots.map((row, i) => (
                             <li key={i} className="flex gap-3 text-[13px] leading-relaxed text-neutral-700">
@@ -451,15 +477,20 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                     <div className="space-y-5 px-1">
                       <p className="text-[11px] leading-relaxed text-neutral-500">
                         每条长期记忆标注来源微信账号与扮演马甲；「当前微信线」相对本窗口会话，「其它微信线」勿默认对方已知。
+                        「关联记忆」来自主角线下约会剧情，仅在与该人脉私聊时可能召回。
                       </p>
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">Keyword Hits · 关键词命中</p>
+                        {matrix.deepMemory.keywordHits.length === 0 ? (
+                          <p className="mt-2 text-[12px] text-neutral-400">本轮未命中关键词或始终触发条目</p>
+                        ) : null}
                         <ul className="mt-2 space-y-3">
                           {matrix.deepMemory.keywordHits.map((row, i) => (
                             <li key={i} className="rounded-lg border border-neutral-100 bg-neutral-50/50 p-3">
                               <LineScopeBadge
                                 sourceLineLabel={row.sourceLineLabel}
                                 lineRelation={row.lineRelation}
+                                memoryBucket={row.memoryBucket}
                               />
                               <p className="font-mono text-[11px] font-semibold tracking-wide" style={{ color: PLATINUM }}>
                                 {row.keyword}
@@ -471,6 +502,9 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                       </div>
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">Vector Search · 向量检索</p>
+                        {matrix.deepMemory.vectorRetrievals.length === 0 ? (
+                          <p className="mt-2 text-[12px] text-neutral-400">本轮未召回向量相近条目（或未开启语义召回）</p>
+                        ) : null}
                         <ul className="mt-2 space-y-3">
                           {matrix.deepMemory.vectorRetrievals.map((row, i) => (
                             <li
@@ -481,6 +515,7 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                                 <LineScopeBadge
                                   sourceLineLabel={row.sourceLineLabel}
                                   lineRelation={row.lineRelation}
+                                  memoryBucket={row.memoryBucket}
                                 />
                                 <p className="text-[12px] leading-relaxed text-neutral-600">{row.content}</p>
                               </div>

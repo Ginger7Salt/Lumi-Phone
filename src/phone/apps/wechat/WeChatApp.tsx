@@ -72,6 +72,7 @@ import { RedPacketHistoryPage } from './redPacket/RedPacketHistoryPage'
 import { WeChatProfileEditModal } from './WeChatProfileEditModal'
 import { MemoryTraceModal } from './MemoryTraceModal'
 import { WorldBookAfterPatchNoticeHost } from './WorldBookAfterPatchNoticeHost'
+import { DatingPlotCompletionToastHost } from './dating/DatingPlotCompletionToastHost'
 import { getLastMemoryTrace, hydrateMemoryTraceFromIndexedDb, subscribeLastMemoryTrace } from './memoryTraceStore'
 import { ChatThemeProvider, useChatTheme } from './ChatThemeContext'
 import { WeChatConsoleFloatingPanel } from './WeChatConsoleFloatingPanel'
@@ -6723,6 +6724,7 @@ function WeChatAppInner({ onBack }: Props) {
       />
       <MemoryTraceModal open={memoryTraceOpen} onClose={() => setMemoryTraceOpen(false)} data={memoryTraceSnapshot} />
       <WorldBookAfterPatchNoticeHost />
+      <DatingPlotCompletionToastHost />
       <MeetVol10EpilogueNoticeHost />
 
       <AnimatePresence>

@@ -4,6 +4,8 @@ import {
   resolveOfflineDatingArchiveContext,
   textMentionsAnyToken,
 } from './dating/offlineDatingArchiveResolve'
+import { buildOfflinePlotsFullText } from './dating/loadOfflineDatingPlotsForWechatPrompt'
+import { offlinePlotBodyRelevantToNpcForLinkedExcerpt } from './dating/offlineDatingNpcSpeakerDetect'
 import { splitDatingAssistantOutput } from './dating/plotCoT'
 import { extractVnVoiceParamsBlock } from './dating/vnVoiceParamsStrip'
 import { findGroupMember } from './groupChatUtils'
@@ -16,9 +18,11 @@ import type {
   WeChatChatMessage,
   WorldBookUserPlaceholderBinding,
 } from './newFriendsPersona/types'
+import { dispatchDatingLinkedMemorySummarySuccess } from './dating/datingLinkedMemorySummarySuccessEvents'
 import { dispatchMeetMemorySummarySuccess } from '../lumiMeet/meetMemorySummarySuccessEvents'
 import {
   parseUnifiedMemorySummaryWithLinkedModelOutput,
+  requestDatingLinkedMemoryFallbackSummary,
   requestGroupChatMemorySummary,
   requestUnifiedMemorySummaryWithLinked,
   type ChatTranscriptTurn,
@@ -33,7 +37,12 @@ import {
   WECHAT_GROUP_BOT_CHARACTER_ID,
   WECHAT_GROUP_USER_CHAR_ID,
 } from './wechatConversationKey'
-import { resolveMemoryUserInsertContextFromSource } from './memoryUserPlaceholderBindings'
+import {
+  buildMemoryUserPlaceholderBindingsForContent,
+  hasMemoryUserPlaceholderBindIds,
+  resolveDatingLinkedMemoryUserBindCtx,
+  resolveMemoryUserInsertContextFromSource,
+} from './memoryUserPlaceholderBindings'
 import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtils'
 import {
   sanitizeGroupMemorySummaryBody,
@@ -57,6 +66,7 @@ export type DatingPlotSnapshotItem = {
   timestamp?: number
   /** 剧情气泡 id；约会关联记忆按轮覆盖时需要 */
   id?: string
+  planSummary?: string
 }
 
 /** 从快照末尾向前找最近一条 AI 剧情 id（用于约会关联记忆按气泡覆盖） */
@@ -83,9 +93,16 @@ function extractPlotsFromArchives(raw: unknown, characterId: string): DatingPlot
     const timestamp =
       typeof o.timestamp === 'number' && Number.isFinite(o.timestamp) ? o.timestamp : 1
     const id = typeof o.id === 'string' && o.id.trim() ? o.id.trim() : undefined
+    const planSummary = typeof o.planSummary === 'string' ? o.planSummary : undefined
     if (!content.trim()) continue
     if (type !== 'player' && type !== 'ai') continue
-    out.push({ type, content, timestamp, ...(id ? { id } : {}) })
+    out.push({
+      type,
+      content,
+      timestamp,
+      ...(id ? { id } : {}),
+      ...(planSummary ? { planSummary } : {}),
+    })
   }
   return out
 }
@@ -181,19 +198,26 @@ export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
     .sort((a, b) => (a.timestamp ?? 1) - (b.timestamp ?? 1))
 
   const peer = params.characterRealName.trim() || '对方'
-  const offlineLines: string[] = []
-  for (const p of offlinePlotsPrior) {
-    let t = String(p.content || '').trim()
-    if (!t) continue
-    if (p.type === 'ai') {
-      const prose = splitDatingAssistantOutput(t).content.trim()
-      t = extractVnVoiceParamsBlock(prose).cleanedText.trim()
-    }
-    if (!t) continue
-    if (p.type === 'player') offlineLines.push(`我：${t}`)
-    else offlineLines.push(`${peer}：${t}`)
+  const borrowed =
+    !!(archCtx && archCtx.perspectiveCharacterId !== archCtx.archiveCharacterId)
+  const plotBuildCommon = {
+    plots: offlinePlotsPrior,
+    plotCursorMin: dMin,
+    borrowed,
+    rootName: (archCtx?.archiveOwner?.name ?? '').trim() || '主角',
+    peerLabel: peer,
+    filterNpc:
+      borrowed && archCtx?.perspective
+        ? (_plot: DatingPlotSnapshotItem, body: string) =>
+            offlinePlotBodyRelevantToNpcForLinkedExcerpt(
+              body,
+              archCtx.perspective!,
+              collectCharacterMentionSearchTokens(archCtx.perspective),
+            )
+        : undefined,
+    maxChars: 7500,
   }
-  const offlineBlock = offlineLines.join('\n')
+  const offlineBlock = buildOfflinePlotsFullText(plotBuildCommon)
 
   const hadOnline = onlineTranscript.length > 0
   const hadOfflinePrior = offlineBlock.trim().length > 0
@@ -248,6 +272,97 @@ export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
   }
 }
 
+export function latestAiPlotBodyFromSnapshot(plots: DatingPlotSnapshotItem[]): string {
+  for (let i = plots.length - 1; i >= 0; i--) {
+    const p = plots[i]
+    if (p?.type !== 'ai') continue
+    const raw = String(p.content || '').trim()
+    if (!raw) return ''
+    const prose = splitDatingAssistantOutput(raw).content.trim()
+    return extractVnVoiceParamsBlock(prose).cleanedText.trim()
+  }
+  return ''
+}
+
+/** 本轮线下是否可能出现需写 linked 的人脉 NPC（摘录 allowed 集或正文提及均可）。 */
+export async function datingTurnMayNeedLinkedMemoryWrite(
+  gather: UnifiedMemoryGatherResult,
+  plotsSnapshotAfterAi: DatingPlotSnapshotItem[],
+): Promise<boolean> {
+  if (gather.npcLinked.allowedNpcIds.size > 0) return true
+  const owner = gather.npcLinked.linkedArchiveOwnerId.trim() || gather.plotsArchiveId.trim()
+  if (!owner) return false
+  const latestBody = latestAiPlotBodyFromSnapshot(plotsSnapshotAfterAi)
+  if (!latestBody.trim()) return false
+  try {
+    const npcs = await personaDb.listNpcsFor(owner)
+    const peer = gather.characterId.trim()
+    const others = npcs.filter((n) => {
+      const id = String(n.id || '').trim()
+      return id && id !== peer
+    })
+    if (!others.length) return false
+    for (const npc of others) {
+      const toks = collectCharacterMentionSearchTokens(npc as Character)
+      if (offlinePlotBodyRelevantToNpcForLinkedExcerpt(latestBody, npc as Character, toks)) return true
+    }
+    /** 有人脉且本轮 AI 正文足够长时仍尝试补救（部分模型不写 NPC 真名，避免关联记忆永不触发） */
+    if (latestBody.length >= 48) return true
+  } catch {
+    return false
+  }
+  return false
+}
+
+/**
+ * 约会同轮 HTTP 未带合并记忆 JSON 时的补救：单独请求只写 linked（不写 primary、不推进游标）。
+ */
+export async function runDatingLinkedMemoryFallbackWhenNoJsonTail(params: {
+  apiConfig: ApiConfig | null
+  gather: UnifiedMemoryGatherResult
+  offlinePlotsForCursorAdvance: DatingPlotSnapshotItem[]
+  datingAiPlotId?: string | null
+  eligibleLinkedNpcRoster: string
+  /** 本轮 AI 剧情正文（去思维链），补救请求必带 */
+  latestAiPlotBody?: string
+}): Promise<{ applied: boolean; linkedNpcNamesWritten: string[] }> {
+  const cfg = params.apiConfig
+  if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
+    return { applied: false, linkedNpcNamesWritten: [] }
+  }
+  const memSettings = await personaDb.getMemorySettings()
+  if (memSettings.linkedMemoryAutoSummaryEnabled === false) {
+    return { applied: false, linkedNpcNamesWritten: [] }
+  }
+  try {
+    const summary = await requestDatingLinkedMemoryFallbackSummary({
+      apiConfig: cfg,
+      offlineTextBlock: params.gather.offlineBlock,
+      npcLinkedExcerptsBlock: params.gather.npcLinked.block,
+      eligibleLinkedNpcRoster: params.eligibleLinkedNpcRoster,
+      datingPeerCharacterId: params.gather.characterId,
+      peerFallback: params.gather.characterRealName,
+      peerCharacterId: params.gather.characterId,
+      latestAiPlotBody: params.latestAiPlotBody,
+    })
+    const r = await applyUnifiedMemoryFromParsedSummary(summary, params.gather, {
+      offlinePlotsForCursorAdvance: params.offlinePlotsForCursorAdvance,
+      tagOfflineIncludesNewAiTurn: true,
+      skipConversationRoundBump: false,
+      deferPrimaryAndUnifiedCursors: true,
+      datingAiPlotId: params.datingAiPlotId,
+      suppressLinkedMemoryToast: true,
+    })
+    return {
+      applied: !!r?.wroteAny,
+      linkedNpcNamesWritten: Array.isArray(r?.linkedNpcNamesWritten) ? r.linkedNpcNamesWritten : [],
+    }
+  } catch (e) {
+    console.warn('[dating] linked memory fallback failed', e)
+    return { applied: false, linkedNpcNamesWritten: [] }
+  }
+}
+
 /** 删除约会某轮关联记忆时须匹配的 `linkedFromCharacterId` 集合（存档根 / 线下 KV id / 当前视角人设 id 可能不一致） */
 export function linkedMemoryOwnerIdsForGather(gather: UnifiedMemoryGatherResult): string[] {
   const a = gather.npcLinked.linkedArchiveOwnerId.trim()
@@ -273,8 +388,10 @@ export async function applyUnifiedMemoryFromParsedSummary(
     deferPrimaryAndUnifiedCursors?: boolean
     /** 当前这段 AI 剧情气泡 id：写入前会先删掉本轮此前自动生成的关联记忆，便于「重新生成」覆盖 */
     datingAiPlotId?: string | null
+    /** 为 true 时不派发关联记忆成功 toast（由约会剧情后台完成弹窗合并展示） */
+    suppressLinkedMemoryToast?: boolean
   },
-): Promise<boolean> {
+): Promise<{ wroteAny: boolean; linkedNpcNamesWritten: string[] }> {
   const skipBump = opts.skipConversationRoundBump === true
   const defer = opts.deferPrimaryAndUnifiedCursors === true
   const cid = gather.characterId
@@ -283,10 +400,11 @@ export async function applyUnifiedMemoryFromParsedSummary(
   const archiveForSanitize = gather.plotsArchiveId.trim() || linkedOwnerId
 
   const memSource = parseWechatAccountPrivateConversationKey(ck)
-  const userBindCtx = await resolveMemoryUserInsertContextFromSource(
-    memSource?.wechatAccountId,
-    memSource?.sessionPlayerId,
-  )
+  const userBindCtx = await resolveDatingLinkedMemoryUserBindCtx({
+    conversationKey: ck,
+    datingPeerCharacterId: cid,
+    archiveRootId: archiveForSanitize || linkedOwnerId,
+  })
 
   let primaryBody = summary.primary.content.trim().slice(0, 2000)
   let primaryUserBindings: WorldBookUserPlaceholderBinding[] = []
@@ -322,7 +440,8 @@ export async function applyUnifiedMemoryFromParsedSummary(
     if (seenNpc.has(id)) continue
     if (id === cid) continue
 
-    let accept = allowedNpc.has(id)
+    let accept = networkNpcIdSet.has(id)
+    if (!accept && allowedNpc.has(id)) accept = true
     if (!accept && networkNpcIdSet.has(id) && offlineMentionCorpus.length > 0) {
       const npcRow = networkRows.find((n) => n.id.trim() === id) as Character | undefined
       const toks = collectCharacterMentionSearchTokens(npcRow ?? null)
@@ -340,15 +459,6 @@ export async function applyUnifiedMemoryFromParsedSummary(
   const hadOfflineTag = gather.hadOfflinePrior || opts.tagOfflineIncludesNewAiTurn
   const datingRound = opts.datingAiPlotId?.trim()
   const linkedDeleteOwners = linkedMemoryOwnerIdsForGather(gather)
-
-  /** 未到间隔且无 linked：若带约会 plot id，仍清空该轮旧关联记忆（重新生成后模型未再给 linked） */
-  if (defer && linkedWritesToPersist.length === 0) {
-    if (datingRound && linkedDeleteOwners.length) {
-      await personaDb.deleteAutoLinkedMemoriesForDatingRoundMulti(linkedDeleteOwners, datingRound)
-      return true
-    }
-    return false
-  }
 
   const wroteAny = defer
     ? linkedWritesToPersist.length > 0
@@ -373,7 +483,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
       }
       if (skipBump) await personaDb.resetMemoryAiRoundCountForConversation(ck)
     }
-    return false
+    return { wroteAny: false, linkedNpcNamesWritten: [] }
   }
 
   if (datingRound && linkedDeleteOwners.length) {
@@ -418,6 +528,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
     })
   }
 
+  const linkedNpcNamesWritten: string[] = []
   for (const entry of linkedWritesToPersist) {
     let lb = entry.content.trim().slice(0, 2000)
     if (!lb) continue
@@ -429,11 +540,21 @@ export async function applyUnifiedMemoryFromParsedSummary(
         linkedOwnerId,
         cid,
         userBindCtx,
+        { conversationKey: ck },
       )
       lb = sanitized.content.slice(0, 2000)
       linkedBindings = sanitized.userPlaceholderBindings
+      if (
+        !linkedBindings.length &&
+        lb.includes('{{user') &&
+        hasMemoryUserPlaceholderBindIds(userBindCtx)
+      ) {
+        linkedBindings = buildMemoryUserPlaceholderBindingsForContent(lb, userBindCtx)
+      }
     } catch {
-      /* 保持原文 */
+      if (lb.includes('{{user') && hasMemoryUserPlaceholderBindIds(userBindCtx)) {
+        linkedBindings = buildMemoryUserPlaceholderBindingsForContent(lb, userBindCtx)
+      }
     }
     const trimmedLinked = `[关联线下] ${lb}`
     const kwLinked = buildAutoSummaryMemoryKeywordsBackup({
@@ -443,6 +564,14 @@ export async function applyUnifiedMemoryFromParsedSummary(
       memorySupplementKeywords: entry.memorySupplementKeywords,
     })
     const npcCid = entry.characterId.trim()
+    try {
+      const npcRow = await personaDb.getCharacter(npcCid)
+      const npcLabel =
+        String(npcRow?.name ?? npcRow?.wechatNickname ?? '').trim() || npcCid.slice(0, 8)
+      linkedNpcNamesWritten.push(npcLabel)
+    } catch {
+      linkedNpcNamesWritten.push(npcCid.slice(0, 8))
+    }
     const stableLinkedId =
       datingRound && linkedOwnerId
         ? `mem-dlk--${encodeURIComponent(linkedOwnerId)}--${encodeURIComponent(datingRound)}--${encodeURIComponent(npcCid)}`
@@ -514,7 +643,14 @@ export async function applyUnifiedMemoryFromParsedSummary(
     dispatchMeetMemorySummarySuccess({ characterName: gather.characterRealName })
   }
 
-  return wroteAny
+  if (!opts.suppressLinkedMemoryToast && linkedNpcNamesWritten.length) {
+    dispatchDatingLinkedMemorySummarySuccess({
+      npcNames: linkedNpcNamesWritten,
+      protagonistName: gather.characterRealName,
+    })
+  }
+
+  return { wroteAny, linkedNpcNamesWritten }
 }
 
 /** 解析约会同一 HTTP 返回尾部的合并记忆 JSON 并落库；失败返回 false（调用方可改跑独立总结）。 */
@@ -529,19 +665,24 @@ export async function tryApplyDatingCombinedMemoryJsonTail(params: {
   writePrimaryAndAdvanceCursors: boolean
   /** 当前 AI 剧情气泡 id；重新生成同一段时会先删掉该轮旧关联记忆 */
   datingAiPlotId?: string | null
-}): Promise<boolean> {
+}): Promise<{ applied: boolean; linkedNpcNamesWritten: string[] }> {
   try {
     const summary = parseUnifiedMemorySummaryWithLinkedModelOutput(params.memoryJsonText)
     const full = params.writePrimaryAndAdvanceCursors === true
-    return await applyUnifiedMemoryFromParsedSummary(summary, params.gather, {
+    const r = await applyUnifiedMemoryFromParsedSummary(summary, params.gather, {
       offlinePlotsForCursorAdvance: params.offlinePlotsForCursorAdvance,
       tagOfflineIncludesNewAiTurn: true,
       skipConversationRoundBump: false,
       deferPrimaryAndUnifiedCursors: !full,
       datingAiPlotId: params.datingAiPlotId,
+      suppressLinkedMemoryToast: true,
     })
+    return {
+      applied: !!r?.wroteAny,
+      linkedNpcNamesWritten: Array.isArray(r?.linkedNpcNamesWritten) ? r.linkedNpcNamesWritten : [],
+    }
   } catch {
-    return false
+    return { applied: false, linkedNpcNamesWritten: [] }
   }
 }
 
@@ -600,14 +741,14 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
     peerCharacterId: gather.characterId,
   })
 
-  const ok = await applyUnifiedMemoryFromParsedSummary(summary, gather, {
+  const applied = await applyUnifiedMemoryFromParsedSummary(summary, gather, {
     offlinePlotsForCursorAdvance: gather.offlinePlotsPrior,
     tagOfflineIncludesNewAiTurn: false,
     skipConversationRoundBump: skipBump,
     datingAiPlotId: params.datingAiPlotId,
   })
 
-  if (!ok && !skipBump) {
+  if (!applied.wroteAny && !skipBump) {
     await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
   }
 }

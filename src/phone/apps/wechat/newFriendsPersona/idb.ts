@@ -5164,8 +5164,11 @@ export class PersonaDb {
     const ownerIdMap: Record<string, string> = { [owner]: baseNames.charName }
 
     const { expandWorldBookItemUserPlaceholders } = await import('../worldBookUserPlaceholderBindings')
-    const { alignCharacterMemoryUserPlaceholders, memoryNeedsUserPlaceholderAlignment } =
-      await import('../memoryUserPlaceholderBindings')
+    const {
+      alignCharacterMemoryUserPlaceholders,
+      memoryNeedsUserPlaceholderAlignment,
+      resolveMemoryExpandUserName,
+    } = await import('../memoryUserPlaceholderBindings')
 
     const expandedMemories = await Promise.all(
       memories.map(async (m) => {
@@ -5179,37 +5182,51 @@ export class PersonaDb {
           raw = aligned.content
           bindings = aligned.userPlaceholderBindings
         }
-        raw = await expandWorldBookItemUserPlaceholders(raw, bindings)
+        let userBindCharacter = ownerRow
+        if (m.memoryScope === 'linked') {
+          const lr = (m.linkedFromCharacterId || '').trim() || ownerRow?.generatedForCharacterId?.trim() || ''
+          if (lr) {
+            try {
+              userBindCharacter = (await this.getCharacter(lr)) ?? ownerRow
+            } catch {
+              userBindCharacter = ownerRow
+            }
+          }
+        }
+        raw = await expandWorldBookItemUserPlaceholders(raw, bindings, userBindCharacter)
         return { m, raw }
       }),
     )
 
-    return expandedMemories.map(({ m, raw }) => {
-      if (!raw.includes('{{')) return raw
-      const lr = (m.linkedFromCharacterId || '').trim()
-      let archiveCharName: string | undefined
-      let idToDisplayName: Record<string, string> | undefined
-      if (m.memoryScope === 'linked' && lr && rootMeta.has(lr)) {
-        const meta = rootMeta.get(lr)!
-        archiveCharName = meta.archiveName
-        idToDisplayName = { ...npcNetworkIdMap, ...meta.idMap, ...ownerIdMap, ...groupPeerIdMap }
-      } else if (m.memoryScope === 'group') {
-        idToDisplayName = { ...npcNetworkIdMap, ...ownerIdMap, ...groupPeerIdMap }
-      } else {
-        idToDisplayName = { ...npcNetworkIdMap, ...ownerIdMap, ...groupPeerIdMap }
-        if (npcArchiveMainDisplayName) {
-          archiveCharName = npcArchiveMainDisplayName
-        } else if (ownerRow && !npcRootId) {
-          archiveCharName = baseNames.charName
+    return Promise.all(
+      expandedMemories.map(async ({ m, raw }) => {
+        if (!raw.includes('{{')) return raw
+        const lr = (m.linkedFromCharacterId || '').trim()
+        let archiveCharName: string | undefined
+        let idToDisplayName: Record<string, string> | undefined
+        if (m.memoryScope === 'linked' && lr && rootMeta.has(lr)) {
+          const meta = rootMeta.get(lr)!
+          archiveCharName = meta.archiveName
+          idToDisplayName = { ...npcNetworkIdMap, ...meta.idMap, ...ownerIdMap, ...groupPeerIdMap }
+        } else if (m.memoryScope === 'group') {
+          idToDisplayName = { ...npcNetworkIdMap, ...ownerIdMap, ...groupPeerIdMap }
+        } else {
+          idToDisplayName = { ...npcNetworkIdMap, ...ownerIdMap, ...groupPeerIdMap }
+          if (npcArchiveMainDisplayName) {
+            archiveCharName = npcArchiveMainDisplayName
+          } else if (ownerRow && !npcRootId) {
+            archiveCharName = baseNames.charName
+          }
         }
-      }
-      return expandLinkedMemoryPlaceholders(raw, {
-        charName: baseNames.charName,
-        userName: baseNames.userName,
-        archiveCharName,
-        idToDisplayName,
-      })
-    })
+        const userName = await resolveMemoryExpandUserName(m, ownerRow, baseNames.userName)
+        return expandLinkedMemoryPlaceholders(raw, {
+          charName: baseNames.charName,
+          userName,
+          archiveCharName,
+          idToDisplayName,
+        })
+      }),
+    )
   }
 
   /**

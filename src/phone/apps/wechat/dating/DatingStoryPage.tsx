@@ -37,7 +37,11 @@ import { StoryFeed } from './StoryFeed'
 import { extractVnVoiceParamsBlock } from './vnVoiceParamsStrip'
 import { StyleSettingsDrawer } from './StyleSettingsDrawer'
 import { loadDatingStyleTuning, type DatingStyleTuning } from './styleTuningStorage'
-import { DATING_AI_LENGTH_TARGET_MAX, DATING_AI_LENGTH_TARGET_MIN } from './types'
+import {
+  clampDatingLengthTargetChars,
+  DATING_AI_LENGTH_TARGET_MAX,
+  DATING_AI_LENGTH_TARGET_MIN,
+} from './types'
 import type { BranchOption, DatingCardStyle, NarrativePerspective } from './types'
 import type { HeartWhisper } from '../newFriendsPersona/types'
 import { VNDialogBox } from './VNDialogBox'
@@ -597,7 +601,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   useEffect(() => {
     const v = currentArchive.datingLengthTargetChars
     if (typeof v === 'number' && Number.isFinite(v)) {
-      const c = Math.max(DATING_AI_LENGTH_TARGET_MIN, Math.min(DATING_AI_LENGTH_TARGET_MAX, Math.round(v)))
+      const c = clampDatingLengthTargetChars(v)
       setLengthTargetChars(String(c))
     } else {
       setLengthTargetChars('500')
@@ -606,10 +610,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
 
   const blurPersistLengthTarget = useCallback(() => {
     const n = Number(lengthTargetChars)
-    const clamped = Math.max(
-      DATING_AI_LENGTH_TARGET_MIN,
-      Math.min(DATING_AI_LENGTH_TARGET_MAX, Math.round(Number.isFinite(n) ? n : 500)),
-    )
+    const clamped = clampDatingLengthTargetChars(Number.isFinite(n) ? n : 500)
     setLengthTargetChars(String(clamped))
     setDatingLengthTargetChars(clamped)
   }, [lengthTargetChars, setDatingLengthTargetChars])
@@ -1110,14 +1111,12 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
 
   const isVn = currentArchive.modePreference === 'vn'
 
-  const offlinePlotGenBlocking =
-    !isVn && (loading || Boolean(regeneratingPlotId) || branchesLoading)
+  const plotGenBackgroundHint = loading && !isVn
+  const offlinePlotGenBlocking = !isVn && branchesLoading
   const offlinePlotGenCaption = useMemo(() => {
     if (!offlinePlotGenBlocking) return ''
-    if (regeneratingPlotId) return '正在重新生成剧情…'
-    if (loading) return '正在生成剧情…'
     return '正在准备分支选项…'
-  }, [offlinePlotGenBlocking, loading, regeneratingPlotId])
+  }, [offlinePlotGenBlocking])
 
   useEffect(() => {
     if (!offlinePlotGenBlocking) return
@@ -2662,7 +2661,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const lengthTargetNum = (() => {
     const n = Number(lengthTargetChars)
     if (!Number.isFinite(n)) return 500
-    return Math.max(DATING_AI_LENGTH_TARGET_MIN, Math.min(DATING_AI_LENGTH_TARGET_MAX, Math.round(n)))
+    return clampDatingLengthTargetChars(n)
   })()
 
   const narrativeGenOptions = useMemo(
@@ -3055,7 +3054,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   tailVisibleCount={plotTailVisible}
                   onTailVisibleCountChange={persistPlotTail}
                   regeneratingPlotId={regeneratingPlotId}
-                  interactionLocked={loading}
+                  interactionLocked={branchesLoading || Boolean(regeneratingPlotId)}
                   onUpdatePlot={(id, patch) => updatePlotItem(id, patch)}
                   onRegeneratePlot={openRetryBiasPanel}
                   onSetPlotVersionIndex={(id, idx) => setPlotVersionIndex(id, idx)}
@@ -3173,7 +3172,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                         type="number"
                         min={DATING_AI_LENGTH_TARGET_MIN}
                         max={DATING_AI_LENGTH_TARGET_MAX}
-                        step={10}
+                        step={50}
                         value={lengthTargetChars}
                         onChange={(e) => setLengthTargetChars(e.target.value)}
                         onBlur={blurPersistLengthTarget}
@@ -3181,7 +3180,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                         placeholder="如 180"
                       />
                       <p className="mt-1 px-1 text-[10px] leading-snug text-[#9a9a9a]">
-                        不含思维链与 VN 语音参数块；已随当前角色存档。模型会尽量落在区间内，仍受模型与 API 影响。
+                        不含思维链与 VN 语音参数块；已随当前角色存档。字数越高生成越慢，仍受模型与 API 上限影响。
                       </p>
                     </div>
                   ) : null}
@@ -4537,6 +4536,21 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         }}
       />
 
+      {plotGenBackgroundHint
+        ? createPortal(
+            <div
+              className="pointer-events-none fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 z-[9400] flex -translate-x-1/2 items-center gap-2 rounded-full border border-stone-200/90 bg-white/95 px-4 py-2.5 shadow-lg backdrop-blur-sm"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2 className="size-4 shrink-0 animate-spin text-stone-600" strokeWidth={2} aria-hidden />
+              <span className="text-[13px] font-medium text-stone-800">
+                「{currentCharacter.realName}」剧情后台生成中…可切换页面
+              </span>
+            </div>,
+            document.body,
+          )
+        : null}
       {offlinePlotGenBlocking
         ? createPortal(
             <div
@@ -4553,7 +4567,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 <p id="offline-plot-gen-title" className="mt-4 text-[15px] font-semibold text-stone-900">
                   {offlinePlotGenCaption}
                 </p>
-                <p className="mt-2 text-[12px] leading-relaxed text-stone-500">生成完成前请勿操作本页</p>
+                <p className="mt-2 text-[12px] leading-relaxed text-stone-500">分支生成中，请稍候</p>
               </div>
             </div>,
             document.body,

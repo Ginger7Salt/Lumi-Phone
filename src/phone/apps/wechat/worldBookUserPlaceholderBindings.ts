@@ -4,13 +4,18 @@ import type {
   WorldBookItem,
   WorldBookUserPlaceholderBinding,
 } from './newFriendsPersona/types'
-import { formatPlayerIdentityDisplayName } from './wechatCharacterPlayerIdentity'
+import {
+  formatPlayerIdentityDisplayName,
+  isWechatAccountSessionSlotIdentityId,
+} from './wechatCharacterPlayerIdentity'
 import { loadAccountsBundle } from './wechatAccountPersistence'
 import {
   SCOPED_WORLD_BOOK_USER_PLACEHOLDER_RE,
   type WorldBookUserInsertContext,
   contentHasScopedWorldBookUserPlaceholder,
   expandScopedWorldBookUserPlaceholdersInText,
+  resolveWorldBookPlayerIdentityCandidate,
+  resolveWorldBookUserBinding,
 } from './charUserPlaceholders'
 import { formatPlayerLineScopeLabel } from './wechatMemoryLineScope'
 
@@ -43,12 +48,19 @@ export function countWorldBookUserPlaceholderSlotsBefore(content: string, index:
   return (head.match(re) ?? []).length
 }
 
+function isAnonymousUserDisplayLabel(name: string | null | undefined): boolean {
+  const n = String(name ?? '').trim()
+  return !n || n === '未命名身份' || n === '微信账号槽位' || n === '用户'
+}
+
 export function bindingFromInsertContext(ctx: WorldBookUserInsertContext): WorldBookUserPlaceholderBinding {
+  const label = ctx.displayName.trim() || ctx.lineLabel.trim()
+  const displayName = isAnonymousUserDisplayLabel(label) ? '' : label
   return {
     wechatAccountId: ctx.wechatAccountId.trim(),
     playerIdentityId: ctx.playerIdentityId.trim(),
     lineLabel: ctx.lineLabel.trim(),
-    displayName: ctx.displayName.trim(),
+    displayName,
   }
 }
 
@@ -146,10 +158,31 @@ export function insertWorldBookUserPlaceholderInContent(params: {
   return { content: nextContent, bindings: nextBindings }
 }
 
-async function resolveBindingDisplayName(b: WorldBookUserPlaceholderBinding): Promise<string> {
+export async function resolveBindingDisplayName(
+  b: WorldBookUserPlaceholderBinding,
+  character?: Character | null,
+): Promise<string> {
+  const acc = b.wechatAccountId.trim()
+  let pid = b.playerIdentityId.trim()
+  if (
+    isWechatAccountSessionSlotIdentityId(pid) ||
+    b.displayName?.trim() === '微信账号槽位'
+  ) {
+    const resolved = await resolveWorldBookPlayerIdentityCandidate({
+      character,
+      wechatAccountId: acc,
+      playerIdentityId: pid,
+    })
+    if (resolved?.playerIdentityId) pid = resolved.playerIdentityId
+  }
   const cached = b.displayName?.trim()
-  if (cached) return cached
-  const pid = b.playerIdentityId.trim()
+  if (
+    cached &&
+    !isAnonymousUserDisplayLabel(cached) &&
+    !isWechatAccountSessionSlotIdentityId(b.playerIdentityId)
+  ) {
+    return cached
+  }
   let row = null
   try {
     row = await personaDb.getPlayerIdentity(pid)
@@ -163,6 +196,7 @@ async function resolveBindingDisplayName(b: WorldBookUserPlaceholderBinding): Pr
 export async function expandWorldBookItemUserPlaceholders(
   content: string,
   bindings: WorldBookUserPlaceholderBinding[] | null | undefined,
+  character?: Character | null,
 ): Promise<string> {
   let s = await expandScopedWorldBookUserPlaceholdersInText(String(content ?? ''))
   const list = bindings ?? []
@@ -178,7 +212,7 @@ export async function expandWorldBookItemUserPlaceholders(
     const b = list[idx]
     idx += 1
     if (b) {
-      parts.push(await resolveBindingDisplayName(b))
+      parts.push(await resolveBindingDisplayName(b, character))
     } else {
       parts.push('{{user}}')
     }
@@ -235,7 +269,10 @@ function bindingsNeedDisplayEnrich(bindings: WorldBookUserPlaceholderBinding[] |
     (b) =>
       b.wechatAccountId?.trim() &&
       b.playerIdentityId?.trim() &&
-      (!b.lineLabel?.trim() || !b.displayName?.trim()),
+      (!b.lineLabel?.trim() ||
+        !b.displayName?.trim() ||
+        isWechatAccountSessionSlotIdentityId(b.playerIdentityId) ||
+        b.displayName?.trim() === '微信账号槽位'),
   )
 }
 
@@ -260,10 +297,25 @@ export function characterWorldBooksNeedUserPlaceholderMigration(character: Chara
 
 async function enrichWorldBookUserPlaceholderBinding(
   b: WorldBookUserPlaceholderBinding,
+  character?: Character | null,
 ): Promise<WorldBookUserPlaceholderBinding> {
   const acc = b.wechatAccountId.trim()
-  const pid = b.playerIdentityId.trim()
+  let pid = b.playerIdentityId.trim()
   if (!acc || !pid || pid === '__none__') return b
+
+  if (
+    isWechatAccountSessionSlotIdentityId(pid) ||
+    b.displayName?.trim() === '微信账号槽位'
+  ) {
+    const resolved = await resolveWorldBookPlayerIdentityCandidate({
+      character,
+      wechatAccountId: acc,
+      playerIdentityId: pid,
+    })
+    if (resolved?.playerIdentityId && !isWechatAccountSessionSlotIdentityId(resolved.playerIdentityId)) {
+      pid = resolved.playerIdentityId
+    }
+  }
 
   let row = null
   try {
@@ -271,9 +323,14 @@ async function enrichWorldBookUserPlaceholderBinding(
   } catch {
     row = null
   }
-  const displayName = b.displayName?.trim() || formatPlayerIdentityDisplayName(row, pid)
+  const freshName = formatPlayerIdentityDisplayName(row, pid)
+  const cached = b.displayName?.trim()
+  const displayName =
+    cached && cached !== '微信账号槽位' && !isWechatAccountSessionSlotIdentityId(b.playerIdentityId)
+      ? cached
+      : freshName
   let lineLabel = b.lineLabel?.trim()
-  if (!lineLabel) {
+  if (!lineLabel || lineLabel.includes('微信账号槽位')) {
     const bundle = await loadAccountsBundle()
     lineLabel = await formatPlayerLineScopeLabel(
       { wechatAccountId: acc, sessionPlayerIdentityId: pid },
@@ -289,7 +346,7 @@ async function enrichWorldBookUserPlaceholderBinding(
  */
 export async function migrateWorldBookItemUserPlaceholderLegacy(
   item: Pick<WorldBookItem, 'content' | 'userPlaceholderBindings'>,
-  opts?: { fallback?: WorldBookUserInsertContext | null },
+  opts?: { fallback?: WorldBookUserInsertContext | null; character?: Character | null },
 ): Promise<Pick<WorldBookItem, 'content' | 'userPlaceholderBindings'> | null> {
   const content = String(item.content ?? '')
   if (!contentHasScopedWorldBookUserPlaceholder(content)) return null
@@ -326,7 +383,9 @@ export async function migrateWorldBookItemUserPlaceholderLegacy(
     new RegExp(SCOPED_WORLD_BOOK_USER_PLACEHOLDER_RE.source, 'g'),
     '{{user}}',
   )
-  const userPlaceholderBindings = await Promise.all(draft.map(enrichWorldBookUserPlaceholderBinding))
+  const userPlaceholderBindings = await Promise.all(
+    draft.map((row) => enrichWorldBookUserPlaceholderBinding(row, opts?.character)),
+  )
   return { content: nextContent, userPlaceholderBindings }
 }
 
@@ -335,8 +394,21 @@ export async function alignCharacterWorldBookUserPlaceholders(
   character: Character,
   opts?: { fallback?: WorldBookUserInsertContext | null },
 ): Promise<Character | null> {
+  let fallback = opts?.fallback ?? null
+  if (!fallback && !character.isPlayerIdentity) {
+    const binding = await resolveWorldBookUserBinding(character)
+    if (binding) {
+      fallback = {
+        wechatAccountId: binding.wechatAccountId,
+        playerIdentityId: binding.playerIdentityId,
+        lineLabel: binding.lineLabel,
+        displayName: binding.displayName,
+      }
+    }
+  }
+
   const summary = summarizeWorldBookUserPlaceholdersOnCharacter(character)
-  const canFillUnbound = !!opts?.fallback && summary.slotCount > summary.boundCount
+  const canFillUnbound = !!fallback && summary.slotCount > summary.boundCount
   if (!characterWorldBooksNeedUserPlaceholderAlignment(character) && !canFillUnbound) return null
 
   let changed = false
@@ -347,13 +419,15 @@ export async function alignCharacterWorldBookUserPlaceholders(
           const sync = normalizeWorldBookItemUserPlaceholders(
             it.content ?? '',
             it.userPlaceholderBindings,
-            opts?.fallback,
+            fallback,
           )
           let nextBindings = sync.bindings
           let itemChanged = sync.changed
 
           if (bindingsNeedDisplayEnrich(nextBindings)) {
-            nextBindings = await Promise.all(nextBindings.map(enrichWorldBookUserPlaceholderBinding))
+            nextBindings = await Promise.all(
+              nextBindings.map((row) => enrichWorldBookUserPlaceholderBinding(row, character)),
+            )
             itemChanged = true
           }
 

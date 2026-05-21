@@ -74,7 +74,10 @@ export function LoreEntryEditorSheet({
     if (!open || !worldBookItemHasLegacyScopedUserPlaceholder(item)) return
     let cancelled = false
     void (async () => {
-      const patch = await migrateWorldBookItemUserPlaceholderLegacy(item, {})
+      const patch = await migrateWorldBookItemUserPlaceholderLegacy(item, {
+        character,
+        fallback: worldBookUserInsertContext,
+      })
       if (cancelled || !patch) return
       onPatchItem(wbId, itemId, patch)
     })()

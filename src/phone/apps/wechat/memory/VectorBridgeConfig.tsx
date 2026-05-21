@@ -137,9 +137,11 @@ function VectorEmbeddingModelSection({
         <InlineDropdown
           label="选择向量模型"
           valueText={
-            embeddingModelList.length
-              ? embeddingModelDraft.trim() || embeddingModelList[0] || '请选一个'
-              : '请先拉取模型列表'
+            embeddingModelDraft.trim()
+              ? embeddingModelDraft.trim()
+              : embeddingModelList.length
+                ? embeddingModelList[0] || '请选一个'
+                : '请先拉取模型列表'
           }
           open={embeddingModelDropdownOpen}
           disabled={!embeddingModelList.length || disabled}
@@ -191,6 +193,7 @@ export function VectorBridgeConfig({
   embeddingModelDropdownOpen,
   onEmbeddingModelDropdownToggle,
   defaultModelHint,
+  onVectorFieldsBlur,
 }: {
   mode?: 'dedicated' | 'main'
   config?: VectorAPIConfig
@@ -210,6 +213,8 @@ export function VectorBridgeConfig({
   embeddingModelDropdownOpen: boolean
   onEmbeddingModelDropdownToggle: () => void
   defaultModelHint?: string
+  /** 专用接口地址 / 记忆库名称失焦时写入本机 */
+  onVectorFieldsBlur?: () => void
 }) {
   const [keyVisible, setKeyVisible] = useState(false)
 
@@ -284,6 +289,7 @@ export function VectorBridgeConfig({
           <MemoryEngineSoftInput
             value={config.endpoint}
             onChange={(v) => onConfigChange({ endpoint: v })}
+            onBlur={onVectorFieldsBlur}
             placeholder="例如 https://你的网关/v1"
             disabled={disabled}
           />
@@ -320,6 +326,7 @@ export function VectorBridgeConfig({
           <MemoryEngineSoftInput
             value={config.collection}
             onChange={(v) => onConfigChange({ collection: v })}
+            onBlur={onVectorFieldsBlur}
             placeholder="没有专用向量库可留空"
             disabled={disabled}
           />
