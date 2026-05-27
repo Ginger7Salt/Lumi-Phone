@@ -3,6 +3,7 @@ import { ChevronLeft } from 'lucide-react'
 import { useState } from 'react'
 import { PLATINUM } from './constants'
 import { MigrationPanel } from './MigrationPanel'
+import { WeChatLocalDataCheckPanel } from './WeChatLocalDataCheckPanel'
 import { OverviewCards } from './OverviewCards'
 import { StoragePieChart, type StoragePieVariant } from './StoragePieChart'
 import { useStorageScanner } from './useStorageScanner'
@@ -156,6 +157,8 @@ export function DataArchiveApp({ onBack }: Props) {
           </p>
           <MigrationPanel />
         </div>
+
+        <WeChatLocalDataCheckPanel />
       </motion.div>
     </div>
   )

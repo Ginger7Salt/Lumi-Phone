@@ -3,11 +3,10 @@ import { BookOpen, ChevronDown } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { ReadingSession } from './scriptReaderTypes'
-import { MiniBookAnchor } from './MiniBookAnchor'
 import { SCRIPT_PAPER_TEXTURE_URL } from './scriptReaderAssets'
 import { getScriptPaperSurfaceStyle } from './scriptReaderPaperStyle'
 import { SCRIPT_BOOK_LAYOUT_ID } from './scriptReaderTypes'
-import type { JBSStep } from '../jbsFlowTypes'
+import type { JBSStep, ScriptUnlockFlags } from '../jbsFlowTypes'
 import type { ScriptSection } from '../jbsFlowTypes'
 
 import { ScriptAnnotationProvider } from './ScriptPageAnnotations'
@@ -35,9 +34,9 @@ export type ScriptInteractiveReaderProps = {
   scriptSections: readonly ScriptSection[]
   currentStep: JBSStep
   loopRound: number
+  scriptUnlockFlags?: ScriptUnlockFlags
   onPagesBuilt: (pages: import('./scriptReaderTypes').ScriptPage[]) => void
   onCollapse: () => void
-  onRestore: () => void
   onPageChange: (page: number) => void
 }
 
@@ -49,9 +48,9 @@ export function ScriptInteractiveReader({
   scriptSections,
   currentStep,
   loopRound,
+  scriptUnlockFlags,
   onPagesBuilt,
   onCollapse,
-  onRestore,
   onPageChange,
 }: ScriptInteractiveReaderProps) {
   const { pages, currentPage, isOpen, isMinimized } = session
@@ -113,14 +112,14 @@ export function ScriptInteractiveReader({
   }, [])
 
   if (isMinimized) {
-    return <MiniBookAnchor onRestore={onRestore} />
+    return null
   }
 
   return (
     <AnimatePresence>
       {isOpen ? (
         <motion.div
-          className="jbs-script-reader-scrim fixed inset-0 z-[85] flex flex-col"
+          className="jbs-script-reader-scrim fixed inset-0 flex flex-col"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -170,6 +169,7 @@ export function ScriptInteractiveReader({
                 sections={scriptSections}
                 step={currentStep}
                 loopRound={loopRound}
+                scriptUnlockFlags={scriptUnlockFlags}
                 onPagesBuilt={onPagesBuilt}
               />
               <div className="col-start-1 row-start-1 flex min-h-0 flex-col">
@@ -192,6 +192,7 @@ export function ScriptInteractiveReader({
                       allPages={pages}
                       scriptStep={currentStep}
                       scriptLoopRound={loopRound}
+                      scriptUnlockFlags={scriptUnlockFlags}
                       onJumpToPage={onPageChange}
                       onPrev={() => onPageChange(currentPage - 1)}
                       onNext={() => onPageChange(currentPage + 1)}

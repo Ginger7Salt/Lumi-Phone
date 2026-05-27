@@ -9,22 +9,42 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { getStoryBackgroundVoiceUrls } from '../jbsDmVoiceAssets'
 import { getStoryBackgroundTracks } from '../jbsDmVoiceScripts'
 import { resolveJbsRolePortrait } from './jbsRolePortraits'
-import { getYuyeAct1PublicPlotTracks } from './chatRoom/yuyeAct1PublicPlotVoice'
+import {
+  getAct1PublicPlotDmRunFullText,
+  getYuyeAct1PublicPlotTracks,
+} from './chatRoom/yuyeAct1PublicPlotVoice'
 import { getStoryBackgroundPremiseClueIds } from './chatRoom/jbsClueData'
+import {
+  getYuyeGuilingSystemHint,
+  isYuyeGuilingScript,
+} from './chatRoom/yuyeGuilingDmFlow'
+import { NarrationPlotPanel } from './chatRoom/Act1PlotPanels'
+import { compactDmNarrationLines } from './chatRoom/dmBubbleText'
 import { RolePortraitMsgBubble } from './chatRoom/RolePortraitMsgBubble'
 import type { LockedRole } from './gameFlowTypes'
 import { HallRoomBackdrop } from './HallRoomBackdrop'
 import { useDmVoiceBubbleSequence } from './useDmVoiceBubbleSequence'
+import { useTypewriter } from './useTypewriter'
 import { JBS_STEP_LABELS } from './chatRoom/jbsFlowTypes'
 import { ClueCollectorLayer } from './chatRoom/ClueCollectorLayer'
 import { DMMsgBubble } from './chatRoom/DMMsgBubble'
 import { JBSBookmarkButton } from './chatRoom/JBSBookmarkButton'
+import { useJBSDevJumpBridge } from './chatRoom/JBSDevJumpBridge'
+import { JBSDevStageJump } from './chatRoom/JBSDevStageJump'
 import { JBSControlDrawer } from './chatRoom/JBSControlDrawer'
 import { JBSFlowProvider, useJBSFlow, type JBSFlowMedia } from './chatRoom/JBSFlowEngine'
-import type { JbsEngineSnapshot } from './jbsProgressStore'
-import { canMarkScriptReadingFinished } from './chatRoom/scriptReader/buildScriptPages'
+import type { JbsEngineSnapshot, JbsFlowEngineSnapshot } from './jbsProgressStore'
+import { MiniBookAnchor } from './chatRoom/scriptReader/MiniBookAnchor'
 import { ScriptBookWidget } from './chatRoom/scriptReader/ScriptBookWidget'
 import { ScriptInteractiveReader } from './chatRoom/scriptReader/ScriptInteractiveReader'
+import { TaskAcceptModal } from './chatRoom/taskCommission/TaskAcceptModal'
+import { TaskFloatingBall } from './chatRoom/taskCommission/TaskFloatingBall'
+import { buildActCommission } from './chatRoom/taskCommission/buildActCommission'
+import {
+  TaskCommissionProvider,
+  useTaskStore,
+} from './chatRoom/taskCommission/useTaskStore'
+import type { SerializableActiveCommission } from './chatRoom/taskCommission/taskCommissionTypes'
 
 export type JBSChatRoomProps = {
   locked: LockedRole
@@ -42,6 +62,8 @@ type ChatRoomActiveProps = {
   hideShell?: boolean
   initialEngineSnapshot?: JbsEngineSnapshot | null
   onEngineSnapshotChange?: (snapshot: JbsEngineSnapshot) => void
+  bgmMuted?: boolean
+  onBgmMutedChange?: (muted: boolean) => void
 }
 
 function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hideShell?: boolean }) {
@@ -64,20 +86,44 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     collectedClueIds,
     readingSession,
     scriptSections,
+    deliverScriptBook,
     openScriptBook,
+    openScriptBookToSection,
     minimizeScriptBook,
-    restoreScriptBook,
     setScriptReaderPage,
     applyScriptPages,
-    finishScriptReading,
     voicePlayback,
     patchVoicePlayback,
+    devStageEpoch,
+    debugJumpToFlowNode,
   } = useJBSFlow()
+
+  const devJumpBridge = useJBSDevJumpBridge()
+
+  const {
+    commission,
+    modalOpen,
+    beginAcceptRitual,
+    restoreCommission,
+    clearCommission,
+  } = useTaskStore()
 
   const bookmarkRef = useRef<HTMLButtonElement>(null)
   const premiseTriggeredRef = useRef(false)
+  const step2ScriptAutoDeliveredRef = useRef(false)
+  const introUnlockHintPushedRef = useRef(false)
+  const act1UnlockHintPushedRef = useRef(false)
   const voicePlaybackInferredRef = useRef(false)
   const act1VoicePlaybackInferredRef = useRef(false)
+  const devStageEpochSeenRef = useRef(0)
+  /** 连续旁白轨 finalize 时暂存，遇对白或旁白段结束再合并推送一条 dm 消息 */
+  const act1DmRunPendingRef = useRef<string[]>([])
+
+  useEffect(() => {
+    if (!devJumpBridge) return
+    devJumpBridge.registerEngineJump(debugJumpToFlowNode)
+    return () => devJumpBridge.registerEngineJump(null)
+  }, [debugJumpToFlowNode, devJumpBridge])
   /** 本阶段已点过「进入下一阶段」后隐藏按钮，直至 step/loop 变化 */
   const [stageAdvanceHidden, setStageAdvanceHidden] = useState(false)
 
@@ -164,8 +210,13 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
 
   const act1PublicPlotDone =
     voicePlayback.act1PublicPlotDone ||
-    !act1PublicPlotEnabled ||
-    inferredAct1PublicPlotCompletedCount >= act1PublicPlotScripts.length
+    (act1PublicPlotEnabled &&
+      inferredAct1PublicPlotCompletedCount >= act1PublicPlotScripts.length)
+
+  const scriptUnlockFlags = useMemo(
+    () => ({ act1PublicPlotDone }),
+    [act1PublicPlotDone],
+  )
 
   const isAct1SelfPerformTrack = useCallback(
     (trackIndex: number) => {
@@ -184,13 +235,26 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
       const track = act1PublicPlotMeta[trackIndex]
       if (!track) return
       if (track.speaker === 'dm') {
-        pushMessage({ kind: 'dm', body })
+        const compact = compactDmNarrationLines(body)
+        if (!compact) return
+        act1DmRunPendingRef.current.push(compact)
+        const nextTrack = act1PublicPlotMeta[trackIndex + 1]
+        if (nextTrack?.speaker === 'dm') return
+        const merged = act1DmRunPendingRef.current.join('\n\n')
+        act1DmRunPendingRef.current = []
+        pushMessage({ kind: 'dm', body: merged })
         return
       }
+      if (act1DmRunPendingRef.current.length > 0) {
+        pushMessage({ kind: 'dm', body: act1DmRunPendingRef.current.join('\n\n') })
+        act1DmRunPendingRef.current = []
+      }
+      const line = compactDmNarrationLines(body)
+      if (!line) return
       pushMessage({
         kind: 'player',
         roleName: track.speaker.role,
-        body,
+        body: line,
       })
     },
     [act1PublicPlotMeta, pushMessage],
@@ -208,12 +272,47 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
       act1PublicPlotDone: true,
       act1PublicPlotCompletedTrackCount: act1PublicPlotTracks.length,
     })
-  }, [act1PublicPlotTracks.length, patchVoicePlayback])
+    if (scriptId === 'yuye-guiling') {
+      const hint = getYuyeGuilingSystemHint(5, loopRound)
+      if (hint?.trim() && !act1UnlockHintPushedRef.current) {
+        if (!messages.some((m) => m.kind === 'system' && m.body === hint)) {
+          pushMessage({ kind: 'system', body: hint })
+        }
+        act1UnlockHintPushedRef.current = true
+      }
+    }
+  }, [
+    act1PublicPlotTracks.length,
+    loopRound,
+    messages,
+    patchVoicePlayback,
+    pushMessage,
+    scriptId,
+  ])
+
+  useEffect(() => {
+    if (devStageEpochSeenRef.current === devStageEpoch) return
+    devStageEpochSeenRef.current = devStageEpoch
+    if (devStageEpoch === 0) return
+
+    voicePlaybackInferredRef.current = false
+    act1VoicePlaybackInferredRef.current = false
+    premiseTriggeredRef.current = false
+    step2ScriptAutoDeliveredRef.current = false
+    introUnlockHintPushedRef.current = false
+    act1UnlockHintPushedRef.current = false
+    act1DmRunPendingRef.current = []
+    setStageAdvanceHidden(false)
+    if (!voicePlayback.act1TasksAccepted) {
+      clearCommission()
+    }
+  }, [clearCommission, devStageEpoch, voicePlayback.act1TasksAccepted])
 
   const act1PublicPlotVoice = useDmVoiceBubbleSequence({
     tracks: act1PublicPlotTracks,
     scripts: act1PublicPlotScripts,
     enabled: act1PublicPlotEnabled && !act1PublicPlotDone,
+    resetSignal: devStageEpoch,
     initialCompletedTrackCount: inferredAct1PublicPlotCompletedCount,
     onFinalizeTrack: handleAct1PublicPlotFinalize,
     onTrackProgress: handleAct1PublicPlotTrackProgress,
@@ -227,6 +326,11 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     act1PublicPlotVoice.phase !== 'idle'
 
   const showAct1PerformButton = act1PublicPlotVoice.phase === 'await-perform'
+
+  /** 第一幕公共剧情：旁白用 NarrationPlotPanel，对白仍用群聊行（昵称在头像旁） */
+  const useAct1NarrationPanels =
+    scriptId === 'yuye-guiling' &&
+    (currentStep === 4 || act1PlotInProgress || act1PublicPlotDone)
 
   const handleStoryBgTrackProgress = useCallback(
     (completedTrackCount: number) => {
@@ -253,6 +357,7 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     scripts: storyBgScripts,
     highlightRanges: storyBgHighlights,
     enabled: storyBgEnabled && !storyBgDone,
+    resetSignal: devStageEpoch,
     initialCompletedTrackCount: inferredStoryBgCompletedCount,
     onFinalizeTrack: handleStoryBgFinalize,
     onTrackProgress: handleStoryBgTrackProgress,
@@ -310,6 +415,52 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     voicePlayback.act1PublicPlotDone,
   ])
 
+  const storyPremiseCollected =
+    storyPremiseIds.length === 0 ||
+    storyPremiseIds.every((id) => collectedClueIds.includes(id))
+
+  const step2ScriptGateReady =
+    currentStep === 2 && storyBgDone && storyPremiseCollected && activeDispersalClueId == null
+
+  /** 故事背景 + 公共前提线索收齐后，在聊天室投递个人剧本小册（不自动打开正文） */
+  useEffect(() => {
+    if (!step2ScriptGateReady) return
+    if (readingSession.bookDelivered) {
+      step2ScriptAutoDeliveredRef.current = true
+      return
+    }
+    if (step2ScriptAutoDeliveredRef.current) return
+    step2ScriptAutoDeliveredRef.current = true
+    deliverScriptBook()
+  }, [deliverScriptBook, readingSession.bookDelivered, step2ScriptGateReady])
+
+  /** 公共前提线索收齐后立刻提示自我介绍已解封，无需先点「进入下一阶段」 */
+  useEffect(() => {
+    if (!step2ScriptGateReady || !isYuyeGuilingScript(scriptId)) return
+    const hint = getYuyeGuilingSystemHint(3, loopRound)
+    if (!hint?.trim()) return
+    if (introUnlockHintPushedRef.current) return
+    if (messages.some((m) => m.kind === 'system' && m.body === hint)) {
+      introUnlockHintPushedRef.current = true
+      return
+    }
+    introUnlockHintPushedRef.current = true
+    pushMessage({ kind: 'system', body: hint })
+  }, [loopRound, messages, pushMessage, scriptId, step2ScriptGateReady])
+
+  /** 续玩：公共剧情①已播完时补发第一幕解封提示 */
+  useEffect(() => {
+    if (!act1PublicPlotDone || !isYuyeGuilingScript(scriptId)) return
+    const hint = getYuyeGuilingSystemHint(5, loopRound)
+    if (!hint?.trim() || act1UnlockHintPushedRef.current) return
+    if (messages.some((m) => m.kind === 'system' && m.body === hint)) {
+      act1UnlockHintPushedRef.current = true
+      return
+    }
+    act1UnlockHintPushedRef.current = true
+    pushMessage({ kind: 'system', body: hint })
+  }, [act1PublicPlotDone, loopRound, messages, pushMessage, scriptId])
+
   /** 续玩：故事背景已播完但公共前提线索尚未收纳时，补触发飞牌 */
   useEffect(() => {
     if (!voicePlayback.storyBgDone || premiseTriggeredRef.current) return
@@ -342,19 +493,13 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     if (storyBg.isActive || act1PlotInProgress || activeDispersalClueId != null) {
       return false
     }
-    if (readingSession.isOpen && !readingSession.isMinimized) return false
     if (currentStep === 2) {
       if (!storyBgDone) return false
-      if (
-        storyPremiseIds.length > 0 &&
-        !storyPremiseIds.every((id) => collectedClueIds.includes(id))
-      ) {
-        return false
-      }
+      if (!storyPremiseCollected) return false
       return true
     }
     if (currentStep === 3) {
-      return readingSession.hasFinishedPhase
+      return readingSession.bookDelivered
     }
     if (currentStep === 4) {
       return act1PublicPlotDone
@@ -366,15 +511,22 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     activeDispersalClueId,
     collectedClueIds,
     currentStep,
-    readingSession.hasFinishedPhase,
-    readingSession.isMinimized,
-    readingSession.isOpen,
+    readingSession.bookDelivered,
     storyBg.isActive,
     storyBgDone,
+    storyPremiseCollected,
     storyPremiseIds,
   ])
 
-  const showStageAdvanceButton = stageContentReady && !stageAdvanceHidden
+  const act1AwaitingTaskAccept =
+    currentStep === 4 && act1PublicPlotDone && !voicePlayback.act1TasksAccepted
+
+  const showStageAdvanceButton =
+    stageContentReady && !stageAdvanceHidden && !act1AwaitingTaskAccept
+
+  const showAct1TaskAcceptButton = stageContentReady && !stageAdvanceHidden && act1AwaitingTaskAccept && !modalOpen
+
+  const readerFullscreenOpen = readingSession.isOpen && !readingSession.isMinimized
 
   useEffect(() => {
     setStageAdvanceHidden(false)
@@ -385,17 +537,69 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     advanceStep()
   }, [advanceStep])
 
-  const showScriptBookWidget =
-    currentStep >= 3 &&
-    readingSession.bookDelivered &&
-    !readingSession.hasFinishedPhase &&
-    !readingSession.isOpen &&
-    !readingSession.isMinimized
+  const handleAcceptAct1Tasks = useCallback(() => {
+    beginAcceptRitual(scriptId, locked.card.role.name, 'act1')
+  }, [beginAcceptRitual, locked.card.role.name, scriptId])
 
-  const showScriptFinishButton = useMemo(
-    () => canMarkScriptReadingFinished(readingSession),
-    [readingSession],
-  )
+  /** 密函仪式完成后同步流程闸门 */
+  useEffect(() => {
+    if (commission?.status !== 'accepted') return
+    if (voicePlayback.act1TasksAccepted) return
+    patchVoicePlayback({ act1TasksAccepted: true })
+  }, [commission?.status, patchVoicePlayback, voicePlayback.act1TasksAccepted])
+
+  /** 续玩：已接取但无存档密函时重建悬浮球 */
+  useEffect(() => {
+    if (!voicePlayback.act1TasksAccepted) return
+    if (commission?.status === 'accepted') return
+    const built = buildActCommission(scriptId, locked.card.role.name, 'act1')
+    restoreCommission({ ...built, status: 'accepted' })
+  }, [
+    commission?.status,
+    locked.card.role.name,
+    restoreCommission,
+    scriptId,
+    voicePlayback.act1TasksAccepted,
+  ])
+
+  /** 公共前提线索收齐后：聊天流内投递一次「个人介绍」剧本卡片 */
+  const introScriptGateReady =
+    storyBgDone &&
+    storyPremiseCollected &&
+    activeDispersalClueId == null &&
+    currentStep >= 2
+
+  const showIntroScriptWidget =
+    isYuyeGuilingScript(scriptId) &&
+    introScriptGateReady &&
+    !voicePlayback.introReadingPromptDismissed &&
+    !readerFullscreenOpen
+
+  /** 公共剧情①全部播完后：聊天流内投递一次「第一幕」剧本卡片 */
+  const showAct1ScriptWidget =
+    isYuyeGuilingScript(scriptId) &&
+    currentStep >= 4 &&
+    act1PublicPlotDone &&
+    !voicePlayback.act1ReadingPromptDismissed &&
+    !readerFullscreenOpen
+
+  const handleOpenIntroScript = useCallback(() => {
+    patchVoicePlayback({ introReadingPromptDismissed: true })
+    openScriptBookToSection('intro')
+  }, [openScriptBookToSection, patchVoicePlayback])
+
+  const handleOpenAct1Script = useCallback(() => {
+    patchVoicePlayback({ act1ReadingPromptDismissed: true })
+    openScriptBookToSection('act1')
+  }, [openScriptBookToSection, patchVoicePlayback])
+
+  /** 右下角剧本按钮：点过任一张聊天卡片或打开过阅读器后常驻 */
+  const showScriptAccessButton =
+    readingSession.bookDelivered &&
+    !readerFullscreenOpen &&
+    (readingSession.bookOpenedOnce ||
+      voicePlayback.introReadingPromptDismissed ||
+      voicePlayback.act1ReadingPromptDismissed)
 
   const stepCaption =
     currentStep === 7
@@ -404,7 +608,6 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
 
   const [draft, setDraft] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
-  const audioRef = useRef<HTMLAudioElement>(null)
 
   const scrollChatToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     requestAnimationFrame(() => {
@@ -414,16 +617,74 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     })
   }, [])
 
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio || !media.bgmUrl) return
-    audio.volume = bgmMuted ? 0 : 0.35
-    if (!bgmMuted) {
-      void audio.play().catch(() => {})
-    } else {
-      audio.pause()
+  const act1LiveTrack =
+    act1PublicPlotVoice.phase === 'playing' ||
+    act1PublicPlotVoice.phase === 'loading' ||
+    act1PublicPlotVoice.phase === 'need-tap'
+      ? act1PublicPlotMeta[act1PublicPlotVoice.trackIndex]
+      : null
+
+  /** 连续旁白段：合并全文，打字机跨多轨连续输出（不随分段音频重置） */
+  const act1DmRunFullText = useMemo(() => {
+    if (!useAct1NarrationPanels || act1LiveTrack?.speaker !== 'dm') return ''
+    return getAct1PublicPlotDmRunFullText(act1PublicPlotMeta, act1PublicPlotVoice.trackIndex)
+  }, [
+    act1LiveTrack?.speaker,
+    act1PublicPlotMeta,
+    act1PublicPlotVoice.trackIndex,
+    useAct1NarrationPanels,
+  ])
+
+  const act1DmRunTypewriterActive =
+    useAct1NarrationPanels &&
+    act1LiveTrack?.speaker === 'dm' &&
+    (act1PublicPlotVoice.phase === 'playing' || act1PublicPlotVoice.phase === 'loading')
+
+  const { displayed: act1DmRunDisplayed, isTyping: act1DmRunIsTyping } = useTypewriter(
+    act1DmRunFullText,
+    {
+      msPerChar: 95,
+      pauseAfterParagraphMs: 620,
+      active: act1DmRunTypewriterActive,
+    },
+  )
+
+  const act1LiveNarrationPanelBody = useMemo(() => {
+    if (!useAct1NarrationPanels || act1LiveTrack?.speaker !== 'dm') return null
+    if (act1PublicPlotVoice.phase === 'need-tap') {
+      return act1DmRunFullText.slice(0, 1) || '…'
     }
-  }, [bgmMuted, media.bgmUrl])
+    if (act1DmRunTypewriterActive) {
+      return act1DmRunDisplayed || '…'
+    }
+    return act1PublicPlotVoice.liveBubble?.body ?? null
+  }, [
+    act1DmRunDisplayed,
+    act1DmRunFullText,
+    act1DmRunTypewriterActive,
+    act1LiveTrack?.speaker,
+    act1PublicPlotVoice.liveBubble?.body,
+    act1PublicPlotVoice.phase,
+    useAct1NarrationPanels,
+  ])
+
+  const act1LiveNarrationPanelTyping = useMemo(() => {
+    if (!useAct1NarrationPanels || act1LiveTrack?.speaker !== 'dm') {
+      return act1PublicPlotVoice.liveBubble?.isTyping ?? false
+    }
+    if (act1PublicPlotVoice.phase === 'need-tap') return true
+    if (act1DmRunTypewriterActive) {
+      return act1DmRunIsTyping || act1PublicPlotVoice.phase === 'loading'
+    }
+    return act1PublicPlotVoice.liveBubble?.isTyping ?? false
+  }, [
+    act1DmRunIsTyping,
+    act1DmRunTypewriterActive,
+    act1LiveTrack?.speaker,
+    act1PublicPlotVoice.liveBubble?.isTyping,
+    act1PublicPlotVoice.phase,
+    useAct1NarrationPanels,
+  ])
 
   useEffect(() => {
     scrollChatToBottom()
@@ -431,14 +692,20 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     messages.length,
     storyBg.liveBubble?.body,
     act1PublicPlotVoice.liveBubble?.body,
+    act1LiveNarrationPanelBody,
     scrollChatToBottom,
   ])
 
   useLayoutEffect(() => {
-    if (showScriptBookWidget || readingSession.bookDelivered) {
+    if (showIntroScriptWidget || showAct1ScriptWidget || readingSession.bookDelivered) {
       scrollChatToBottom(readingSession.bookDelivered ? 'auto' : 'smooth')
     }
-  }, [showScriptBookWidget, readingSession.bookDelivered, scrollChatToBottom])
+  }, [
+    showIntroScriptWidget,
+    showAct1ScriptWidget,
+    readingSession.bookDelivered,
+    scrollChatToBottom,
+  ])
 
   useEffect(() => {
     if (storyBg.phase !== 'need-tap') return
@@ -462,13 +729,6 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     }
   }, [act1PublicPlotVoice.phase, act1PublicPlotVoice.resumeFromGesture])
 
-  const act1LiveTrack =
-    act1PublicPlotVoice.phase === 'playing' ||
-    act1PublicPlotVoice.phase === 'loading' ||
-    act1PublicPlotVoice.phase === 'need-tap'
-      ? act1PublicPlotMeta[act1PublicPlotVoice.trackIndex]
-      : null
-
   const act1AwaitPerformTrack =
     act1PublicPlotVoice.phase === 'await-perform'
       ? act1PublicPlotMeta[act1PublicPlotVoice.trackIndex]
@@ -486,10 +746,6 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
   return (
     <div className={`flex min-h-0 flex-col ${hideShell ? 'absolute inset-0 z-10' : 'absolute inset-0'}`}>
       {!hideShell ? <HallRoomBackdrop media={media} /> : null}
-
-      {media.bgmUrl ? (
-        <audio ref={audioRef} id="jbs-bgm" loop src={media.bgmUrl} preload="auto" />
-      ) : null}
 
       <header className="jbs-gf-chat-header jbs-safe-header shrink-0 px-4 pb-3">
         <div className="flex items-center gap-2">
@@ -509,12 +765,15 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
               {stepCaption} · {JBS_STEP_LABELS[currentStep]}
             </p>
           </div>
-          <JBSBookmarkButton
-            ref={bookmarkRef}
-            absorbPulseKey={drawerAbsorbPulse}
-            badgeCount={clueBadgeCount}
-            onClick={() => setDrawerOpen(true)}
-          />
+          <div className="flex shrink-0 items-center gap-1.5">
+            <JBSDevStageJump />
+            <JBSBookmarkButton
+              ref={bookmarkRef}
+              absorbPulseKey={drawerAbsorbPulse}
+              badgeCount={clueBadgeCount}
+              onClick={() => setDrawerOpen(true)}
+            />
+          </div>
         </div>
         <div className="mt-2 flex items-center justify-between gap-2 px-1">
           <div className="jbs-gf-chat-progress-track h-0.5 flex-1 overflow-hidden rounded-full">
@@ -560,6 +819,16 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
             )
           }
           if (line.kind === 'dm') {
+            if (useAct1NarrationPanels) {
+              if (!compactDmNarrationLines(line.body)) return null
+              return (
+                <NarrationPlotPanel
+                  key={line.id}
+                  body={line.body}
+                  highlight={line.dmHighlight}
+                />
+              )
+            }
             return (
               <DMMsgBubble key={line.id} body={line.body} highlight={line.dmHighlight} />
             )
@@ -582,16 +851,23 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
             highlight={storyBg.liveBubble.highlight}
           />
         ) : null}
-        {act1AwaitPerformTrack?.speaker !== 'dm' && act1AwaitPerformTrack ? (
-          <RolePortraitMsgBubble
-            body={act1AwaitPerformTrack.script}
-            roleName={act1AwaitPerformTrack.speaker.role}
-            isSelf
-            portraitUrl={rolePortraitUrl(act1AwaitPerformTrack.speaker.role)}
-          />
-        ) : null}
         {act1PublicPlotVoice.liveBubble ? (
-          act1LiveTrack?.speaker === 'dm' || !act1LiveTrack ? (
+          useAct1NarrationPanels ? (
+            act1LiveTrack?.speaker === 'dm' || !act1LiveTrack ? (
+              <NarrationPlotPanel
+                body={act1LiveNarrationPanelBody ?? act1PublicPlotVoice.liveBubble.body}
+                isTyping={act1LiveNarrationPanelTyping}
+              />
+            ) : (
+              <RolePortraitMsgBubble
+                body={act1PublicPlotVoice.liveBubble.body}
+                roleName={act1LiveTrack.speaker.role}
+                isSelf={act1LiveTrack.speaker.role === playerRoleName}
+                portraitUrl={rolePortraitUrl(act1LiveTrack.speaker.role)}
+                isTyping={act1PublicPlotVoice.liveBubble.isTyping}
+              />
+            )
+          ) : act1LiveTrack?.speaker === 'dm' || !act1LiveTrack ? (
             <DMMsgBubble
               body={act1PublicPlotVoice.liveBubble.body}
               isTyping={act1PublicPlotVoice.liveBubble.isTyping}
@@ -611,15 +887,55 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
             轻触屏幕以继续播放主持语音
           </p>
         ) : null}
-        {showScriptBookWidget ? (
+        {showIntroScriptWidget && !showAct1ScriptWidget ? (
           <ScriptBookWidget
             roleName={locked.card.role.name}
-            onOpen={openScriptBook}
+            variant="intro"
+            onOpen={handleOpenIntroScript}
+          />
+        ) : null}
+        {showAct1ScriptWidget ? (
+          <ScriptBookWidget
+            roleName={locked.card.role.name}
+            variant="act1"
+            onOpen={handleOpenAct1Script}
           />
         ) : null}
       </div>
 
-      <div className="jbs-gf-chat-input-bar shrink-0 px-3 py-3 pb-[max(12px,env(safe-area-inset-bottom))]">
+      <ScriptInteractiveReader
+        session={readingSession}
+        roleName={locked.card.role.name}
+        scriptId={locked.script.id}
+        roleId={locked.card.id}
+        scriptSections={scriptSections}
+        currentStep={currentStep}
+        loopRound={loopRound}
+        scriptUnlockFlags={scriptUnlockFlags}
+        onPagesBuilt={applyScriptPages}
+        onCollapse={minimizeScriptBook}
+        onPageChange={setScriptReaderPage}
+      />
+
+      {showScriptAccessButton ? (
+        <MiniBookAnchor onRestore={openScriptBook} />
+      ) : null}
+
+      <TaskAcceptModal />
+      <TaskFloatingBall />
+
+      <div
+        className={`jbs-gf-chat-input-bar shrink-0 px-3 py-3 pb-[max(12px,env(safe-area-inset-bottom))]${readerFullscreenOpen ? ' jbs-gf-chat-input-bar--over-reader' : ''}`}
+      >
+        {showAct1TaskAcceptButton ? (
+          <button
+            type="button"
+            onClick={handleAcceptAct1Tasks}
+            className="jbs-gf-chat-stage-advance-btn jbs-font-serif mb-2.5 w-full rounded-lg py-3 text-[12px] tracking-[0.14em]"
+          >
+            接取本幕任务
+          </button>
+        ) : null}
         {showStageAdvanceButton ? (
           <button
             type="button"
@@ -627,15 +943,6 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
             className="jbs-gf-chat-stage-advance-btn jbs-font-serif mb-2.5 w-full rounded-lg py-3 text-[12px] tracking-[0.14em]"
           >
             进入下一阶段
-          </button>
-        ) : null}
-        {showScriptFinishButton ? (
-          <button
-            type="button"
-            onClick={finishScriptReading}
-            className="jbs-gf-chat-script-finish-btn jbs-font-serif mb-2.5 w-full rounded-lg py-3 text-[12px] tracking-[0.14em]"
-          >
-            阅读完成
           </button>
         ) : null}
         {showAct1PerformButton && act1AwaitPerformTrack?.speaker !== 'dm' ? (
@@ -677,19 +984,6 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
 
       <JBSControlDrawer />
       <ClueCollectorLayer collectTargetRef={bookmarkRef} />
-      <ScriptInteractiveReader
-        session={readingSession}
-        roleName={locked.card.role.name}
-        scriptId={locked.script.id}
-        roleId={locked.card.id}
-        scriptSections={scriptSections}
-        currentStep={currentStep}
-        loopRound={loopRound}
-        onPagesBuilt={applyScriptPages}
-        onCollapse={minimizeScriptBook}
-        onRestore={restoreScriptBook}
-        onPageChange={setScriptReaderPage}
-      />
     </div>
   )
 }
@@ -702,16 +996,60 @@ export function JBSChatRoomActive({
   hideShell = false,
   initialEngineSnapshot = null,
   onEngineSnapshotChange,
+  bgmMuted,
+  onBgmMutedChange,
 }: ChatRoomActiveProps) {
+  const [activeCommission, setActiveCommission] = useState<SerializableActiveCommission | null>(
+    () => initialEngineSnapshot?.activeCommission ?? null,
+  )
+  const activeCommissionRef = useRef(activeCommission)
+  const latestFlowSnapshotRef = useRef<JbsFlowEngineSnapshot | null>(initialEngineSnapshot)
+
+  useEffect(() => {
+    activeCommissionRef.current = activeCommission
+  }, [activeCommission])
+
+  const handleFlowSnapshotChange = useCallback(
+    (snapshot: JbsFlowEngineSnapshot) => {
+      latestFlowSnapshotRef.current = snapshot
+      onEngineSnapshotChange?.({
+        ...snapshot,
+        activeCommission: activeCommissionRef.current,
+      })
+    },
+    [onEngineSnapshotChange],
+  )
+
+  const handleCommissionChange = useCallback(
+    (next: SerializableActiveCommission | null) => {
+      setActiveCommission(next)
+      activeCommissionRef.current = next
+      if (latestFlowSnapshotRef.current) {
+        onEngineSnapshotChange?.({
+          ...latestFlowSnapshotRef.current,
+          activeCommission: next,
+        })
+      }
+    },
+    [onEngineSnapshotChange],
+  )
+
   return (
     <JBSFlowProvider
       locked={locked}
       playerDisplayName={playerDisplayName}
       media={media}
       initialEngineSnapshot={initialEngineSnapshot}
-      onEngineSnapshotChange={onEngineSnapshotChange}
+      onEngineSnapshotChange={handleFlowSnapshotChange}
+      bgmMuted={bgmMuted}
+      onBgmMutedChange={onBgmMutedChange}
     >
-      <ChatRoomActive onExit={onExit} hideShell={hideShell} />
+      <TaskCommissionProvider
+        initialCommission={activeCommission}
+        onCommissionChange={handleCommissionChange}
+      >
+        <ChatRoomActive onExit={onExit} hideShell={hideShell} />
+      </TaskCommissionProvider>
     </JBSFlowProvider>
   )
 }

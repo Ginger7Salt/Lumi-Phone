@@ -39,6 +39,7 @@
 }
 
 .jbs-script-reader-scrim {
+  z-index: 160;
   background: rgba(12, 10, 8, 0.72);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -516,8 +517,28 @@
 }
 
 .jbs-script-mini-anchor-label {
-  font-family: ui-sans-serif, system-ui, sans-serif;
-  font-size: 7px;
-  letter-spacing: 0.2em;
-  color: rgba(220, 205, 175, 0.75);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  color: rgba(220, 205, 175, 0.88);
+}
+
+.jbs-script-page-content--tasks .jbs-script-section-tag {
+  background: rgba(114, 47, 55, 0.1);
+  border-color: rgba(114, 47, 55, 0.28);
+  color: rgba(114, 47, 55, 0.92);
+}
+
+.jbs-script-page-content--tasks .jbs-script-page-body-box {
+  margin-top: 6px;
+  padding: 10px 12px 8px 14px;
+  border-left: 3px solid rgba(114, 47, 55, 0.38);
+  background: rgba(255, 248, 245, 0.55);
+  border-radius: 0 6px 6px 0;
+}
+
+.jbs-script-page-content--tasks .jbs-script-page-body {
+  font-size: 13px;
+  line-height: 1.72;
+  color: rgba(72, 42, 36, 0.92);
 }

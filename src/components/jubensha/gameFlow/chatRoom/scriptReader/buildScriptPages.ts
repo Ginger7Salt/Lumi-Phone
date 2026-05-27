@@ -3,6 +3,7 @@ import {
   type JBSStep,
   type ScriptSection,
   type ScriptSectionId,
+  type ScriptUnlockFlags,
 } from '../jbsFlowTypes'
 
 import { paginateBodyExact } from './scriptPagePaginator'
@@ -20,8 +21,9 @@ function hasLockedSectionsAhead(
   sections: readonly ScriptSection[],
   step: JBSStep,
   loopRound: number,
+  flags?: ScriptUnlockFlags,
 ): boolean {
-  return sections.some((s) => !isScriptSectionUnlocked(s.id, step, loopRound))
+  return sections.some((s) => !isScriptSectionUnlocked(s.id, step, loopRound, flags))
 }
 
 /** 按当前进程生成可翻页列表（须先由阅读器探针写入 metrics） */
@@ -29,12 +31,13 @@ export function buildScriptPages(
   sections: readonly ScriptSection[],
   step: JBSStep,
   loopRound: number,
+  flags?: ScriptUnlockFlags,
 ): ScriptPage[] {
   const pages: ScriptPage[] = []
   let index = 0
 
   for (const section of sections) {
-    if (!isScriptSectionUnlocked(section.id, step, loopRound)) continue
+    if (!isScriptSectionUnlocked(section.id, step, loopRound, flags)) continue
     const sectionTag = resolveSectionTag(section.id, section.title)
     const chunks = paginateBody(section)
     if (chunks.length === 0) continue
@@ -50,7 +53,7 @@ export function buildScriptPages(
     })
   }
 
-  if (hasLockedSectionsAhead(sections, step, loopRound)) {
+  if (hasLockedSectionsAhead(sections, step, loopRound, flags)) {
     pages.push({
       id: 'locked-seal',
       sectionId: 'locked',

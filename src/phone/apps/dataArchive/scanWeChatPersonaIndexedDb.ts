@@ -123,6 +123,50 @@ function openPersonaDbReadonly(): Promise<IDBDatabase | null> {
   })
 }
 
+function countStoreRecords(store: IDBObjectStore): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const r = store.count()
+    r.onsuccess = () => resolve(r.result ?? 0)
+    r.onerror = () => reject(r.error ?? new Error('IndexedDB count failed'))
+  })
+}
+
+/** 微信人设库核心表记录数（用于检测「账号仍在、聊天/人设库已空」） */
+export async function countWeChatPersonaCoreStoreRecords(): Promise<{
+  chatMessages: number
+  characters: number
+}> {
+  const empty = { chatMessages: 0, characters: 0 }
+  if (typeof indexedDB === 'undefined') return empty
+
+  const exists = await personaDbExists()
+  if (!exists) return empty
+
+  const db = await openPersonaDbReadonly()
+  if (!db) return empty
+
+  try {
+    const read = async (name: string): Promise<number> => {
+      if (!db.objectStoreNames.contains(name)) return 0
+      const tx = db.transaction(name, 'readonly')
+      try {
+        const n = await countStoreRecords(tx.objectStore(name))
+        await txDone(tx)
+        return n
+      } catch {
+        return 0
+      }
+    }
+    const [chatMessages, characters] = await Promise.all([
+      read('chatMessages'),
+      read('characters'),
+    ])
+    return { chatMessages, characters }
+  } finally {
+    db.close()
+  }
+}
+
 /**
  * 扫描微信人设库 IndexedDB，按 object store 聚合并估算每条记录的体积。
  * 仅只读打开，不触发升级；数据库不存在时返回空。

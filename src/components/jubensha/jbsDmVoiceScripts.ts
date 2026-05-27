@@ -1,3 +1,8 @@
+import {
+  compactDmNarrationLines,
+  remapDmHighlightAfterLineCompact,
+} from './gameFlow/chatRoom/dmBubbleText'
+import type { DmTextHighlightRange } from './gameFlow/chatRoom/jbsFlowTypes'
 import { findDmSection, parseDmSections } from './gameFlow/chatRoom/parseDmHostScript'
 
 import dmScriptRaw from '../../../剧本杀/《雨夜归零》/剧本/DM-主持剧本.md?raw'
@@ -57,24 +62,37 @@ const STORY_BG_PUBLIC_PREMISE_MARKER = '公共前提：'
 const STORY_BG_AFTER_PREMISE_MARKER = '\n\n此时尚未发生中毒事件。'
 
 /** 第二段中「公共前提」整块高亮区间（含三条 bullet，不含末句） */
-export function getStoryBackgroundPart2Highlight(): { start: number; end: number } {
+export function getStoryBackgroundPart2Highlight(): {
+  start: number
+  end: number
+  mode: 'block'
+} {
   const text = YUYE_STORY_BACKGROUND_PART2
   const start = text.indexOf(STORY_BG_PUBLIC_PREMISE_MARKER)
   const afterPremise = text.indexOf(STORY_BG_AFTER_PREMISE_MARKER)
   const end = afterPremise >= 0 ? afterPremise : text.length
-  return { start: Math.max(0, start), end }
+  return { start: Math.max(0, start), end, mode: 'block' }
 }
 
 export type StoryBackgroundTrack = {
   plain: string
-  highlight?: { start: number; end: number }
+  highlight?: DmTextHighlightRange
 }
 
 /** 与 dm故事背景1/2.wav 一一对应（聊天室 Step 2） */
 export function getYuyeStoryBackgroundTracks(): readonly [StoryBackgroundTrack, StoryBackgroundTrack] {
+  const part1 = compactDmNarrationLines(YUYE_STORY_BACKGROUND_PART1)
+  const part2 = compactDmNarrationLines(YUYE_STORY_BACKGROUND_PART2)
   return [
-    { plain: YUYE_STORY_BACKGROUND_PART1 },
-    { plain: YUYE_STORY_BACKGROUND_PART2, highlight: getStoryBackgroundPart2Highlight() },
+    { plain: part1 },
+    {
+      plain: part2,
+      highlight:
+        remapDmHighlightAfterLineCompact(
+          YUYE_STORY_BACKGROUND_PART2,
+          getStoryBackgroundPart2Highlight(),
+        ) ?? undefined,
+    },
   ]
 }
 

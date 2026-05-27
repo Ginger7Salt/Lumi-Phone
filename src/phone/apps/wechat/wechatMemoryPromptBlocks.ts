@@ -135,6 +135,37 @@ export async function formatUnsummarizedPrivateChatBlock(params: {
 }
 
 /**
+ * 游标后无未总结私聊时：按角色聚合最近私聊气泡，供线下剧情承接口吻（与 ChatRoom 近期参考同源思路）。
+ */
+export async function formatRecentPrivateChatReferenceByCharacter(params: {
+  characterId: string
+  maxMessages?: number
+  maxChars?: number
+}): Promise<string> {
+  const cid = params.characterId.trim()
+  if (!cid) return ''
+  const lim = Math.max(1, Math.min(120, Math.floor(params.maxMessages ?? 48)))
+  const rows = await personaDb.listWeChatChatMessagesRecentByCharacter({ characterId: cid, limit: lim })
+  if (!rows.length) return ''
+  const lines: string[] = []
+  for (const m of rows) {
+    if (isMeetImportedWeChatMessageId(m.id)) continue
+    const line = formatPrivateLineUnsummarized(m)
+    if (line) lines.push(line)
+  }
+  if (!lines.length) return ''
+  let body = lines.join('\n')
+  const charCap = Math.max(400, Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.maxChars ?? 3200)))
+  if (body.length > charCap) {
+    const parts = body.split('\n')
+    while (parts.join('\n').length > charCap && parts.length > 4) parts.shift()
+    body = parts.join('\n')
+    if (body.length > charCap) body = `${body.slice(-charCap)}\n…（更早私聊已截断）`
+  }
+  return `${body}\n（↑ 近期私聊参考（本地消息摘录）；游标后暂无未总结片段时兜底，供线下剧情承接口吻与事实。）`
+}
+
+/**
  * 当前群会话：游标之后尚未写入群聊长期总结的本地消息摘录。
  */
 export async function formatUnsummarizedCurrentGroupChatBlock(params: {

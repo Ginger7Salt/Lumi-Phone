@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import {
+  compactDmNarrationLines,
+  remapDmHighlightAfterLineCompact,
+} from './chatRoom/dmBubbleText'
 import type { DmTextHighlightRange } from './chatRoom/jbsFlowTypes'
 import { createJbsDmVoicePlayer } from './jbsDmVoicePlayer'
 import { useTypewriter } from './useTypewriter'
@@ -24,6 +28,8 @@ export type UseDmVoiceBubbleSequenceOptions = {
   /** 与 tracks 同序；某轨无高亮可省略 */
   highlightRanges?: readonly (DmTextHighlightRange | undefined)[]
   enabled: boolean
+  /** 变更时中止当前播放并从 initialCompletedTrackCount 重新起跑（DEV 阶段跳转等） */
+  resetSignal?: number
   /** 续玩：已 finalize 的轨数，不再重播音频或重复推送气泡 */
   initialCompletedTrackCount?: number
   onFinalizeTrack: (body: string, meta: DmVoiceTrackFinalizeMeta | undefined, trackIndex: number) => void
@@ -39,6 +45,7 @@ export function useDmVoiceBubbleSequence({
   scripts,
   highlightRanges,
   enabled,
+  resetSignal = 0,
   initialCompletedTrackCount = 0,
   onFinalizeTrack,
   onComplete,
@@ -52,6 +59,8 @@ export function useDmVoiceBubbleSequence({
   const playerRef = useRef(createJbsDmVoicePlayer())
   const startedRef = useRef(false)
   const skipTrackOnceRef = useRef(false)
+  const initialCompletedRef = useRef(initialCompletedTrackCount)
+  initialCompletedRef.current = initialCompletedTrackCount
   const onCompleteRef = useRef(onComplete)
   const onFinalizeRef = useRef(onFinalizeTrack)
   const onTrackProgressRef = useRef(onTrackProgress)
@@ -60,8 +69,12 @@ export function useDmVoiceBubbleSequence({
   onFinalizeRef.current = onFinalizeTrack
   onTrackProgressRef.current = onTrackProgress
 
-  const currentScript = scripts[trackIndex] ?? ''
-  const currentHighlight = highlightRanges?.[trackIndex]
+  const rawScript = scripts[trackIndex] ?? ''
+  const currentScript = compactDmNarrationLines(rawScript)
+  const rawHighlight = highlightRanges?.[trackIndex]
+  const currentHighlight = rawHighlight
+    ? remapDmHighlightAfterLineCompact(rawScript, rawHighlight)
+    : undefined
   const { displayed, isTyping } = useTypewriter(currentScript, {
     msPerChar: TYPEWRITER_MS_PER_CHAR,
     pauseAfterParagraphMs: 620,
@@ -76,12 +89,12 @@ export function useDmVoiceBubbleSequence({
   }, [])
 
   const finalizeCurrentTrack = useCallback(() => {
-    const body = (scripts[trackIndex] ?? '').trim()
-    if (body) {
+    const body = compactDmNarrationLines((scripts[trackIndex] ?? '').trim())
+    if (body && body !== '……') {
       const highlight = highlightRanges?.[trackIndex]
       onFinalizeRef.current(body, highlight ? { highlight } : undefined, trackIndex)
-      onTrackProgressRef.current?.(trackIndex + 1)
     }
+    onTrackProgressRef.current?.(trackIndex + 1)
   }, [highlightRanges, scripts, trackIndex])
 
   const enterTrack = useCallback(
@@ -116,6 +129,11 @@ export function useDmVoiceBubbleSequence({
         return false
       }
 
+      if (!currentScript.trim()) {
+        advanceTrack()
+        return false
+      }
+
       setPhase('loading')
       setTypingActive(false)
 
@@ -134,11 +152,32 @@ export function useDmVoiceBubbleSequence({
         return true
       }
     },
-    [finishAll, trackIndex, tracks],
+    [advanceTrack, currentScript, finishAll, trackIndex, tracks],
   )
 
   const playCurrentRef = useRef(playCurrent)
   playCurrentRef.current = playCurrent
+
+  useEffect(() => {
+    startedRef.current = false
+    skipTrackOnceRef.current = false
+    playerRef.current.stop()
+    setTypingActive(false)
+    const start = Math.max(
+      0,
+      Math.min(initialCompletedRef.current, tracks.length),
+    )
+    setTrackIndex(start)
+    setPhase('idle')
+  }, [resetSignal, tracks.length])
+
+  useEffect(() => {
+    if (enabled) return
+    startedRef.current = false
+    playerRef.current.stop()
+    setTypingActive(false)
+    setPhase('idle')
+  }, [enabled])
 
   const beginPlayback = useCallback(
     (fromGesture = false) => {
@@ -188,6 +227,7 @@ export function useDmVoiceBubbleSequence({
     enabled,
     enterTrack,
     finishAll,
+    resetSignal,
     shouldAwaitPerformBeforeTrack,
     tracks.length,
   ])

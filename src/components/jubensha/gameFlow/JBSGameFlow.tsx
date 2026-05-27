@@ -8,7 +8,7 @@ import type { JubenshaScript } from '../types'
 
 import { ContinueOrRestartPanel } from './ContinueOrRestartPanel'
 import { GameFlowToast } from './GameFlowToast'
-import { getChatRoomVideoUrl } from '../jbsChatRoomMedia'
+import { getChatRoomBgmUrl, getChatRoomVideoUrl } from '../jbsChatRoomMedia'
 import { getDmVoiceIntroUrls } from '../jbsDmVoiceAssets'
 import type { FlowState } from './gameFlowTypes'
 import { primeJbsRoomAudio } from './jbsAudioUnlock'
@@ -61,6 +61,7 @@ export function JBSGameFlow({ script, playerDisplayName, onExit }: JBSGameFlowPr
 
   const dmVoiceTracks = useMemo(() => getDmVoiceIntroUrls(script.id), [script.id])
   const chatRoomVideoUrl = useMemo(() => getChatRoomVideoUrl(script.id), [script.id])
+  const chatRoomBgmUrl = useMemo(() => getChatRoomBgmUrl(script.id), [script.id])
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -200,6 +201,7 @@ export function JBSGameFlow({ script, playerDisplayName, onExit }: JBSGameFlowPr
               playerDisplayName={playerDisplayName}
               dmVoiceTracks={dmVoiceTracks}
               videoUrl={chatRoomVideoUrl}
+              bgmUrl={chatRoomBgmUrl}
               onExit={onExit}
               onLockInBurn={handleLockInBurn}
               restoredProgress={restoredProgress}

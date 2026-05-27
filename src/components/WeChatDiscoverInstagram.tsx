@@ -1,8 +1,6 @@
 import { BookOpen, Camera, ChevronRight, Construction, MessageCircleQuestionMark, Store } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import type { WeChatPersonaContact } from '../phone/types'
-
 import { AnonymousQnAApp } from './anonymousQa/AnonymousQnAApp'
 
 type DiscoverActionId = 'moments' | 'anonymous-qa' | 'shop' | 'jubensha'
@@ -17,7 +15,6 @@ export type WeChatDiscoverInstagramProps = {
   onActionClick?: (id: DiscoverActionId) => void
   onImmersiveViewChange?: (open: boolean) => void
   currentUserName?: string
-  personaContacts?: WeChatPersonaContact[]
   className?: string
 }
 
@@ -28,7 +25,7 @@ const DISCOVER_ACTIONS: DiscoverAction[] = [
   { id: 'shop', label: '小店', icon: Store },
 ]
 
-/** 发现页子功能开发中占位（如朋友圈） */
+/** 发现页子功能开发中占位 */
 function DiscoverFeatureUnderDev({
   title,
   hint,
@@ -77,7 +74,6 @@ export function WeChatDiscoverInstagram({
   onActionClick,
   onImmersiveViewChange,
   currentUserName,
-  personaContacts: _personaContacts = [],
   className = '',
 }: WeChatDiscoverInstagramProps) {
   const [activeView, setActiveView] = useState<'list' | 'moments' | 'anonymous-qa' | 'jubensha'>('list')
@@ -110,7 +106,7 @@ export function WeChatDiscoverInstagram({
       <DiscoverFeatureUnderDev
         className={className}
         title="剧本杀馆"
-        hint="典藏剧本、组局入局与局内流程正在打磨，稍后将在此接入。"
+        hint="沉浸式剧本杀玩法正在开发，典藏书架、选角与对局流程将在此接入。"
         onBack={() => setActiveView('list')}
       />
     )

@@ -4,6 +4,7 @@ import { CHAT_ROOM_PHASE_LABELS } from './chatRoom/chatRoomPhase'
 import type { DrawerTab, JBSChatMessage, JBSStep } from './chatRoom/jbsFlowTypes'
 import { JBS_STEP_LABELS } from './chatRoom/jbsFlowTypes'
 import type { ReadingSession } from './chatRoom/scriptReader/scriptReaderTypes'
+import type { SerializableActiveCommission } from './chatRoom/taskCommission/taskCommissionTypes'
 
 const STORAGE_KEY = 'jbs-script-progress-v1'
 const PROGRESS_VERSION = 1 as const
@@ -18,6 +19,12 @@ export type JbsVoicePlaybackState = {
   act1PublicPlotDone: boolean
   /** 第一幕公共剧情已 finalize 的轨数 */
   act1PublicPlotCompletedTrackCount: number
+  /** 第一幕阅读提示卡片已点开（续玩不再重复展示） */
+  act1ReadingPromptDismissed: boolean
+  /** 自我介绍阅读卡片已点开（续玩不再重复展示） */
+  introReadingPromptDismissed: boolean
+  /** 第一幕「接取本幕任务」已确认 */
+  act1TasksAccepted: boolean
 }
 
 export const EMPTY_VOICE_PLAYBACK: JbsVoicePlaybackState = {
@@ -25,6 +32,9 @@ export const EMPTY_VOICE_PLAYBACK: JbsVoicePlaybackState = {
   storyBgCompletedTrackCount: 0,
   act1PublicPlotDone: false,
   act1PublicPlotCompletedTrackCount: 0,
+  act1ReadingPromptDismissed: false,
+  introReadingPromptDismissed: false,
+  act1TasksAccepted: false,
 }
 
 export type JbsEngineSnapshot = {
@@ -35,14 +45,19 @@ export type JbsEngineSnapshot = {
   dispersalTriggeredIds: string[]
   readingSession: Pick<
     ReadingSession,
-    'currentPage' | 'isOpen' | 'isMinimized' | 'hasFinishedPhase' | 'bookDelivered'
+    'currentPage' | 'isOpen' | 'isMinimized' | 'hasFinishedPhase' | 'bookDelivered' | 'bookOpenedOnce'
   >
   drawerOpen: boolean
   drawerTab: DrawerTab
   bgmMuted: boolean
   clueBadgeCount: number
   voicePlayback: JbsVoicePlaybackState
+  /** 已接取的本幕任务密函（续玩恢复悬浮球） */
+  activeCommission: SerializableActiveCommission | null
 }
+
+/** Flow 引擎产出（不含由 ChatRoom 层维护的任务密函状态） */
+export type JbsFlowEngineSnapshot = Omit<JbsEngineSnapshot, 'activeCommission'>
 
 export type JbsScriptProgress = {
   version: typeof PROGRESS_VERSION
@@ -102,6 +117,9 @@ function normalizeVoicePlayback(raw: unknown): JbsVoicePlaybackState {
       o.act1PublicPlotCompletedTrackCount >= 0
         ? Math.floor(o.act1PublicPlotCompletedTrackCount)
         : 0,
+    act1ReadingPromptDismissed: !!o.act1ReadingPromptDismissed,
+    introReadingPromptDismissed: !!o.introReadingPromptDismissed,
+    act1TasksAccepted: !!o.act1TasksAccepted,
   }
 }
 
@@ -120,6 +138,10 @@ function normalizeEngine(raw: unknown): JbsEngineSnapshot | null {
           isMinimized: !!(rs as { isMinimized?: unknown }).isMinimized,
           hasFinishedPhase: !!(rs as { hasFinishedPhase?: unknown }).hasFinishedPhase,
           bookDelivered: !!(rs as { bookDelivered?: unknown }).bookDelivered,
+          bookOpenedOnce:
+            !!(rs as { bookOpenedOnce?: unknown }).bookOpenedOnce ||
+            !!(rs as { isOpen?: unknown }).isOpen ||
+            !!(rs as { isMinimized?: unknown }).isMinimized,
         }
       : {
           currentPage: 0,
@@ -127,6 +149,7 @@ function normalizeEngine(raw: unknown): JbsEngineSnapshot | null {
           isMinimized: false,
           hasFinishedPhase: false,
           bookDelivered: false,
+          bookOpenedOnce: false,
         }
 
   return {
@@ -148,7 +171,32 @@ function normalizeEngine(raw: unknown): JbsEngineSnapshot | null {
     bgmMuted: !!o.bgmMuted,
     clueBadgeCount: typeof o.clueBadgeCount === 'number' ? o.clueBadgeCount : 0,
     voicePlayback: normalizeVoicePlayback(o.voicePlayback),
+    activeCommission: normalizeActiveCommission(o.activeCommission),
   }
+}
+
+function normalizeActiveCommission(raw: unknown): SerializableActiveCommission | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const scriptId = typeof o.scriptId === 'string' ? o.scriptId.trim() : ''
+  const actId = o.actId === 'act1' || o.actId === 'act2' || o.actId === 'act3' ? o.actId : null
+  const title = typeof o.title === 'string' ? o.title : ''
+  const tasks = Array.isArray(o.tasks)
+    ? o.tasks
+        .filter((t) => t && typeof t === 'object')
+        .map((t) => {
+          const item = t as Record<string, unknown>
+          return {
+            id: typeof item.id === 'string' ? item.id : '',
+            text: typeof item.text === 'string' ? item.text : '',
+            isCompleted: !!item.isCompleted,
+          }
+        })
+        .filter((t) => t.id && t.text)
+    : []
+  if (!scriptId || !actId || !title || tasks.length === 0) return null
+  if (o.status !== 'accepted') return null
+  return { scriptId, actId, title, tasks, status: 'accepted' }
 }
 
 function normalizeProgress(raw: unknown): JbsScriptProgress | null {

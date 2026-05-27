@@ -1,11 +1,5 @@
 import { motion } from 'framer-motion'
 
-import {
-  jbsPlayerBubbleLabelClass,
-  jbsPlayerBubbleSurfaceStyle,
-  jbsPlayerBubbleTextClass,
-} from './jbsPlayerBubbleSurface'
-
 export type RolePortraitMsgBubbleProps = {
   body: string
   roleName: string
@@ -17,22 +11,22 @@ export type RolePortraitMsgBubbleProps = {
 function RoleAvatar({
   roleName,
   portraitUrl,
-  isSelf,
 }: {
   roleName: string
   portraitUrl?: string
-  isSelf: boolean
 }) {
   const initial = roleName.trim().slice(0, 1) || '？'
   return (
-    <div
-      className={`jbs-gf-chat-role-avatar shrink-0 ${isSelf ? 'jbs-gf-chat-role-avatar--self' : ''}`}
-      aria-hidden
-    >
+    <div className="jbs-gf-chat-role-avatar shrink-0" aria-hidden>
       {portraitUrl ? (
-        <img src={portraitUrl} alt="" className="h-full w-full object-cover object-top" />
+        <img
+          src={portraitUrl}
+          alt=""
+          className="jbs-gf-chat-role-avatar-img"
+          draggable={false}
+        />
       ) : (
-        <span className="jbs-font-kai text-[15px] leading-none">{initial}</span>
+        <span className="jbs-gf-chat-role-avatar-fallback">{initial}</span>
       )}
     </div>
   )
@@ -45,32 +39,52 @@ export function RolePortraitMsgBubble({
   portraitUrl,
   isTyping = false,
 }: RolePortraitMsgBubbleProps) {
+  const nickname = roleName.trim() || '未知'
+
+  const bubble = (
+    <div
+      className={`jbs-font-serif jbs-gf-chat-dialogue-bubble jbs-gf-chat-group-bubble text-[15px] leading-[1.65] ${
+        isSelf ? 'jbs-gf-chat-dialogue-bubble--self' : ''
+      }${isSelf && isTyping ? ' jbs-gf-chat-dialogue-bubble--self-live' : ''}`}
+    >
+      <span className={isSelf ? 'jbs-gf-chat-dialogue-self-text' : undefined}>{body}</span>
+      {isTyping ? (
+        <span className="jbs-gf-chat-typewriter-cursor ml-0.5 inline-block w-[2px] align-middle" />
+      ) : null}
+    </div>
+  )
+
+  if (isSelf) {
+    return (
+      <motion.div
+        className="jbs-gf-chat-group-row jbs-gf-chat-group-row--self mb-3 w-full shrink-0"
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35 }}
+      >
+        <div className="jbs-gf-chat-group-row-inner jbs-gf-chat-group-row-inner--self flex max-w-full flex-row items-start justify-end gap-2.5">
+          <div className="flex w-max max-w-[min(260px,calc(100vw-4.5rem))] shrink-0 flex-col items-end gap-[3px]">
+            <span className="jbs-gf-chat-group-nickname max-w-full truncate text-right">{nickname}</span>
+            {bubble}
+          </div>
+          <RoleAvatar roleName={nickname} portraitUrl={portraitUrl} />
+        </div>
+      </motion.div>
+    )
+  }
+
   return (
     <motion.div
-      className={`mb-4 flex w-full ${isSelf ? 'justify-end' : 'justify-start'}`}
+      className="jbs-gf-chat-group-row mb-3 w-full shrink-0 overflow-x-visible"
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
     >
-      <div
-        className={`flex max-w-[88%] items-end gap-2.5 ${isSelf ? 'flex-row-reverse' : 'flex-row'}`}
-      >
-        <RoleAvatar roleName={roleName} portraitUrl={portraitUrl} isSelf={isSelf} />
-        <div className={`min-w-0 flex flex-col ${isSelf ? 'items-end' : 'items-start'}`}>
-          <span
-            className={`jbs-font-kai mb-1 px-0.5 text-[10px] tracking-[0.12em] ${jbsPlayerBubbleLabelClass}`}
-          >
-            {roleName}
-          </span>
-          <div
-            className={`jbs-font-kai jbs-gf-chat-bubble-text rounded-[18px] px-3.5 py-2.5 text-[15px] leading-relaxed ${jbsPlayerBubbleTextClass}`}
-            style={jbsPlayerBubbleSurfaceStyle(isSelf)}
-          >
-            {body}
-            {isTyping ? (
-              <span className="jbs-gf-chat-typewriter-cursor ml-0.5 inline-block w-[2px] align-middle" />
-            ) : null}
-          </div>
+      <div className="jbs-gf-chat-group-row-inner flex max-w-full flex-row items-start justify-start gap-2.5">
+        <RoleAvatar roleName={nickname} portraitUrl={portraitUrl} />
+        <div className="flex min-w-0 max-w-[min(260px,calc(100vw-4.5rem))] flex-1 flex-col items-start gap-[3px]">
+          <span className="jbs-gf-chat-group-nickname max-w-full truncate">{nickname}</span>
+          {bubble}
         </div>
       </div>
     </motion.div>

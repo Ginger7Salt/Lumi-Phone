@@ -15,8 +15,11 @@ import { getDmVoiceTypewriterScripts } from '../jbsDmVoiceScripts'
 import { DmVoiceIntro } from './DmVoiceIntro'
 import type { DeckRoleCard, LockedRole } from './gameFlowTypes'
 import type { JbsEngineSnapshot, JbsScriptProgress } from './jbsProgressStore'
+import { GameplayBgmPlayer } from './GameplayBgmPlayer'
 import { HallRoomBackdrop } from './HallRoomBackdrop'
 import { RoomAmbientProvider } from './RoomAmbientContext'
+import { JBSDevJumpBridgeProvider } from './chatRoom/JBSDevJumpBridge'
+import { JBSDevStageJump } from './chatRoom/JBSDevStageJump'
 import { JBSChatRoomActive } from './JBSChatRoom'
 import { RoleDeck } from './RoleDeck'
 import { RoleScriptDetail } from './RoleScriptDetail'
@@ -105,6 +108,15 @@ export function JBSChatRoomShell({
       (voiceTrackCount > 0 && initialDmIntroCompletedTrackCount >= voiceTrackCount),
   )
   const [dmIntroCompletedCount, setDmIntroCompletedCount] = useState(initialDmIntroCompletedTrackCount)
+  const [bgmMuted, setBgmMuted] = useState(initialEngineSnapshot?.bgmMuted ?? false)
+
+  const handleEngineSnapshotChange = useCallback(
+    (snapshot: JbsEngineSnapshot) => {
+      setBgmMuted(snapshot.bgmMuted)
+      onEngineSnapshotChange?.(snapshot)
+    },
+    [onEngineSnapshotChange],
+  )
 
   const emitShellState = useCallback(
     (next: {
@@ -170,7 +182,28 @@ export function JBSChatRoomShell({
     return `《${script.title}》· ${CHAT_ROOM_PHASE_LABELS[phase]}`
   }, [locked, phase, script.title])
 
+  const handleDevOpening = useCallback(() => {
+    setDmVoiceCompleted(false)
+    setDmIntroCompletedCount(0)
+    onDmIntroTrackProgress?.(0)
+    setPhase('dm-voice')
+  }, [onDmIntroTrackProgress])
+
+  const handleDevRequestPlaying = useCallback(() => {
+    if (locked) {
+      setPhase('playing')
+      return
+    }
+    if (import.meta.env.DEV) {
+      console.warn('[DEV] 请先择定角色并焚卷入局，再跳转该流程节点。')
+    }
+  }, [locked])
+
   return (
+    <JBSDevJumpBridgeProvider
+      onOpening={handleDevOpening}
+      onRequestPlaying={handleDevRequestPlaying}
+    >
     <motion.div
       className={`jbs-gf-chat-root jbs-gf-root absolute inset-0 z-10 flex min-h-0 flex-col${videoUrl ? ' jbs-gf-chat-root--video' : ''}`}
       initial={{ opacity: 0 }}
@@ -178,6 +211,7 @@ export function JBSChatRoomShell({
       transition={{ duration: 0.65 }}
     >
       <RoomAmbientProvider videoUrl={videoUrl}>
+        <GameplayBgmPlayer url={bgmUrl} muted={bgmMuted} />
         <HallRoomBackdrop media={media} />
 
       {phase === 'playing' && locked ? (
@@ -187,8 +221,10 @@ export function JBSChatRoomShell({
           media={media}
           onExit={onExit}
           hideShell
+          bgmMuted={bgmMuted}
+          onBgmMutedChange={setBgmMuted}
           initialEngineSnapshot={initialEngineSnapshot}
-          onEngineSnapshotChange={onEngineSnapshotChange}
+          onEngineSnapshotChange={handleEngineSnapshotChange}
         />
       ) : (
         <>
@@ -220,7 +256,7 @@ export function JBSChatRoomShell({
                   {subtitle}
                 </p>
               </motion.div>
-              <motion.div className="size-9 shrink-0" aria-hidden initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
+              <JBSDevStageJump />
             </motion.div>
           </header>
 
@@ -253,5 +289,6 @@ export function JBSChatRoomShell({
       )}
       </RoomAmbientProvider>
     </motion.div>
+    </JBSDevJumpBridgeProvider>
   )
 }

@@ -103,15 +103,56 @@
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
 }
 
-.jbs-gf-chat-dm-bubble {
-  border-radius: 14px;
+/* 公共剧情 · 旁白 / 对白交替行标签 */
+.jbs-act1-plot-label {
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  color: rgba(255, 255, 255, 0.58);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
 }
 
-.jbs-gf-chat-dm-bubble-text {
+/* 旁白（DM）：楷体 · 居中宽条 · 偏冷色半透明底 */
+.jbs-gf-chat-narration-bubble {
+  border-radius: 3px 14px 3px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-left: 2px solid rgba(196, 168, 118, 0.55);
+  background: rgba(8, 10, 16, 0.48);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06) inset,
+    0 10px 36px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(18px) saturate(1.05);
+  -webkit-backdrop-filter: blur(18px) saturate(1.05);
+}
+
+.jbs-gf-chat-narration-bubble-text {
   font-weight: 400;
   letter-spacing: 0.05em;
-  color: rgba(255, 255, 255, 0.95);
-  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.4);
+  text-align: left;
+  color: rgba(248, 244, 236, 0.94);
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.45);
+}
+
+/* 对白（角色）：衬线 · 群聊圆角气泡 */
+.jbs-gf-chat-dialogue-bubble {
+  color: rgba(255, 255, 255, 0.96);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.32);
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+    0 6px 20px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(14px) saturate(1.12);
+  -webkit-backdrop-filter: blur(14px) saturate(1.12);
+}
+
+.jbs-gf-chat-dialogue-bubble--self {
+  background: rgba(255, 248, 232, 0.24);
+  border-color: rgba(255, 230, 180, 0.42);
+  box-shadow:
+    0 0 0 1px rgba(255, 240, 210, 0.12) inset,
+    0 6px 22px rgba(120, 90, 30, 0.16);
 }
 
 .jbs-gf-chat-dm-highlight {
@@ -125,9 +166,20 @@
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
 }
 
-.jbs-gf-chat-bubble-text {
-  font-weight: 400;
-  letter-spacing: 0.05em;
+.jbs-gf-chat-dm-highlight-block {
+  display: block;
+  margin: 0.65em auto;
+  max-width: 100%;
+  padding: 0.7em 0.9em;
+  border-radius: 10px;
+  background: rgba(139, 105, 20, 0.38);
+  box-shadow:
+    0 0 0 1px rgba(255, 220, 140, 0.38) inset,
+    0 4px 18px rgba(0, 0, 0, 0.12);
+  color: rgba(255, 252, 235, 0.98);
+  text-align: left;
+  white-space: pre-wrap;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
 }
 
 .jbs-gf-chat-system-line {
@@ -150,25 +202,112 @@
   box-shadow: 0 4px 18px rgba(184, 151, 58, 0.22);
 }
 
+/* 群聊式角色行：紧凑边距 · 40px 头像 · 昵称在气泡上 */
+.jbs-gf-chat-group-row {
+  width: 100%;
+}
+
+.jbs-gf-chat-group-row-inner {
+  max-width: min(100%, calc(100vw - 28px));
+}
+
+.jbs-gf-chat-group-row--self {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.jbs-gf-chat-group-row-inner--self {
+  margin-left: auto;
+  margin-right: 8px;
+}
+
+.jbs-gf-chat-group-nickname {
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 11px;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.58);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
+
+.jbs-gf-chat-group-bubble {
+  display: inline-block;
+  max-width: 100%;
+  border-radius: 10px;
+  padding: 8px 11px;
+  text-align: left;
+  word-break: break-word;
+}
+
+.jbs-gf-chat-dialogue-bubble:not(.jbs-gf-chat-dialogue-bubble--self) {
+  border-radius: 4px 12px 12px 12px;
+}
+
+.jbs-gf-chat-dialogue-bubble--self {
+  border-radius: 12px 4px 12px 12px;
+  text-align: right;
+}
+
+.jbs-gf-chat-dialogue-self-text {
+  display: inline-block;
+  max-width: 100%;
+  text-align: right;
+  vertical-align: top;
+}
+
+/** 本人台词打字机：右对齐，逐字从右向左铺开 */
+.jbs-gf-chat-dialogue-bubble--self-live {
+  display: block;
+  width: 100%;
+  min-width: 2.5em;
+  text-align: right;
+  unicode-bidi: plaintext;
+}
+
+.jbs-gf-chat-dialogue-bubble--self-live .jbs-gf-chat-dialogue-self-text {
+  display: inline;
+  text-align: right;
+}
+
 .jbs-gf-chat-role-avatar {
-  width: 42px;
-  height: 42px;
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  margin-top: -3px;
   overflow: hidden;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.38);
-  background: rgba(255, 255, 255, 0.14);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  background: rgba(18, 16, 14, 0.35);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
   display: flex;
   align-items: center;
   justify-content: center;
   color: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
 }
 
-.jbs-gf-chat-role-avatar--self {
-  border-color: rgba(255, 220, 140, 0.55);
-  box-shadow: 0 4px 16px rgba(184, 151, 58, 0.28);
+/** 全身立绘作头像：放大并锚定顶部，露出头肩 */
+.jbs-gf-chat-role-avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  transform: scale(2.75);
+  transform-origin: center 4%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.jbs-gf-chat-role-avatar-fallback {
+  font-family: var(--jbs-font-kai, 'KaiTi', serif);
+  font-size: 17px;
+  line-height: 1;
 }
 
 .jbs-gf-chat-perform-hint {
@@ -216,6 +355,20 @@
   border-top: 1px solid rgba(255, 255, 255, 0.2);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+}
+
+/** 全屏读剧本时叠在阅读器之上，保留聊天室底栏操作 */
+.jbs-gf-chat-input-bar--over-reader {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 175;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22);
+}
+
+.jbs-gf-chat-root:has(.jbs-gf-chat-input-bar--over-reader) .jbs-script-reader-shell {
+  padding-bottom: 7.5rem;
 }
 
 .jbs-gf-chat-input {
@@ -491,6 +644,143 @@
   padding: 14px 16px 16px;
 }
 
+/* —— 发现新线索 · 批次弹窗 —— */
+.jbs-clue-discovery-scrim {
+  background: radial-gradient(
+    ellipse 80% 60% at 50% 45%,
+    rgba(24, 20, 14, 0.55) 0%,
+    rgba(6, 6, 8, 0.78) 100%
+  );
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  pointer-events: none;
+}
+
+.jbs-clue-discovery-panel {
+  width: min(100%, 300px);
+}
+
+.jbs-clue-discovery-panel-glow {
+  position: absolute;
+  inset: -40% -20%;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(212, 175, 85, 0.28) 0%,
+    transparent 62%
+  );
+  animation: jbs-clue-discovery-pulse 2.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes jbs-clue-discovery-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+.jbs-clue-discovery-panel-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1.75rem 1.65rem 1.5rem;
+  border-radius: 4px;
+  border: 1px solid rgba(212, 175, 95, 0.42);
+  background: linear-gradient(
+    168deg,
+    rgba(28, 24, 20, 0.94) 0%,
+    rgba(14, 12, 10, 0.97) 48%,
+    rgba(22, 18, 14, 0.95) 100%
+  );
+  box-shadow:
+    0 0 0 1px rgba(255, 230, 180, 0.08) inset,
+    0 24px 64px rgba(0, 0, 0, 0.55),
+    0 0 48px rgba(184, 151, 58, 0.12);
+}
+
+.jbs-clue-discovery-corner {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-color: rgba(230, 200, 130, 0.75);
+  border-style: solid;
+  opacity: 0.9;
+}
+
+.jbs-clue-discovery-corner--tl {
+  top: 8px;
+  left: 8px;
+  border-width: 1px 0 0 1px;
+}
+
+.jbs-clue-discovery-corner--tr {
+  top: 8px;
+  right: 8px;
+  border-width: 1px 1px 0 0;
+}
+
+.jbs-clue-discovery-corner--bl {
+  bottom: 8px;
+  left: 8px;
+  border-width: 0 0 1px 1px;
+}
+
+.jbs-clue-discovery-corner--br {
+  bottom: 8px;
+  right: 8px;
+  border-width: 0 1px 1px 0;
+}
+
+.jbs-clue-discovery-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid rgba(212, 175, 95, 0.35);
+  background: radial-gradient(
+    circle at 50% 35%,
+    rgba(212, 175, 95, 0.2) 0%,
+    rgba(0, 0, 0, 0.15) 70%
+  );
+}
+
+.jbs-clue-discovery-compass {
+  color: rgba(230, 210, 165, 0.92);
+  filter: drop-shadow(0 0 10px rgba(212, 175, 95, 0.35));
+}
+
+.jbs-clue-discovery-eyebrow {
+  color: rgba(196, 168, 106, 0.72);
+}
+
+.jbs-clue-discovery-title {
+  color: rgba(255, 248, 235, 0.96);
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.45);
+}
+
+.jbs-clue-discovery-sub {
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.jbs-clue-discovery-rule {
+  width: 72%;
+  height: 1px;
+  transform-origin: center;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(212, 175, 95, 0.65) 50%,
+    transparent 100%
+  );
+}
+
 /* —— 飞牌线索收集 ClueCollector —— */
 .jbs-clue-collector-scrim {
   background: rgba(8, 8, 10, 0.52);
@@ -568,4 +858,148 @@
 .jbs-clue-collector-absorb-flash {
   background: radial-gradient(circle, rgba(255, 255, 255, 0.55) 0%, transparent 70%);
   border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+/* DEV · 阶段跳转（仅 import.meta.env.DEV 挂载） */
+
+.jbs-dev-stage-jump-btn {
+  border: 1px dashed rgba(114, 47, 55, 0.45);
+  background: rgba(114, 47, 55, 0.1);
+  color: rgba(114, 47, 55, 0.88);
+  box-shadow: 0 2px 8px rgba(92, 61, 46, 0.12);
+}
+
+.jbs-dev-stage-jump-btn:hover {
+  border-color: rgba(114, 47, 55, 0.62);
+  background: rgba(114, 47, 55, 0.16);
+}
+
+.jbs-gf-chat-root--video .jbs-dev-stage-jump-btn {
+  border-color: rgba(255, 200, 200, 0.45);
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 230, 230, 0.95);
+}
+
+.jbs-dev-stage-jump-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 80;
+  width: min(17.5rem, calc(100vw - 2rem));
+  padding: 0.65rem 0.55rem 0.55rem;
+  border: 1px solid rgba(92, 61, 46, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 254, 249, 0.96);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/** Portal 挂到 body，压在旁白/线索/阅读器之上（DEV 专用） */
+.jbs-dev-stage-jump-menu--portal {
+  position: fixed;
+  left: auto;
+  z-index: 250;
+  pointer-events: auto;
+}
+
+.jbs-dev-stage-jump-menu--flow {
+  width: min(21rem, calc(100vw - 1.25rem));
+}
+
+.jbs-dev-stage-jump-menu--flow .jbs-dev-stage-jump-list {
+  max-height: min(58vh, 420px);
+}
+
+.jbs-dev-stage-jump-kicker {
+  margin: 0 0 0.25rem;
+  padding: 0 0.45rem;
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace;
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  color: rgba(114, 47, 55, 0.65);
+}
+
+.jbs-dev-stage-jump-current {
+  margin: 0 0 0.5rem;
+  padding: 0 0.45rem 0.45rem;
+  border-bottom: 1px solid rgba(92, 61, 46, 0.12);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: rgba(92, 61, 46, 0.62);
+}
+
+.jbs-dev-stage-jump-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: min(52vh, 360px);
+  overflow-y: auto;
+}
+
+.jbs-dev-stage-jump-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.5rem 0.45rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.jbs-dev-stage-jump-item:hover {
+  background: rgba(92, 61, 46, 0.07);
+}
+
+.jbs-dev-stage-jump-item--active {
+  background: rgba(114, 47, 55, 0.1);
+}
+
+.jbs-dev-stage-jump-step {
+  flex-shrink: 0;
+  width: 1.25rem;
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(114, 47, 55, 0.75);
+}
+
+.jbs-dev-stage-jump-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: rgba(42, 32, 28, 0.9);
+}
+
+.jbs-dev-stage-jump-group {
+  padding: 0.35rem 0.45rem 0.25rem;
+}
+
+.jbs-dev-stage-jump-group-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: rgba(92, 61, 46, 0.72);
+}
+
+.jbs-dev-stage-jump-loops {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.jbs-dev-stage-jump-item--loop {
+  flex: 1;
+  justify-content: center;
+  padding: 0.4rem 0.35rem;
+  border: 1px solid rgba(92, 61, 46, 0.14);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.jbs-dev-stage-jump-item--loop.jbs-dev-stage-jump-item--active {
+  border-color: rgba(114, 47, 55, 0.35);
 }

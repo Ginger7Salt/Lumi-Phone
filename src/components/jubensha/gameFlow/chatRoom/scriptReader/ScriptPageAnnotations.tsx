@@ -939,33 +939,32 @@ function StickyNoteItem({
         <span className="jbs-font-serif text-[8px] tracking-[0.18em] text-[#5c3d2e]/55">MEMO</span>
         <div className="flex items-center gap-0.5">
           {note.opaque ? (
-            <>
-              <button
-                type="button"
-                className="jbs-script-note-done jbs-font-serif rounded px-1.5 py-0.5 text-[8px] tracking-wide"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onSetOpaque(note.id, false)
-                }}
-              >
-                收起
-              </button>
-              <button
-                type="button"
-                className="jbs-script-note-delete flex items-center gap-0.5 rounded-full px-1.5 py-0.5"
-                aria-label="删除便签"
-                title="删除便签"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onRemove(note.id)
-                }}
-              >
-                <Trash2 className="size-2.5 shrink-0" strokeWidth={1.5} />
-                <span className="jbs-font-serif text-[8px] tracking-wide">删除</span>
-              </button>
-            </>
+            <button
+              type="button"
+              className="jbs-script-note-done jbs-font-serif rounded px-1.5 py-0.5 text-[8px] tracking-wide"
+              onPointerDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onSetOpaque(note.id, false)
+              }}
+            >
+              收起
+            </button>
           ) : null}
+          <button
+            type="button"
+            className="jbs-script-note-delete flex items-center gap-0.5 rounded-full px-1.5 py-0.5"
+            aria-label="删除便签"
+            title="删除便签"
+            onPointerDown={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onRemove(note.id)
+            }}
+          >
+            <Trash2 className="size-2.5 shrink-0" strokeWidth={1.5} />
+            <span className="jbs-font-serif text-[8px] tracking-wide">删除</span>
+          </button>
         </div>
       </div>
       <div

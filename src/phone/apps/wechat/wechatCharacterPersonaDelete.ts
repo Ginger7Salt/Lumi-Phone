@@ -43,6 +43,11 @@ export async function deleteCharacterPersonaForWechatAccount(params: {
   await personaDb.deleteWeChatScopedDataForCharactersOnWechatAccount([...idsToClean], acc)
 
   if (usedOnOtherAccounts || !ownedHere) {
+    const { recordUserWeChatDataClear } = await import('./wechatDataInventory')
+    await recordUserWeChatDataClear('delete_character_scoped', {
+      wechatAccountId: acc,
+      characterId: canonical,
+    })
     return 'detached-from-account'
   }
 
@@ -50,5 +55,10 @@ export async function deleteCharacterPersonaForWechatAccount(params: {
     await personaDb.deleteCharacter(id)
     await unregisterGlobalWechatCharacterForCharacterId(id)
   }
+  const { recordUserWeChatDataClear } = await import('./wechatDataInventory')
+  await recordUserWeChatDataClear('delete_character_persona', {
+    wechatAccountId: acc,
+    characterId: canonical,
+  })
   return 'full'
 }

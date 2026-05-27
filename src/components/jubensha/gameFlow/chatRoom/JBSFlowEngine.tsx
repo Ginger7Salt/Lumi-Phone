@@ -28,6 +28,7 @@ import {
   type JBSClue,
   type JBSStep,
   type ScriptSection,
+  type ScriptSectionId,
 } from './jbsFlowTypes'
 import {
   createManuscriptMemo,
@@ -35,13 +36,21 @@ import {
   saveManuscriptStore,
   type ManuscriptMemo,
 } from './manuscriptStore'
+import { findFirstPageIndexForSection } from './scriptReader/buildScriptPages'
 import {
   charOffsetBeforePage,
   findPageIndexForCharOffset,
 } from './scriptReader/scriptPagePaginator'
 import type { ReadingSession, ScriptPage } from './scriptReader/scriptReaderTypes'
 import { isYuyeGuilingScript } from './yuyeGuilingDmFlow'
-import type { JbsEngineSnapshot, JbsVoicePlaybackState } from '../jbsProgressStore'
+import {
+  buildDevJumpCollectedClueIds,
+  getDevFlowNodeDef,
+  resolveDevFlowJumpTarget,
+  type DevFlowNodeId,
+} from './jbsDevFlowNodes'
+import { getStoryBackgroundPremiseClueIds } from './jbsClueData'
+import type { JbsEngineSnapshot, JbsFlowEngineSnapshot, JbsVoicePlaybackState } from '../jbsProgressStore'
 import { EMPTY_VOICE_PLAYBACK } from '../jbsProgressStore'
 
 export type JBSFlowMedia = {
@@ -72,6 +81,9 @@ export type JBSFlowEngineState = {
   clueBadgeCount: number
   readingSession: ReadingSession
   voicePlayback: JbsVoicePlaybackState
+  /** DEV：每次阶段跳转 +1，用于重置旁白/语音序列 */
+  devStageEpoch: number
+  devFlowNodeId: DevFlowNodeId | null
 }
 
 type JBSFlowContextValue = JBSFlowEngineState & {
@@ -96,13 +108,25 @@ type JBSFlowContextValue = JBSFlowEngineState & {
   triggerClueDispersal: (clueId: string) => void
   /** 飞牌收纳完成（由 ClueCollector 调用） */
   completeClueDispersal: (clueId: string) => void
+  /** 当前批次是否应先展示「发现新线索」弹窗（每批仅一次） */
+  pendingDiscoveryToast: boolean
+  /** 本批待收纳线索数量（含当前展示的一张） */
+  dispersalBatchSize: number
+  acknowledgeDiscoveryToast: () => void
+  /** 送达个人剧本至聊天室小册；`autoOpen` 为 true 时才直接打开阅读器正文 */
+  deliverScriptBook: (opts?: { autoOpen?: boolean }) => void
   openScriptBook: () => void
+  /** 打开阅读器并跳转到指定分幕首页 */
+  openScriptBookToSection: (sectionId: ScriptSectionId) => void
   minimizeScriptBook: () => void
   restoreScriptBook: () => void
   setScriptReaderPage: (page: number) => void
   applyScriptPages: (pages: ScriptPage[]) => void
   finishScriptReading: () => void
   patchVoicePlayback: (patch: Partial<JbsVoicePlaybackState>) => void
+  /** 仅 DEV：按「阶段流程」节点跳转（从节点起点重来） */
+  debugJumpToFlowNode: (nodeId: DevFlowNodeId) => void
+  devFlowNodeId: DevFlowNodeId | null
 }
 
 const JBSFlowContext = createContext<JBSFlowContextValue | null>(null)
@@ -129,6 +153,7 @@ function emptyReadingSession(): ReadingSession {
     isMinimized: false,
     hasFinishedPhase: false,
     bookDelivered: false,
+    bookOpenedOnce: false,
   }
 }
 
@@ -142,7 +167,10 @@ export type JBSFlowProviderProps = {
   playerDisplayName: string
   media?: JBSFlowMedia
   initialEngineSnapshot?: JbsEngineSnapshot | null
-  onEngineSnapshotChange?: (snapshot: JbsEngineSnapshot) => void
+  onEngineSnapshotChange?: (snapshot: JbsFlowEngineSnapshot) => void
+  /** 与 Shell 层 `GameplayBgmPlayer` 同步静音（避免重复 Audio 实例） */
+  bgmMuted?: boolean
+  onBgmMutedChange?: (muted: boolean) => void
   children: ReactNode
 }
 
@@ -152,6 +180,8 @@ export function JBSFlowProvider({
   media = {},
   initialEngineSnapshot = null,
   onEngineSnapshotChange,
+  bgmMuted: bgmMutedProp,
+  onBgmMutedChange,
   children,
 }: JBSFlowProviderProps) {
   const { script, card } = locked
@@ -172,13 +202,23 @@ export function JBSFlowProvider({
   const [activeManuscriptId, setActiveManuscriptIdState] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(initialEngineSnapshot?.drawerOpen ?? false)
   const [drawerTab, setDrawerTab] = useState<DrawerTab>(initialEngineSnapshot?.drawerTab ?? 'script')
-  const [bgmMuted, setBgmMuted] = useState(initialEngineSnapshot?.bgmMuted ?? false)
+  const [bgmMutedInternal, setBgmMutedInternal] = useState(initialEngineSnapshot?.bgmMuted ?? false)
+  const bgmMuted = bgmMutedProp ?? bgmMutedInternal
+  const setBgmMuted = useCallback(
+    (muted: boolean) => {
+      if (onBgmMutedChange) onBgmMutedChange(muted)
+      else setBgmMutedInternal(muted)
+    },
+    [onBgmMutedChange],
+  )
   const [inspectingClueId, setInspectingClueId] = useState<string | null>(null)
   const [collectedClueIds, setCollectedClueIds] = useState<string[]>(
     initialEngineSnapshot?.collectedClueIds ?? [],
   )
   const [dispersalQueue, setDispersalQueue] = useState<string[]>([])
   const [activeDispersalClueId, setActiveDispersalClueId] = useState<string | null>(null)
+  const [pendingDiscoveryToast, setPendingDiscoveryToast] = useState(false)
+  const activeDispersalRef = useRef<string | null>(null)
   const [drawerAbsorbPulse, setDrawerAbsorbPulse] = useState(0)
   const [clueBadgeCount, setClueBadgeCount] = useState(initialEngineSnapshot?.clueBadgeCount ?? 0)
   const [voicePlayback, setVoicePlayback] = useState<JbsVoicePlaybackState>(
@@ -193,7 +233,21 @@ export function JBSFlowProvider({
     new Set(initialEngineSnapshot?.dispersalTriggeredIds ?? []),
   )
   const prevStepRef = useRef<JBSStep>(initialEngineSnapshot?.currentStep ?? 2)
+  const pendingScriptSectionRef = useRef<ScriptSectionId | null>(null)
   const booted = useRef(restoring)
+  const [devStageEpoch, setDevStageEpoch] = useState(0)
+  const [devFlowNodeId, setDevFlowNodeId] = useState<DevFlowNodeId | null>(null)
+
+  useEffect(() => {
+    activeDispersalRef.current = activeDispersalClueId
+  }, [activeDispersalClueId])
+
+  const dispersalBatchSize =
+    (activeDispersalClueId ? 1 : 0) + dispersalQueue.length
+
+  const acknowledgeDiscoveryToast = useCallback(() => {
+    setPendingDiscoveryToast(false)
+  }, [])
 
   const pushDmScriptBodies = useCallback(
     (bodies: string[], systemHint: string | null) => {
@@ -211,6 +265,21 @@ export function JBSFlowProvider({
 
   const applyScriptPages = useCallback((pages: ScriptPage[]) => {
     setReadingSession((prev) => {
+      const pending = pendingScriptSectionRef.current
+      if (pending) {
+        const idx = findFirstPageIndexForSection(pages, pending)
+        if (idx >= 0) {
+          pendingScriptSectionRef.current = null
+          const allowedMaxPage = Math.max(0, pages.length - 1)
+          return {
+            ...prev,
+            pages,
+            totalPageCount: pages.length,
+            allowedMaxPage,
+            currentPage: Math.min(idx, allowedMaxPage),
+          }
+        }
+      }
       const charOffset = charOffsetBeforePage(prev.pages, prev.currentPage)
       const newPage = findPageIndexForCharOffset(pages, charOffset)
       return {
@@ -237,12 +306,46 @@ export function JBSFlowProvider({
     }))
   }, [currentStep])
 
+  const deliverScriptBook = useCallback((opts?: { autoOpen?: boolean }) => {
+    setReadingSession((prev) => {
+      const autoOpen = opts?.autoOpen === true
+      if (prev.bookDelivered && !autoOpen) return prev
+      return {
+        ...prev,
+        bookDelivered: true,
+        isOpen: autoOpen ? true : prev.isOpen,
+        isMinimized: autoOpen ? false : prev.isMinimized,
+        bookOpenedOnce: autoOpen ? true : prev.bookOpenedOnce,
+      }
+    })
+  }, [])
+
   const openScriptBook = useCallback(() => {
     setReadingSession((prev) => ({
       ...prev,
+      bookDelivered: true,
+      bookOpenedOnce: true,
       isOpen: true,
       isMinimized: false,
     }))
+  }, [])
+
+  const openScriptBookToSection = useCallback((sectionId: ScriptSectionId) => {
+    pendingScriptSectionRef.current = sectionId
+    setReadingSession((prev) => {
+      const pageIdx = findFirstPageIndexForSection(prev.pages, sectionId)
+      if (pageIdx >= 0) pendingScriptSectionRef.current = null
+      const targetPage =
+        pageIdx >= 0 ? Math.min(pageIdx, prev.allowedMaxPage) : prev.currentPage
+      return {
+        ...prev,
+        bookDelivered: true,
+        bookOpenedOnce: true,
+        isOpen: true,
+        isMinimized: false,
+        currentPage: targetPage,
+      }
+    })
   }, [])
 
   const minimizeScriptBook = useCallback(() => {
@@ -394,6 +497,63 @@ export function JBSFlowProvider({
     [applyFlowState, loopRound],
   )
 
+  const debugJumpToFlowNode = useCallback(
+    (nodeId: DevFlowNodeId) => {
+      if (!import.meta.env.DEV) return
+      const target = resolveDevFlowJumpTarget(nodeId, script.id)
+      if (target.shellOpening) return
+
+      const flowState: FlowAdvanceState = { step: target.step, loopRound: target.loopRound }
+      const premiseIds = getStoryBackgroundPremiseClueIds(script.id)
+      const collected = buildDevJumpCollectedClueIds(script.id, target)
+
+      prevStepRef.current = target.step
+      setDevFlowNodeId(nodeId)
+      setCurrentStep(target.step)
+      setLoopRound(target.loopRound)
+      setVoicePlayback(target.voice)
+      setDevStageEpoch((n) => n + 1)
+      setInspectingClueId(null)
+      setActiveDispersalClueId(null)
+      setDispersalQueue([])
+      setPendingDiscoveryToast(false)
+
+      if (target.premiseDispersalTriggered) {
+        for (const id of premiseIds) dispersalTriggeredRef.current.add(id)
+      } else {
+        for (const id of premiseIds) dispersalTriggeredRef.current.delete(id)
+      }
+      setCollectedClueIds(collected)
+      setReadingSession((prev) => ({
+        ...prev,
+        isOpen: false,
+        isMinimized: false,
+        currentPage: 0,
+        ...target.readingSession,
+        pages: prev.pages,
+        totalPageCount: prev.totalPageCount,
+        allowedMaxPage: prev.allowedMaxPage,
+      }))
+      if (target.step >= 3 || target.readingSession.bookDelivered) {
+        deliverScriptBook()
+      }
+
+      const nodeDef = getDevFlowNodeDef(nodeId)
+      const bootLines: JBSChatMessage[] = [
+        systemMessage(`暗室已启。你以「${card.role.name}」之名入局。`),
+      ]
+      if (useDmScript) {
+        bootLines.push(systemMessage(jbsStepAnnouncement(target.step)))
+        bootLines.push(systemMessage(`进程 · ${flowLabel(flowState)}`))
+      }
+      bootLines.push(
+        systemMessage(`[DEV] 跳转 · ${nodeDef.index}. ${nodeDef.label}`),
+      )
+      setMessages(bootLines)
+    },
+    [card.role.name, deliverScriptBook, script.id, useDmScript],
+  )
+
   const advanceStep = useCallback(() => {
     const current: FlowAdvanceState = { step: currentStep, loopRound }
     const next = computeNextFlowState(current)
@@ -415,7 +575,15 @@ export function JBSFlowProvider({
   )
 
   const triggerClueDispersal = useCallback((clueId: string) => {
-    setDispersalQueue((prev) => (prev.includes(clueId) ? prev : [...prev, clueId]))
+    setDispersalQueue((prev) => {
+      if (prev.includes(clueId)) return prev
+      const isNewBatch =
+        activeDispersalRef.current == null && prev.length === 0
+      if (isNewBatch) {
+        setPendingDiscoveryToast(true)
+      }
+      return [...prev, clueId]
+    })
   }, [])
 
   const completeClueDispersal = useCallback((clueId: string) => {
@@ -468,6 +636,7 @@ export function JBSFlowProvider({
           isMinimized: readingSession.isMinimized,
           hasFinishedPhase: readingSession.hasFinishedPhase,
           bookDelivered: readingSession.bookDelivered,
+          bookOpenedOnce: readingSession.bookOpenedOnce,
         },
         drawerOpen,
         drawerTab,
@@ -529,6 +698,7 @@ export function JBSFlowProvider({
       clueBadgeCount,
       readingSession,
       voicePlayback,
+      devStageEpoch,
       pushMessage,
       sendPlayerMessage,
       setDrawerOpen,
@@ -543,13 +713,20 @@ export function JBSFlowProvider({
       setStep,
       triggerClueDispersal,
       completeClueDispersal,
+      pendingDiscoveryToast,
+      dispersalBatchSize,
+      acknowledgeDiscoveryToast,
+      deliverScriptBook,
       openScriptBook,
+      openScriptBookToSection,
       minimizeScriptBook,
       restoreScriptBook,
       setScriptReaderPage,
       applyScriptPages,
       finishScriptReading,
       patchVoicePlayback,
+      debugJumpToFlowNode,
+      devFlowNodeId,
     }),
     [
       locked,
@@ -572,23 +749,31 @@ export function JBSFlowProvider({
       clueBadgeCount,
       readingSession,
       voicePlayback,
+      devStageEpoch,
       pushMessage,
       sendPlayerMessage,
       advanceStep,
       setStep,
       triggerClueDispersal,
       completeClueDispersal,
+      pendingDiscoveryToast,
+      dispersalBatchSize,
+      acknowledgeDiscoveryToast,
       createManuscript,
       updateManuscript,
       deleteManuscript,
       setActiveManuscriptId,
+      deliverScriptBook,
       openScriptBook,
+      openScriptBookToSection,
       minimizeScriptBook,
       restoreScriptBook,
       setScriptReaderPage,
       applyScriptPages,
       finishScriptReading,
       patchVoicePlayback,
+      debugJumpToFlowNode,
+      devFlowNodeId,
     ],
   )
 
@@ -599,4 +784,8 @@ export function useJBSFlow(): JBSFlowContextValue {
   const ctx = useContext(JBSFlowContext)
   if (!ctx) throw new Error('useJBSFlow must be used within JBSFlowProvider')
   return ctx
+}
+
+export function useJBSFlowOptional(): JBSFlowContextValue | null {
+  return useContext(JBSFlowContext)
 }

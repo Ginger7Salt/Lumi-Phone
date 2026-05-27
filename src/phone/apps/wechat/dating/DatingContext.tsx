@@ -10,7 +10,11 @@ import {
   type ReactNode,
 } from 'react'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../newFriendsPersona/idb'
-import { resolvePrivateChatSessionPlayerIdentityId, resolvePrivateWeChatConversationKey } from '../wechatConversationKey'
+import {
+  resolvePrivateChatSessionPlayerIdentityId,
+  resolvePrivateWeChatStorageConversationKey,
+} from '../wechatConversationKey'
+import { loadAccountsBundle } from '../wechatAccountPersistence'
 import { peekPrivateChatGroupAnchorFromDockStaging } from '../wechatPrivateGroupAnchorStaging'
 import { migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
 import { repairCharacterAvatarForBundleImport } from '../../../utils/characterAvatarUrl'
@@ -29,6 +33,7 @@ import {
 import {
   buildMemoryRelevanceHaystack,
   buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt,
+  formatRecentPrivateChatReferenceByCharacter,
   formatUnsummarizedPrivateChatBlock,
 } from '../wechatMemoryPromptBlocks'
 import { isOpenAiEmptyAssistantParseError, openAiCompatibleChatLenient } from '../newFriendsPersona/ai'
@@ -162,6 +167,7 @@ async function buildDatingTurnModelExtras(params: {
     characterRealName: params.char.realName,
     datingPlotsSnapshot: params.plotsSnapshotForGather,
     sessionPlayerIdentityId: params.sessionPlayerIdentityId ?? null,
+    wechatAccountId: (await loadAccountsBundle())?.currentAccountId?.trim() || null,
   })
   if (!gather) {
     return {
@@ -681,6 +687,28 @@ async function loadPlayerIdentityForDating(characterId: string): Promise<PlayerI
   return await personaDb.getPlayerIdentity(pid)
 }
 
+/** 与私聊 ChatRoom 对齐：当前马甲 + 会话身份拼 storage 键，避免线下剧情读不到微信气泡。 */
+async function resolveDatingWeChatConversationScope(
+  characterId: string,
+  sessionPlayerIdentityId?: string | null,
+): Promise<{
+  chRow: Character | null
+  sessionPid: string
+  wechatAccountId: string | null
+  conversationKey: string
+}> {
+  const cid = characterId.trim()
+  const chRow = await personaDb.getCharacter(cid).catch(() => null)
+  const explicit = sessionPlayerIdentityId?.trim() || ''
+  const fromGlobal = (await personaDb.getCurrentIdentityId()).trim()
+  const appHint = explicit || fromGlobal || null
+  const sessionPid = resolvePrivateChatSessionPlayerIdentityId(chRow, appHint)
+  const bundle = await loadAccountsBundle()
+  const wechatAccountId = bundle?.currentAccountId?.trim() || null
+  const conversationKey = resolvePrivateWeChatStorageConversationKey(cid, wechatAccountId, sessionPid)
+  return { chRow, sessionPid, wechatAccountId, conversationKey }
+}
+
 function plotItemsToSnapshots(plots: PlotItem[]): DatingPlotSnapshotItem[] {
   return plots.map((p) => ({
     id: p.id,
@@ -753,6 +781,7 @@ async function finalizeDatingMemoryAfterAiReply(params: {
           characterRealName: params.char.realName,
           datingPlotsSnapshot: params.plotsSnapshotAfterAi,
           sessionPlayerIdentityId: identity?.id ?? null,
+          wechatAccountId: (await loadAccountsBundle())?.currentAccountId?.trim() || null,
         })
       : null
   const gatherForApply = freshGather ?? params.memoryGather
@@ -1512,6 +1541,8 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       relevance?: {
         userText?: string
         plotTail?: string
+        /** 与本轮 generateDatingAi 使用的玩家身份一致，用于拼私聊 storage 键 */
+        sessionPlayerIdentityId?: string | null
         /**
          * 重新生成 AI 气泡时传入：仅以该快照拼「尚未总结·线下」，**不要**再从 KV 拉游标后全量（否则会含待重写旧稿）。
          */
@@ -1525,9 +1556,10 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       unsummarizedOfflineBlock: string
     }> => {
       const cid = characterId.trim()
-      const chRow = await personaDb.getCharacter(cid).catch(() => null)
-      const appPid = await personaDb.getCurrentIdentityId()
-      const convKey = resolvePrivateWeChatConversationKey(cid, chRow, appPid)
+      const { chRow, sessionPid, conversationKey: convKey } = await resolveDatingWeChatConversationScope(
+        cid,
+        relevance?.sessionPlayerIdentityId,
+      )
 
       let unsummarizedPrivateBlock = ''
       let unsummarizedGroupBlock = ''
@@ -1541,14 +1573,24 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         } catch {
           unsummarizedPrivateBlock = ''
         }
+        if (!unsummarizedPrivateBlock.trim()) {
+          try {
+            unsummarizedPrivateBlock = await formatRecentPrivateChatReferenceByCharacter({
+              characterId: cid,
+              maxMessages: 48,
+              maxChars: DATING_AI_REFERENCE_SECTION_CHAR_CAP,
+            })
+          } catch {
+            unsummarizedPrivateBlock = ''
+          }
+        }
         try {
-          const sessionPid = resolvePrivateChatSessionPlayerIdentityId(chRow, appPid)
           const anchorGroupId =
             peekPrivateChatGroupAnchorFromDockStaging(cid) ??
             (await personaDb.getPrivateChatAnchorGroupId(cid, sessionPid))
           unsummarizedGroupBlock = await buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt({
             npcCharacterId: cid,
-            sessionPlayerIdentityId: appPid?.trim() || '__none__',
+            sessionPlayerIdentityId: sessionPid,
             boundPlayerIdentityId: chRow?.playerIdentityId,
             anchorGroupId,
             maxMessagesPerGroup: 60,
@@ -1708,6 +1750,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         const onlineCtx = await getOnlineMemoryContext(pid, {
           userText: lastPlayer?.content,
           plotTail,
+          sessionPlayerIdentityId: playerIdentity?.id ?? null,
         })
         const { loadOfflineDatingPlotsPromptBlock } = await import('./loadOfflineDatingPlotsForWechatPrompt')
         const offlineDatingPlotsContext = await loadOfflineDatingPlotsPromptBlock(pid, char.realName)
@@ -1790,7 +1833,11 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           const plotTail = formatRecentPlotsForPrompt(plotsForModel, char.realName, 1600)
           const playerIdentity = await loadPlayerIdentityForDating(char.id)
           const [onlineCtx, { datingExtras: turnExtras, memoryGather }] = await Promise.all([
-            getOnlineMemoryContext(char.id, { userText: msg, plotTail }),
+            getOnlineMemoryContext(char.id, {
+              userText: msg,
+              plotTail,
+              sessionPlayerIdentityId: playerIdentity?.id ?? null,
+            }),
             buildDatingTurnModelExtras({
               char,
               plotsSnapshotForGather: plotItemsToSnapshots(plotsForModel),
@@ -1930,7 +1977,10 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         try {
           const playerIdentity = await loadPlayerIdentityForDating(char.id)
           const [onlineCtx, { datingExtras: turnExtras, memoryGather }] = await Promise.all([
-            getOnlineMemoryContext(char.id, { userText: String(bias || '').trim() }),
+            getOnlineMemoryContext(char.id, {
+              userText: String(bias || '').trim(),
+              sessionPlayerIdentityId: playerIdentity?.id ?? null,
+            }),
             buildDatingTurnModelExtras({
               char,
               plotsSnapshotForGather: [],
@@ -2212,6 +2262,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           getOnlineMemoryContext(char.id, {
             userText: userMsg ?? '',
             plotTail,
+            sessionPlayerIdentityId: playerIdentity?.id ?? null,
             offlineUnsummarizedPlotSnapshot: plotItemsToSnapshots(before),
           }),
         ])

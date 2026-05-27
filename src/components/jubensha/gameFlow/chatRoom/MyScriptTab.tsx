@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { Lock } from 'lucide-react'
+import { useMemo } from 'react'
 
 import { isScriptSectionUnlocked, type ScriptSection } from './jbsFlowTypes'
 import { useJBSFlow } from './JBSFlowEngine'
@@ -37,7 +38,14 @@ function UnlockedSection({ section }: { section: ScriptSection }) {
 }
 
 export function MyScriptTab() {
-  const { scriptSections, currentStep, loopRound } = useJBSFlow()
+  const { scriptSections, currentStep, loopRound, voicePlayback } = useJBSFlow()
+
+  const scriptUnlockFlags = useMemo(
+    () => ({
+      act1PublicPlotDone: currentStep >= 4 && voicePlayback.act1PublicPlotDone,
+    }),
+    [currentStep, voicePlayback.act1PublicPlotDone],
+  )
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto jbs-hide-scrollbar px-4 pb-8 pt-2">
@@ -46,7 +54,12 @@ export function MyScriptTab() {
       </p>
       <div className="mt-4">
         {scriptSections.map((section) => {
-          const unlocked = isScriptSectionUnlocked(section.id, currentStep, loopRound)
+          const unlocked = isScriptSectionUnlocked(
+            section.id,
+            currentStep,
+            loopRound,
+            scriptUnlockFlags,
+          )
           return (
             <AnimatePresence key={section.id} mode="wait">
               {unlocked ? (

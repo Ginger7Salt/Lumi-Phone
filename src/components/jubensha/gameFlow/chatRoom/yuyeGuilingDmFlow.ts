@@ -54,7 +54,7 @@ export function getYuyeGuilingAdvanceDmBodies(step: JBSStep, loopRound: number):
 export function getYuyeGuilingSystemHint(step: JBSStep, loopRound: number): string | null {
   switch (step) {
     case 3:
-      return '个人剧本 · 自我介绍已解封。请阅读后等待主持人宣读公共剧情（本局无席间公开发言）。'
+      return '个人剧本 · 自我介绍已解封。请阅读后等待 DM 宣读公共剧情。'
     case 4:
       return '主持人正在宣读公共剧情①，请静听，勿翻阅后续章节。'
     case 5:

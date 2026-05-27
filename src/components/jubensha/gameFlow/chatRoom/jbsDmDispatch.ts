@@ -13,6 +13,8 @@ export function computeNextFlowState(state: FlowAdvanceState): FlowAdvanceState 
   const { step, loopRound } = state
   if (step < 7) {
     let nextStep = (step + 1) as JBSStep
+    /** 第 2 阶段收齐公共前提线索后已在流内提示解封自我介绍；推进直接进入公共剧情① */
+    if (step === 2) nextStep = 4
     if (step === 4) nextStep = 6
     return {
       step: nextStep,

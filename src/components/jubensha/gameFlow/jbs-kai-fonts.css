@@ -8,8 +8,7 @@
 
 .jbs-font-kai,
 .jbs-gf-dm-intro-script,
-.jbs-gf-chat-dm-bubble-text,
-.jbs-gf-chat-bubble-text {
+.jbs-gf-chat-narration-bubble-text {
   font-family: var(--jbs-font-kai) !important;
   font-synthesis: none;
 }

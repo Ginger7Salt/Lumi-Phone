@@ -6,6 +6,7 @@ import {
   type JBSStep,
   type ScriptSection,
   type ScriptSectionId,
+  type ScriptUnlockFlags,
 } from '../jbsFlowTypes'
 
 import { findFirstPageIndexForSection } from './buildScriptPages'
@@ -18,6 +19,7 @@ export type ScriptSectionTagJumpProps = {
   sections: readonly ScriptSection[]
   step: JBSStep
   loopRound: number
+  scriptUnlockFlags?: ScriptUnlockFlags
   onJumpToPage: (pageIndex: number) => void
 }
 
@@ -27,6 +29,7 @@ export function ScriptSectionTagJump({
   sections,
   step,
   loopRound,
+  scriptUnlockFlags,
   onJumpToPage,
 }: ScriptSectionTagJumpProps) {
   const [open, setOpen] = useState(false)
@@ -56,7 +59,7 @@ export function ScriptSectionTagJump({
   }, [close, open])
 
   const pickSection = (sectionId: ScriptSectionId) => {
-    if (!isScriptSectionUnlocked(sectionId, step, loopRound)) return
+    if (!isScriptSectionUnlocked(sectionId, step, loopRound, scriptUnlockFlags)) return
     const idx = findFirstPageIndexForSection(pages, sectionId)
     if (idx < 0) return
     onJumpToPage(idx)
@@ -91,7 +94,7 @@ export function ScriptSectionTagJump({
           <p className="jbs-script-section-jump-menu-title">跳转分幕</p>
           <ul className="jbs-script-section-jump-list">
             {sections.map((section) => {
-              const unlocked = isScriptSectionUnlocked(section.id, step, loopRound)
+              const unlocked = isScriptSectionUnlocked(section.id, step, loopRound, scriptUnlockFlags)
               const tag = resolveSectionTag(section.id, section.title)
               const isCurrent = currentPage.sectionId === section.id
               const pageIdx = findFirstPageIndexForSection(pages, section.id)

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import type { JBSStep } from '../jbsFlowTypes'
+import type { JBSStep, ScriptUnlockFlags } from '../jbsFlowTypes'
 import type { ScriptSection } from '../jbsFlowTypes'
 
 import { buildScriptPages } from './buildScriptPages'
@@ -22,11 +22,13 @@ export function ScriptPageBuilder({
   sections,
   step,
   loopRound,
+  scriptUnlockFlags,
   onPagesBuilt,
 }: {
   sections: readonly ScriptSection[]
   step: JBSStep
   loopRound: number
+  scriptUnlockFlags?: ScriptUnlockFlags
   onPagesBuilt: (pages: ScriptPage[]) => void
 }) {
   const [bodyMetrics, setBodyMetrics] = useState<ScriptPageBodyMetrics | null>(() => {
@@ -48,7 +50,7 @@ export function ScriptPageBuilder({
     let cancelled = false
     const run = () => {
       if (cancelled) return
-      onPagesBuilt(buildScriptPages(sections, step, loopRound))
+      onPagesBuilt(buildScriptPages(sections, step, loopRound, scriptUnlockFlags))
     }
     if (document.fonts?.ready) {
       void document.fonts.ready.then(run)
@@ -58,7 +60,7 @@ export function ScriptPageBuilder({
     return () => {
       cancelled = true
     }
-  }, [sections, step, loopRound, bodyMetrics, onPagesBuilt])
+  }, [sections, step, loopRound, scriptUnlockFlags, bodyMetrics, onPagesBuilt])
 
   return (
     <div

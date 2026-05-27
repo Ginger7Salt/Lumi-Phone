@@ -8,6 +8,8 @@ export type JBSChatMessageKind = 'dm' | 'player' | 'system'
 export type DmTextHighlightRange = {
   start: number
   end: number
+  /** block：进入区间后整块区域一次性高亮（用于故事背景「公共前提」） */
+  mode?: 'inline' | 'block'
 }
 
 export type JBSChatMessage = {
@@ -78,15 +80,26 @@ export function jbsStepAnnouncement(step: JBSStep): string {
   }
 }
 
+/** 剧本章节解锁附加条件（如公共剧情①播完才开第一幕） */
+export type ScriptUnlockFlags = {
+  act1PublicPlotDone?: boolean
+}
+
 /** 根据当前步骤与循环轮次，判断剧本章节是否可读 */
 export function isScriptSectionUnlocked(
   sectionId: ScriptSectionId,
   step: JBSStep,
   loopRound: number,
+  flags?: ScriptUnlockFlags,
 ): boolean {
+  if (step < 2) return false
+  if (sectionId === 'intro') return step >= 2
   if (step < 3) return false
-  if (sectionId === 'intro') return step >= 3
-  if (sectionId === 'act1') return step >= 4
+  if (sectionId === 'act1') {
+    if (step >= 5) return true
+    if (step === 4 && flags?.act1PublicPlotDone) return true
+    return false
+  }
   if (sectionId === 'act2') return step >= 7 && loopRound >= 1
   if (sectionId === 'act3') return step >= 7 && loopRound >= 3
   if (sectionId === 'finale') return step >= 8

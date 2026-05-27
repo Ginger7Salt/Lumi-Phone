@@ -1,7 +1,12 @@
 import { motion } from 'framer-motion'
+import { useMemo } from 'react'
 
 import type { DmTextHighlightRange } from './jbsFlowTypes'
-import { renderDmBubbleText } from './dmBubbleText'
+import {
+  compactDmNarrationLines,
+  renderDmBubbleText,
+  resolveDmHighlightForDisplay,
+} from './dmBubbleText'
 
 export type DMMsgBubbleProps = {
   body: string
@@ -12,6 +17,12 @@ export type DMMsgBubbleProps = {
 }
 
 export function DMMsgBubble({ body, isTyping = false, highlight }: DMMsgBubbleProps) {
+  const displayBody = useMemo(() => compactDmNarrationLines(body), [body])
+  const displayHighlight = useMemo(
+    () => resolveDmHighlightForDisplay(displayBody, highlight),
+    [displayBody, highlight],
+  )
+
   return (
     <motion.div
       className="mb-5 w-full"
@@ -21,11 +32,11 @@ export function DMMsgBubble({ body, isTyping = false, highlight }: DMMsgBubblePr
     >
       <motion.div className="flex flex-col items-center px-2">
         <span className="jbs-gf-chat-dm-tag mb-2 font-sans text-[9px] font-extralight tracking-[0.28em]">
-          𓋫 DM | 主持人
+          旁白
         </span>
-        <motion.div className="jbs-gf-chat-glass-surface jbs-gf-chat-dm-bubble max-w-[92%] px-5 py-4 text-center">
-          <p className="jbs-font-kai jbs-gf-chat-dm-bubble-text whitespace-pre-wrap text-[16px] leading-loose">
-            {renderDmBubbleText(body, highlight, isTyping)}
+        <motion.div className="jbs-gf-chat-narration-bubble max-w-[94%] px-4 py-3.5">
+          <p className="jbs-font-kai jbs-gf-chat-narration-bubble-text whitespace-pre-wrap text-[16px] leading-loose">
+            {renderDmBubbleText(displayBody, displayHighlight, isTyping)}
           </p>
         </motion.div>
       </motion.div>

@@ -23,7 +23,7 @@ import {
 import { ScriptPageMetricsReporter } from './ScriptPageMetricsReporter'
 import { ScriptSectionTagJump } from './ScriptSectionTagJump'
 import type { ScriptPage } from './scriptReaderTypes'
-import type { JBSStep, ScriptSection } from '../jbsFlowTypes'
+import type { JBSStep, ScriptSection, ScriptUnlockFlags } from '../jbsFlowTypes'
 
 const FLIP_THRESHOLD = 0.28
 const VELOCITY_THRESHOLD = 650
@@ -46,6 +46,7 @@ export type ThreeDPageFlipperProps = {
   allPages?: readonly ScriptPage[]
   scriptStep?: JBSStep
   scriptLoopRound?: number
+  scriptUnlockFlags?: ScriptUnlockFlags
   onJumpToPage?: (pageIndex: number) => void
 }
 
@@ -189,6 +190,7 @@ export function ThreeDPageFlipper({
   allPages,
   scriptStep,
   scriptLoopRound = 0,
+  scriptUnlockFlags,
   onJumpToPage,
 }: ThreeDPageFlipperProps) {
   const stageRef = useRef<HTMLDivElement>(null)
@@ -235,6 +237,7 @@ export function ThreeDPageFlipper({
             sections={scriptSections}
             step={scriptStep}
             loopRound={scriptLoopRound}
+            scriptUnlockFlags={scriptUnlockFlags}
             onJumpToPage={onJumpToPage}
           />
         )

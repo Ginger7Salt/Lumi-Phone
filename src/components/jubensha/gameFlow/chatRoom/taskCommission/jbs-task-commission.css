@@ -1,0 +1,383 @@
+/* 密函接取仪式 · 任务悬浮怀表 */
+
+.jbs-task-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  pointer-events: auto;
+}
+
+.jbs-task-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.62);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+}
+
+.jbs-task-modal-stage {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 380px);
+}
+
+.jbs-task-envelope {
+  position: relative;
+  width: 100%;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 3px 10px 10px 3px;
+  background: linear-gradient(165deg, #faf7f0 0%, #f4f1ea 42%, #ebe4d8 100%);
+  box-shadow:
+    0 28px 64px rgba(0, 0, 0, 0.38),
+    0 0 0 1px rgba(196, 168, 118, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.jbs-task-envelope-fold {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 42%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0%, transparent 100%);
+  pointer-events: none;
+}
+
+.jbs-task-envelope--open .jbs-task-envelope-fold {
+  opacity: 0.25;
+}
+
+.jbs-task-wax-seal-wrap {
+  position: absolute;
+  left: 50%;
+  top: 2.25rem;
+  z-index: 3;
+  width: 4.5rem;
+  height: 4.5rem;
+  transform: translateX(-50%);
+}
+
+.jbs-task-wax-seal {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 4.5rem;
+  height: 4.5rem;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: radial-gradient(circle at 35% 30%, #9e2a3a 0%, #722f37 55%, #4a1820 100%);
+  box-shadow:
+    0 8px 22px rgba(74, 24, 32, 0.45),
+    inset 0 2px 4px rgba(255, 220, 210, 0.18),
+    inset 0 -3px 8px rgba(0, 0, 0, 0.25);
+}
+
+.jbs-task-wax-seal-ring {
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 230, 220, 0.22);
+}
+
+.jbs-task-wax-seal-emblem {
+  width: 2rem;
+  height: 2rem;
+}
+
+.jbs-task-wax-fragment {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2.1rem;
+  height: 2.3rem;
+  margin: -1.15rem 0 0 -1.05rem;
+  border-radius: 48% 52% 50% 50%;
+  background: radial-gradient(circle at 40% 35%, #9e2a3a 0%, #722f37 100%);
+  box-shadow: 0 4px 12px rgba(74, 24, 32, 0.35);
+}
+
+.jbs-task-letter-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 5.5rem 1.35rem 1.25rem;
+  transform-origin: top center;
+}
+
+.jbs-task-letter-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(92, 61, 46, 0.25) transparent;
+}
+
+.jbs-task-letter-title {
+  margin: 0 0 1.15rem;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.65;
+  letter-spacing: 0.14em;
+  color: rgba(42, 32, 28, 0.88);
+  text-transform: uppercase;
+}
+
+.jbs-task-letter-task {
+  margin: 0 0 0.85rem;
+  font-size: 14px;
+  line-height: 1.78;
+  letter-spacing: 0.04em;
+  color: rgba(52, 42, 38, 0.92);
+}
+
+.jbs-task-type-glyph {
+  display: inline;
+}
+
+.jbs-task-type-caret {
+  display: inline-block;
+  margin-left: 1px;
+  color: rgba(114, 47, 55, 0.65);
+  font-weight: 300;
+}
+
+.jbs-task-seal-proceed-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  width: 100%;
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(92, 61, 46, 0.32);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(26, 22, 20, 0.94) 0%, rgba(12, 10, 9, 0.98) 100%);
+  color: #f4f1ea;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.jbs-task-seal-proceed-btn:hover {
+  border-color: rgba(196, 168, 118, 0.45);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.jbs-task-seal-proceed-label {
+  font-size: 12px;
+  letter-spacing: 0.22em;
+}
+
+.jbs-task-seal-proceed-sub {
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: rgba(196, 168, 118, 0.72);
+}
+
+/* 悬浮怀表 */
+
+.jbs-task-floating-ball {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.jbs-task-ball-glow {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.18) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.jbs-task-ball-dial {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.jbs-task-ball-ring {
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 1px solid rgba(196, 168, 118, 0.22);
+  pointer-events: none;
+}
+
+/* 任务清单 BottomSheet */
+
+.jbs-task-sheet-root {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+}
+
+.jbs-task-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+
+.jbs-task-sheet-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: min(78vh, 560px);
+  display: flex;
+  flex-direction: column;
+  padding: 0.65rem 1.1rem max(1.1rem, env(safe-area-inset-bottom));
+  border-radius: 16px 16px 0 0;
+  background: rgba(244, 241, 234, 0.92);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 -16px 48px rgba(0, 0, 0, 0.22);
+}
+
+.jbs-task-sheet-handle {
+  width: 2.25rem;
+  height: 3px;
+  margin: 0 auto 0.85rem;
+  border-radius: 999px;
+  background: rgba(92, 61, 46, 0.22);
+}
+
+.jbs-task-sheet-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.jbs-task-sheet-kicker {
+  margin: 0 0 0.25rem;
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  color: rgba(92, 61, 46, 0.55);
+}
+
+.jbs-task-sheet-title {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  letter-spacing: 0.08em;
+  color: rgba(42, 32, 28, 0.92);
+}
+
+.jbs-task-sheet-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  border: 1px solid rgba(92, 61, 46, 0.2);
+  border-radius: 50%;
+  background: rgba(255, 254, 249, 0.85);
+  color: rgba(92, 61, 46, 0.75);
+  cursor: pointer;
+}
+
+.jbs-task-sheet-progress {
+  margin: 0 0 0.85rem;
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: rgba(114, 47, 55, 0.65);
+}
+
+.jbs-task-sheet-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.jbs-task-sheet-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  width: 100%;
+  margin-bottom: 0.5rem;
+  padding: 0.75rem 0.65rem;
+  border: 1px solid rgba(92, 61, 46, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 254, 249, 0.72);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.jbs-task-sheet-item:hover {
+  border-color: rgba(196, 168, 118, 0.35);
+  background: rgba(255, 254, 249, 0.95);
+}
+
+.jbs-task-sheet-item--done .jbs-task-sheet-item-text {
+  text-decoration: line-through;
+  color: rgba(120, 120, 120, 0.85);
+}
+
+.jbs-task-sheet-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  border: 1px solid rgba(92, 61, 46, 0.28);
+  border-radius: 3px;
+  background: rgba(255, 254, 249, 0.9);
+  color: rgba(114, 47, 55, 0.9);
+}
+
+.jbs-task-sheet-check--on {
+  border-color: rgba(114, 47, 55, 0.45);
+  background: rgba(114, 47, 55, 0.12);
+}
+
+.jbs-task-sheet-item-index {
+  flex-shrink: 0;
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: rgba(92, 61, 46, 0.5);
+  margin-top: 0.1rem;
+}
+
+.jbs-task-sheet-item-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  letter-spacing: 0.03em;
+  color: rgba(42, 32, 28, 0.9);
+}

@@ -45,8 +45,11 @@ import {
   mergeWeChatPersonaContacts,
   personaContactsEqual,
   reconcileAccountPersonaContacts,
+  repairWeChatSessionPersistence,
   repairMultiAccountPersonaContactsBundle,
 } from './wechatPersonaContactsSync'
+import { emitWeChatStorageChanged } from './newFriendsPersona/idb'
+import { WECHAT_SESSION_REPAIR_APPLIED_EVENT } from './wechatSessionRepair'
 import {
   accountToProfile,
   profileToAccountDraft,
@@ -137,6 +140,10 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
   const suppressContactsBundleSyncRef = useRef(false)
   /** 切换进行中：避免 persistBundle 与 applyActiveAccount 之间的 effect 用旧内存覆盖新号 bundle。 */
   const accountSwitchInFlightRef = useRef(false)
+  /** 启动水合完成前禁止「内存 → bundle」同步，避免空通讯录覆盖已存 bundle。 */
+  const contactsReadyForBundleSyncRef = useRef(false)
+  const inMemoryContactsRef = useRef<WeChatPersonaContact[]>([])
+  inMemoryContactsRef.current = state.wechatPersonaContacts
 
   const persistBundle = useCallback(async (nextAccounts: UserAccount[], nextCurrentId: string) => {
     const bundle = { accounts: nextAccounts, currentAccountId: nextCurrentId }
@@ -262,6 +269,8 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
               active = findAccountById(migratedBundle, migratedBundle.currentAccountId) ?? active
             }
             await applyActiveAccount(active, { contactsOverride: active.personaContacts })
+            const { syncWeChatDataInventoryBaseline } = await import('./wechatDataInventory')
+            void syncWeChatDataInventoryBaseline()
           }
         }
         if (!cancelled) {
@@ -273,7 +282,10 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
             }
         }
       } finally {
-        if (!cancelled) setHydrated(true)
+        if (!cancelled) {
+          contactsReadyForBundleSyncRef.current = true
+          setHydrated(true)
+        }
       }
     })()
     return () => {
@@ -285,6 +297,7 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
   /** 通讯录变更后写回当前微信账号 bundle，避免刷新后仅存在 customization KV 而 bundle 为空被覆盖。 */
   useEffect(() => {
     if (!hydrated || !currentAccountId) return
+    if (!contactsReadyForBundleSyncRef.current) return
     if (accountSwitchInFlightRef.current) return
     if (suppressContactsBundleSyncRef.current) {
       suppressContactsBundleSyncRef.current = false
@@ -298,6 +311,12 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
     const snap = state.wechatPersonaContacts
     if (personaContactsEqual(active.personaContacts, snap)) return
     const primaryId = bundle.accounts[0]?.accountId
+    // 内存尚未从 bundle/KV 恢复，但 bundle 仍有联系人 → 禁止用空 snap 覆盖 bundle
+    if (!snap.length && active.personaContacts.length > 0) {
+      suppressContactsBundleSyncRef.current = true
+      setWeChatPersonaContacts(active.personaContacts.map((c) => ({ ...c })))
+      return
+    }
     // 多账号：bundle 为空但内存有联系人 → 仅当过滤后对本号仍为空时才视为「大号通讯录泄漏」
     if (bundle.accounts.length > 1 && !active.personaContacts.length && snap.length > 0) {
       void (async () => {
@@ -327,6 +346,75 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
     snapshotContactsForAccount,
     state.wechatPersonaContacts,
   ])
+
+  /** Edge / 移动端后台回收标签页后：重读 IndexedDB，自动对齐通讯录并通知各页重读库。 */
+  useEffect(() => {
+    if (!hydrated || !currentAccountId) return
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const runRepair = () => {
+      if (document.visibilityState && document.visibilityState !== 'visible') return
+      const bundle = bundleRef.current
+      if (!bundle) return
+      const activeAccountId = bundle.currentAccountId.trim() || currentAccountId.trim()
+      void (async () => {
+        try {
+          const { bundle: nextBundle, contacts, repaired } = await repairWeChatSessionPersistence({
+            bundle,
+            activeAccountId,
+            inMemoryContacts: inMemoryContactsRef.current,
+          })
+          if (!repaired) return
+          bundleRef.current = nextBundle
+          await saveAccountsBundle(nextBundle)
+          suppressContactsBundleSyncRef.current = true
+          const active = findAccountById(nextBundle, activeAccountId)
+          if (active) await applyActiveAccount(active, { contactsOverride: contacts })
+          emitWeChatStorageChanged()
+        } catch {
+          /* 恢复失败不阻塞前台 */
+        }
+      })()
+    }
+    const scheduleRepair = () => {
+      if (timer != null) clearTimeout(timer)
+      timer = setTimeout(runRepair, 120)
+    }
+    document.addEventListener('visibilitychange', scheduleRepair)
+    window.addEventListener('pageshow', scheduleRepair)
+    scheduleRepair()
+    return () => {
+      if (timer != null) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', scheduleRepair)
+      window.removeEventListener('pageshow', scheduleRepair)
+    }
+  }, [applyActiveAccount, currentAccountId, hydrated])
+
+  /** 数据中心「尝试自动恢复」写回 bundle 后，若微信已打开则同步到内存通讯录。 */
+  useEffect(() => {
+    if (!hydrated || !currentAccountId) return
+    const onApplied = (e: Event) => {
+      const ce = e as CustomEvent<{ contacts?: WeChatPersonaContact[]; activeAccountId?: string }>
+      const contacts = ce.detail?.contacts
+      if (!contacts?.length) return
+      const bundle = bundleRef.current
+      if (!bundle) return
+      const accId = ce.detail?.activeAccountId?.trim() || bundle.currentAccountId.trim() || currentAccountId.trim()
+      const active = findAccountById(bundle, accId)
+      if (!active) return
+      void (async () => {
+        try {
+          bundleRef.current = bundleWithAccountPersonaContacts(bundle, accId, contacts)
+          await saveAccountsBundle(bundleRef.current)
+          suppressContactsBundleSyncRef.current = true
+          await applyActiveAccount(active, { contactsOverride: contacts })
+        } catch {
+          // ignore
+        }
+      })()
+    }
+    window.addEventListener(WECHAT_SESSION_REPAIR_APPLIED_EVENT, onApplied as EventListener)
+    return () => window.removeEventListener(WECHAT_SESSION_REPAIR_APPLIED_EVENT, onApplied as EventListener)
+  }, [applyActiveAccount, currentAccountId, hydrated])
 
   const bindFirstIdentityIfNeeded = useCallback(async (baseIdentityId: string) => {
     const currentId = (await personaDb.getCurrentIdentityId()).trim()

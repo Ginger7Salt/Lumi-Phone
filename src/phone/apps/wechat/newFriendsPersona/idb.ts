@@ -2909,6 +2909,8 @@ export class PersonaDb {
     db.close()
     await unregisterGlobalWechatCharacterForCharacterId(deleteId)
     emitWeChatStorageChanged()
+    const { notifyUserWeChatDataClear } = await import('../wechatDataInventoryNotify')
+    notifyUserWeChatDataClear('delete_character_full', { characterId: deleteId })
   }
 
   /**
@@ -6872,6 +6874,8 @@ export class PersonaDb {
         }
       }
     }
+    const { notifyUserWeChatDataClear } = await import('../wechatDataInventoryNotify')
+    notifyUserWeChatDataClear('clear_conversation_ui_only', { conversationKey: k })
   }
 
   async deleteAllWeChatMessagesForConversation(conversationKey: string): Promise<void> {
@@ -6913,6 +6917,8 @@ export class PersonaDb {
     await this.setWechatReadCursor(k, Date.now())
     await this.markConversationHiddenAfterHistoryCleared(k, conv)
     emitWeChatStorageChanged()
+    const { notifyUserWeChatDataClear } = await import('../wechatDataInventoryNotify')
+    notifyUserWeChatDataClear('clear_conversation_messages', { conversationKey: k })
   }
 
   async putGroupChat(row: GroupChatRow): Promise<void> {
@@ -7139,6 +7145,8 @@ export class PersonaDb {
     })
 
     emitWeChatStorageChanged()
+    const { notifyUserWeChatDataClear } = await import('../wechatDataInventoryNotify')
+    notifyUserWeChatDataClear('erase_bundle_account', { wechatAccountId: acc })
   }
 
   /**
@@ -7223,6 +7231,8 @@ export class PersonaDb {
     clearWeChatAccountLegacyLocalStorage()
     emitWeChatStorageChanged()
     emitWeChatAccountDeepErased()
+    const { notifyUserWeChatDataClear } = await import('../wechatDataInventoryNotify')
+    notifyUserWeChatDataClear('erase_account_completely')
   }
 }
 

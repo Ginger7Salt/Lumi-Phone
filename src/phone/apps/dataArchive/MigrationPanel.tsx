@@ -172,7 +172,7 @@ export function MigrationPanel() {
   useEffect(() => () => clearLineTimers(), [])
 
   return (
-    <div className="mt-6 space-y-3">
+    <div id="data-archive-migration-panel" className="mt-6 space-y-3">
       <CeremonyOverlay open={ceremonyOpen} lines={ceremonyLines} activeLine={lineIdx} />
 
       {exportNameOpen ? (
@@ -295,6 +295,7 @@ export function MigrationPanel() {
       </button>
 
       <label
+        id="data-archive-import-restore"
         className={`flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${
           busy ? 'pointer-events-none opacity-50' : ''
         }`}

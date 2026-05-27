@@ -29,7 +29,7 @@ export function MiniBookAnchor({ onRestore }: MiniBookAnchorProps) {
         transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
         style={{ transformStyle: 'preserve-3d' }}
       />
-      <span className="jbs-script-mini-anchor-label mt-1">SCRIPT</span>
+      <span className="jbs-script-mini-anchor-label jbs-font-serif mt-0.5">剧本</span>
     </motion.button>
   )
 }

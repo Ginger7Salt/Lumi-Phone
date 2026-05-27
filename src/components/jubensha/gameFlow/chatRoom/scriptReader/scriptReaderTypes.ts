@@ -24,6 +24,8 @@ export type ReadingSession = {
   hasFinishedPhase: boolean
   /** 聊天流中是否已投递剧本卡片 */
   bookDelivered: boolean
+  /** 是否曾在聊天室点开过剧本（用于进度存档） */
+  bookOpenedOnce: boolean
 }
 
 export const SCRIPT_BOOK_LAYOUT_ID = 'jbs-script-book'

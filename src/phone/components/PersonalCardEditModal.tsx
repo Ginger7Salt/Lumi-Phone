@@ -1,4 +1,6 @@
+import { X } from 'lucide-react'
 import { useEffect, useId, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { canonicalPublicImagePath } from '../../publicAssetUrl'
 import { compressAvatarDataUrl, MAX_AVATAR_DATA_URL_LEN } from '../apps/wechat/avatarCompress'
@@ -102,15 +104,15 @@ export function PersonalCardEditModal({
     onClose()
   }
 
-  return (
+  return createPortal(
     <div
-      className="absolute inset-0 z-[1180] flex items-end justify-center sm:items-center"
-      style={{ background: 'rgba(0,0,0,0.45)' }}
+      className="fixed inset-0 z-[10050] flex items-center justify-center px-4 py-6 sm:px-8"
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
     >
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" aria-hidden />
       <ImageCropperModal
         open={!!avatarCropSrc}
         imageSrc={avatarCropSrc}
@@ -152,16 +154,30 @@ export function PersonalCardEditModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="max-h-[min(88vh,640px)] w-full max-w-[400px] overflow-y-auto rounded-t-[18px] border bg-white p-4 shadow-lg sm:rounded-[16px]"
+        className="relative z-[1] flex max-h-[min(92vh,720px)] w-full max-w-[520px] flex-col overflow-hidden rounded-[20px] border bg-white shadow-[0_24px_60px_rgba(28,28,30,0.18)]"
         style={{ borderColor: '#e5e5e5' }}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <h2 id={titleId} className="text-center text-[16px] font-semibold text-[#111]">
-          编辑桌面个人名片
-        </h2>
-        <p className="mt-1 text-center text-[11px] text-[#888]">
-          与微信资料独立 · 仅影响主屏名片
-        </p>
+        <header className="shrink-0 border-b border-[#eee] px-5 pb-3 pt-5">
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <h2 id={titleId} className="text-[18px] font-semibold text-[#111]">
+                编辑桌面个人名片
+              </h2>
+              <p className="mt-1 text-[12px] text-[#888]">与微信资料独立 · 仅影响主屏名片</p>
+            </div>
+            <Pressable
+              type="button"
+              onClick={onClose}
+              className="flex size-9 shrink-0 items-center justify-center rounded-full border border-[#e5e5e5] text-[#666] transition-colors hover:bg-[#f5f5f5]"
+              aria-label="关闭"
+            >
+              <X className="size-4" strokeWidth={1.75} aria-hidden />
+            </Pressable>
+          </div>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 [scrollbar-width:thin]">
 
         <div className="mt-4">
           <p className="text-[12px] text-[#666]">背景图预览</p>
@@ -261,23 +277,26 @@ export function PersonalCardEditModal({
           />
         </label>
 
-        <div className="mt-5 flex gap-2">
+        </div>
+
+        <footer className="shrink-0 flex gap-2 border-t border-[#eee] px-5 py-4">
           <Pressable
             type="button"
             onClick={onClose}
-            className="flex-1 rounded-[10px] border border-[#e5e5e5] py-2.5 text-[15px]"
+            className="flex-1 rounded-[12px] border border-[#e5e5e5] py-2.5 text-[15px]"
           >
             取消
           </Pressable>
           <Pressable
             type="button"
             onClick={save}
-            className="flex-1 rounded-[10px] border border-[#111] bg-[#111] py-2.5 text-[15px] font-semibold text-white"
+            className="flex-1 rounded-[12px] border border-[#111] bg-[#111] py-2.5 text-[15px] font-semibold text-white"
           >
             保存
           </Pressable>
-        </div>
+        </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
