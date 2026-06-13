@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react'
+
 import { PHONE_NUM_FONT_FAMILY } from '../../phone/types'
 import { formatArchiveTimelineDate } from './utils/archiveTimelineDate'
 import { formatMomentCommentTime, formatMomentTime } from './utils/timeFormat'
@@ -75,6 +77,34 @@ function renderSerifNumericText(text: string) {
       <span key={index}>{part}</span>
     ),
   )
+}
+
+/** 纯数字（点赞数、未读角标等） */
+export function MomentsSerifNumericValue({
+  value,
+  className,
+  style,
+}: {
+  value: number | string
+  className?: string
+  style?: CSSProperties
+}) {
+  return (
+    <span className={className} style={{ ...momentsSerifNumericStyle, ...style }}>
+      {value}
+    </span>
+  )
+}
+
+/** 混排文案中的数字片段走全局衬线数字字体 */
+export function MomentsSerifNumericText({
+  text,
+  className,
+}: {
+  text: string
+  className?: string
+}) {
+  return <span className={className}>{renderSerifNumericText(text)}</span>
 }
 
 /** 朋友圈 feed：发布时间中的数字（含月份）使用与个人相册日数相同的衬线字体 */

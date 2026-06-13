@@ -90,39 +90,41 @@ export function MomentDetailPage({
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <MomentsContentBackgroundLayer />
-        <div className="relative z-10 min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-        <MomentsContentBackdrop className="min-h-full">
-          <div className="mx-auto max-w-[560px]">
-            <MomentItem
-            item={item}
-            currentUserName={currentUserName}
-            currentUserAvatarUrl={currentUserAvatarUrl}
-            now={now}
-            contactDirectory={contactDirectory}
-            momentContacts={momentContacts}
-            momentRelationships={momentRelationships}
-            playerIdentityId={playerIdentityId}
-            enableVisitorFootprints={enableVisitorFootprints}
-            isReplying={replyingMomentId === item.id}
-            replyingAuthorName={replyingAuthorName}
-            replyingTargetName={replyingTargetName}
-            highlightCommentId={highlightCommentId}
-            defaultExpanded
-            showParticipantAvatars
-            showMentionLabel
-            onOpenFloatingInput={onOpenFloatingInput}
-            onToggleLike={onToggleLike}
-            onCharacterMomentInteractionsUnlocked={onCharacterMomentInteractionsUnlocked}
-            onTogglePin={onTogglePin}
-            onDelete={onDelete}
-            allowSubjectPin={allowSubjectPin}
-            onOpenParticipantProfile={onOpenParticipantProfile}
-            subjectCharacterId={subjectCharacterId}
-            subjectDisplayName={subjectDisplayName}
-            subjectAvatarUrl={subjectAvatarUrl}
-          />
-          </div>
-        </MomentsContentBackdrop>
+        <div
+          className="relative z-10 h-full min-h-0 overflow-y-auto pb-[max(28px,env(safe-area-inset-bottom,0px))] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        >
+          <MomentsContentBackdrop className="min-h-full">
+            <div className="mx-auto max-w-[560px]">
+              <MomentItem
+                item={item}
+                currentUserName={currentUserName}
+                currentUserAvatarUrl={currentUserAvatarUrl}
+                now={now}
+                contactDirectory={contactDirectory}
+                momentContacts={momentContacts}
+                momentRelationships={momentRelationships}
+                playerIdentityId={playerIdentityId}
+                enableVisitorFootprints={enableVisitorFootprints}
+                isReplying={replyingMomentId === item.id}
+                replyingAuthorName={replyingAuthorName}
+                replyingTargetName={replyingTargetName}
+                highlightCommentId={highlightCommentId}
+                defaultExpanded
+                showParticipantAvatars
+                showMentionLabel
+                onOpenFloatingInput={onOpenFloatingInput}
+                onToggleLike={onToggleLike}
+                onCharacterMomentInteractionsUnlocked={onCharacterMomentInteractionsUnlocked}
+                onTogglePin={onTogglePin}
+                onDelete={onDelete}
+                allowSubjectPin={allowSubjectPin}
+                onOpenParticipantProfile={onOpenParticipantProfile}
+                subjectCharacterId={subjectCharacterId}
+                subjectDisplayName={subjectDisplayName}
+                subjectAvatarUrl={subjectAvatarUrl}
+              />
+            </div>
+          </MomentsContentBackdrop>
         </div>
       </div>
     </motion.div>

@@ -24,6 +24,7 @@ import {
 } from './momentsContactDirectory'
 import { isMomentsChatApiConfigured, MOMENTS_CHAT_API_NOT_CONFIGURED_MESSAGE } from './momentsChatApiReady'
 import { scheduleMomentInteractionMemoryArchive } from './momentInteractionMemoryBridge'
+import { buildUserMomentLikePatch } from './momentInteractionNoticeEngine'
 import { reanchorPendingInteractionsAfterUserComment } from './momentInteractionTypes'
 import { loadMomentRelationships } from './momentRelationshipGraph'
 import {
@@ -436,20 +437,16 @@ export function useMomentFeedInteractions({
     async (momentId: string, liked: boolean) => {
       const existing = userMoments.find((m) => m.id === momentId)
       if (!existing) return
-      const likes = [...(existing.likes ?? [])]
-      const idx = likes.indexOf(displayNickname)
-      if (liked && idx < 0) likes.push(displayNickname)
-      if (!liked && idx >= 0) likes.splice(idx, 1)
-      const nextLikes = likes.length ? likes : undefined
+      const likePatch = buildUserMomentLikePatch(existing, displayNickname, liked)
       const next = userMoments.map((m) =>
-        m.id === momentId ? { ...m, likes: nextLikes } : m,
+        m.id === momentId ? { ...m, ...likePatch } : m,
       )
       setUserMoments(next)
-      await patchUserMoment(accountId, momentId, { likes: nextLikes })
+      await patchUserMoment(accountId, momentId, likePatch)
       if (!existing.isUserAuthored && existing.authorCharacterId) {
-        archiveCharacterMoment({ ...existing, likes: nextLikes })
+        archiveCharacterMoment({ ...existing, ...likePatch })
       } else if (existing.isUserAuthored) {
-        archiveCharacterMoment({ ...existing, likes: nextLikes })
+        archiveCharacterMoment({ ...existing, ...likePatch })
       }
     },
     [accountId, archiveCharacterMoment, displayNickname, setUserMoments, userMoments],

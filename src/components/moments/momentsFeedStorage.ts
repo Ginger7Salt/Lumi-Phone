@@ -157,6 +157,10 @@ function normalizeMoment(raw: unknown): MomentItemModel | null {
         : undefined,
     privacy: normalizeMomentPrivacy(o.privacy),
     isPinned: o.isPinned === true,
+    userEngagementAtMs:
+      typeof o.userEngagementAtMs === 'number' && Number.isFinite(o.userEngagementAtMs)
+        ? o.userEngagementAtMs
+        : undefined,
   }
 }
 

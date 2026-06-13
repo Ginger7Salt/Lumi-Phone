@@ -40,4 +40,6 @@ export type MomentItemModel = {
   privacy?: MomentPrivacyMeta
   /** 个人相册置顶 */
   isPinned?: boolean
+  /** 当前账号用户首次在该条动态点赞的时刻（用于互动提醒追更 cutoff） */
+  userEngagementAtMs?: number
 }

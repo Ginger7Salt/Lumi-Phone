@@ -700,6 +700,49 @@ function extractGeminiUserTextFromOpenAiLikeMessages(messages: unknown[]): strin
   return lines.join('\n').trim()
 }
 
+function extractOpenAiMessagePlainText(mm: Record<string, unknown>): string {
+  const c = mm.content
+  if (typeof c === 'string') return c.trim()
+  if (Array.isArray(c)) {
+    return c
+      .map((p) => {
+        const part = p && typeof p === 'object' ? (p as Record<string, unknown>) : null
+        return typeof part?.text === 'string' ? part.text : ''
+      })
+      .join('')
+      .trim()
+  }
+  return ''
+}
+
+/** Gemini generateContent：system 走 systemInstruction，user/assistant 走 contents */
+function partitionOpenAiMessagesForGemini(messages: unknown[]): {
+  systemInstructionText: string
+  contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }>
+} {
+  const systemParts: string[] = []
+  const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = []
+
+  for (const m of messages) {
+    const mm = m && typeof m === 'object' ? (m as Record<string, unknown>) : null
+    if (!mm) continue
+    const role = typeof mm.role === 'string' ? mm.role : 'user'
+    const text = extractOpenAiMessagePlainText(mm)
+    if (!text) continue
+    if (role === 'system') {
+      systemParts.push(text)
+      continue
+    }
+    const geminiRole: 'user' | 'model' = role === 'assistant' ? 'model' : 'user'
+    contents.push({ role: geminiRole, parts: [{ text }] })
+  }
+
+  return {
+    systemInstructionText: systemParts.join('\n\n').trim(),
+    contents,
+  }
+}
+
 /**
  * 兼容多模态（OpenAI 风格 content parts）的 chat 调用。
  * - 不改动现有 `openAiCompatibleChat` 的签名，避免影响文本链路
@@ -856,21 +899,37 @@ export async function openAiCompatibleChatLenient(
 export async function openAiCompatibleChat(
   cfg: ApiConfig,
   messages: OpenAiCompatibleMessage[],
-  options?: { temperature?: number; max_tokens?: number },
+  options?: { temperature?: number; max_tokens?: number; response_format?: 'json_object' },
 ): Promise<string> {
   // 文本链路也兼容 Gemini 原生 generateContent（避免 `contents is required`）
   if (isGeminiGenerateContentUrl(cfg.apiUrl)) {
     const endpoint = buildGeminiGenerateContentEndpoint(cfg)
     const url = `${endpoint}${endpoint.includes('?') ? '&' : '?'}key=${encodeURIComponent(cfg.apiKey)}`
-    const text = extractGeminiUserTextFromOpenAiLikeMessages(messages as unknown[])
-    const body: Record<string, unknown> = {
-      contents: [{ parts: [{ text }] }],
-      generationConfig: {
-        temperature: options?.temperature ?? 0.7,
-      },
+    const partitioned = partitionOpenAiMessagesForGemini(messages as unknown[])
+    const generationConfig: Record<string, unknown> = {
+      temperature: options?.temperature ?? 0.7,
     }
     if (options?.max_tokens != null) {
-      ;(body.generationConfig as Record<string, unknown>).maxOutputTokens = options.max_tokens
+      generationConfig.maxOutputTokens = options.max_tokens
+    }
+    if (options?.response_format === 'json_object') {
+      generationConfig.responseMimeType = 'application/json'
+    }
+    const contents =
+      partitioned.contents.length > 0
+        ? partitioned.contents
+        : [
+            {
+              role: 'user' as const,
+              parts: [{ text: partitioned.systemInstructionText || '请输出 JSON。' }],
+            },
+          ]
+    const body: Record<string, unknown> = {
+      contents,
+      generationConfig,
+    }
+    if (partitioned.systemInstructionText && partitioned.contents.length > 0) {
+      body.systemInstruction = { parts: [{ text: partitioned.systemInstructionText }] }
     }
     const resp = await fetch(url, {
       method: 'POST',
@@ -897,6 +956,9 @@ export async function openAiCompatibleChat(
     model: cfg.modelId || undefined,
     messages,
     temperature: options?.temperature ?? 0.7,
+  }
+  if (options?.response_format === 'json_object') {
+    body.response_format = { type: 'json_object' }
   }
   if (options?.max_tokens != null) applyChatCompletionTokenLimits(body, options.max_tokens)
   const resp = await fetch(endpoint, {

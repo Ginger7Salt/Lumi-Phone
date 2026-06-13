@@ -1,5 +1,6 @@
 import type { CharacterMomentPrivacyDraft } from './momentCharacterPrivacyAi'
 import { normalizeCharacterMomentPrivacyDraft } from './momentCharacterPrivacyAi'
+import { unwrapMomentJsonPayload } from '../anonymousQa/qnaDirectedJsonParse'
 import { MAX_MOMENT_IMAGES } from './momentContentLimits'
 import { normalizeMomentLocation } from './momentLocationUtils'
 import { sanitizeMomentBodyText } from './momentTextSanitize'
@@ -76,16 +77,27 @@ export function normalizeCharacterMomentAiDraft(
   raw: unknown,
   publisherCharacterId: string,
 ): CharacterMomentAiDraft | null {
-  if (!raw || typeof raw !== 'object') return null
-  const o = raw as Record<string, unknown>
+  const o = unwrapMomentJsonPayload(raw)
+  if (!o) return null
   const postType = normalizeCharacterMomentPostType(o.postType)
-  const content = sanitizeMomentBodyText(typeof o.content === 'string' ? o.content : '')
-  const images = Array.isArray(o.images)
+  const rawContent =
+    typeof o.content === 'string'
+      ? o.content
+      : typeof o.text === 'string'
+        ? o.text
+        : typeof o.body === 'string'
+          ? o.body
+          : ''
+  const content = sanitizeMomentBodyText(rawContent)
+  const promptSource = Array.isArray(o.images)
     ? o.images
-        .map((x) => (typeof x === 'string' ? x.trim() : ''))
-        .filter(Boolean)
-        .slice(0, MAX_MOMENT_IMAGES)
-    : []
+    : Array.isArray(o.imagePrompts)
+      ? o.imagePrompts
+      : []
+  const images = promptSource
+    .map((x) => (typeof x === 'string' ? x.trim() : ''))
+    .filter(Boolean)
+    .slice(0, MAX_MOMENT_IMAGES)
   const privacy = normalizeCharacterMomentPrivacyDraft(o, publisherCharacterId)
 
   if (postType === 'text' && !content) return null

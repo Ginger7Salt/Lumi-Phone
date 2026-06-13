@@ -27,7 +27,7 @@ import { profilePayloadFromParticipantMeta } from './momentProfileNavigation'
 import type { OnOpenMomentParticipantProfile } from './momentProfileNavigation'
 import { ReplyingIndicator } from './ReplyingIndicator'
 import { sanitizeMomentText } from './momentTextSanitize'
-import { MomentCommentTimeLabel } from './ArchiveTimelineDateColumn'
+import { MomentCommentTimeLabel, MomentsSerifNumericText } from './ArchiveTimelineDateColumn'
 
 type DisplayComment =
   | { kind: 'user'; id: string; sortAt: number; author: string; content: string; replyTo?: string }
@@ -531,7 +531,9 @@ function MomentInteractionAreaInner({
                   transition={SPRING_IN}
                   className="overflow-hidden text-[11px] leading-relaxed text-[#9CA3AF]"
                 >
-                  「{name}」看了这条动态，停留了 {dwell} 秒，但什么也没留下。
+                  <MomentsSerifNumericText
+                    text={`「${name}」看了这条动态，停留了 ${dwell} 秒，但什么也没留下。`}
+                  />
                 </motion.p>
               )
             })}

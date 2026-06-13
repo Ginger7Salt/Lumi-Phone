@@ -33,6 +33,7 @@ import {
 } from './momentsChatApiReady'
 import { isMomentsImageGenConfigured } from './momentsImageGenAvailability'
 import { MomentGeneratingOverlay } from './MomentGeneratingOverlay'
+import { MomentsErrorAlertDialog } from './MomentsErrorAlertDialog'
 import type { MomentContactRef } from './newMomentTypes'
 import type { MomentsImageGenSettings } from './useMomentsSettingsStore'
 
@@ -118,7 +119,7 @@ export function MomentInstantGenModal({
   const [batchIndex, setBatchIndex] = useState(0)
   const [batchTotal, setBatchTotal] = useState(0)
   const [activeName, setActiveName] = useState<string | undefined>()
-  const [error, setError] = useState<string | null>(null)
+  const [errorDialogMessage, setErrorDialogMessage] = useState<string | null>(null)
   const prevOpenRef = useRef(false)
 
   useEffect(() => {
@@ -189,7 +190,7 @@ export function MomentInstantGenModal({
 
     if (!justOpened) return
 
-    setError(null)
+    setErrorDialogMessage(null)
     setStage('idle')
     setBatchIndex(0)
     setBatchTotal(0)
@@ -242,11 +243,11 @@ export function MomentInstantGenModal({
   const handlePublish = useCallback(async () => {
     if (!wechatCtx || !selectedContacts.length || busy) return
     if (!isMomentsChatApiConfigured(wechatCtx.apiConfig)) {
-      setError(MOMENTS_CHAT_API_NOT_CONFIGURED_MESSAGE)
+      setErrorDialogMessage(MOMENTS_CHAT_API_NOT_CONFIGURED_MESSAGE)
       return
     }
 
-    setError(null)
+    setErrorDialogMessage(null)
     setStage('context')
     setBatchTotal(selectedContacts.length)
     setBatchIndex(1)
@@ -304,11 +305,11 @@ export function MomentInstantGenModal({
     setActiveName(undefined)
 
     if (failures.length === selectedContacts.length) {
-      setError(failures.join('\n'))
+      setErrorDialogMessage(failures.join('\n'))
       return
     }
     if (failures.length) {
-      setError(`部分角色生成失败：\n${failures.join('\n')}`)
+      setErrorDialogMessage(`部分角色生成失败：\n${failures.join('\n')}`)
       return
     }
     onClose()
@@ -340,6 +341,12 @@ export function MomentInstantGenModal({
         characterName={activeName}
         batchIndex={batchIndex}
         batchTotal={batchTotal}
+      />
+      <MomentsErrorAlertDialog
+        open={errorDialogMessage !== null}
+        title="朋友圈生成失败"
+        message={errorDialogMessage ?? ''}
+        onClose={() => setErrorDialogMessage(null)}
       />
       <AnimatePresence>
         {open && !showGenerating ? (
@@ -608,10 +615,6 @@ export function MomentInstantGenModal({
                   >
                     强制显影{selectedIds.size > 1 ? `（${selectedIds.size} 人）` : ''}
                   </button>
-
-                  {error ? (
-                    <p className="whitespace-pre-wrap text-center text-[12px] text-red-600">{error}</p>
-                  ) : null}
                   </div>
                 </>
               )}

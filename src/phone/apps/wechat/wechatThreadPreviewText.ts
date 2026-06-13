@@ -10,14 +10,21 @@ function stripGroupEventNoticePrefixLocal(raw: string): string {
   return s
 }
 
+/** 聊天协议：表情包/表情行（含 `[表情包]引用名`），预览统一显示为 `[动画表情]` */
+export function isWeChatStickerPreviewContent(content: string): boolean {
+  const pc = stripGroupEventNoticePrefixLocal(String(content ?? '').trim()).trim()
+  if (!pc) return false
+  const firstLine = (pc.split(/\r?\n/)[0] ?? '').trim()
+  return firstLine.startsWith('[表情包]') || firstLine.startsWith('[表情]')
+}
+
 /**
  * 微信「信息」会话列表、新消息通知摘要等：去掉群系统灰条前缀后，若以 `[表情包]` / `[表情]` 协议开头则统一显示 `[动画表情]`，不暴露引用名。
  */
 export function formatWeChatMessagesTabPreviewFromStoredMessageContent(content: string): string {
+  if (isWeChatStickerPreviewContent(content)) return '[动画表情]'
   const pc = stripGroupEventNoticePrefixLocal(String(content ?? '').trim()).trim()
   if (!pc) return pc
-  const firstLine = (pc.split(/\r?\n/)[0] ?? '').trim()
-  if (firstLine.startsWith('[表情包]') || firstLine.startsWith('[表情]')) return '[动画表情]'
   return pc
 }
 
@@ -51,6 +58,7 @@ export function formatWeChatNotifyPreviewFromStoredMessage(msg: NotifyPreviewMes
   if (msg.transfer) return '[转账]'
   if (msg.musicSync) return '[音乐]'
   if (msg.redPacket) return '[红包]'
+  if (isWeChatStickerPreviewContent(msg.content)) return '[动画表情]'
   if (msg.images?.length) return '[图片]'
   return formatWeChatMessagesTabPreviewFromStoredMessageContent(msg.content)
 }

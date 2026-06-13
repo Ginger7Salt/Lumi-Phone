@@ -15,6 +15,7 @@ import type { MockContact } from './anonymousQa/types'
 import { DiscoverListenTogetherApp } from './discoverListen/DiscoverListenTogetherApp'
 import { LISTEN_TOGETHER_NAVIGATE_EVENT } from './discoverListen/listenTogetherNavigation'
 import { useMomentsInteractionUnreadCount } from './moments/MomentsNoticeRuntime'
+import { MomentsSerifNumericText } from './moments/ArchiveTimelineDateColumn'
 import type { OnOpenMomentParticipantProfile } from './moments/momentProfileNavigation'
 import { WeChatMomentsPage } from './moments/WeChatMomentsPage'
 import { mockContactsToMomentRefs } from './moments/publishMomentUtils'
@@ -219,14 +220,12 @@ export function WeChatDiscoverInstagram({
                       {item.id === 'moments' && momentsUnreadCount > 0 ? (
                         <span
                           className="flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full px-[5px] text-[10px] font-semibold leading-none tabular-nums text-white"
-                          style={{
-                            background: '#fa5151',
-                            fontFamily:
-                              'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
-                          }}
+                          style={{ background: '#fa5151' }}
                           aria-label={`${momentsUnreadCount} 条未读互动消息`}
                         >
-                          {momentsUnreadCount > 99 ? '99+' : momentsUnreadCount}
+                          <MomentsSerifNumericText
+                            text={momentsUnreadCount > 99 ? '99+' : String(momentsUnreadCount)}
+                          />
                         </span>
                       ) : null}
                       <ChevronRight className="size-4 text-[#8e8e8e]" strokeWidth={1.75} aria-hidden />

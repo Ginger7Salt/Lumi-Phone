@@ -1,13 +1,16 @@
 import type { ApiConfig } from '../../phone/apps/api/types'
-import { openAiCompatibleChat } from '../../phone/apps/wechat/newFriendsPersona/ai'
 import { loadPrivateChatNetworkRelationshipsBlock } from '../../phone/apps/wechat/networkRelationshipsPrompt'
 import { buildSystemContent } from '../../phone/apps/wechat/wechatChatAi'
-import { parseModelJsonPayload } from '../anonymousQa/qnaDirectedJsonParse'
 import {
   buildAnonymousQaPersonaPromptPack,
   type AnonymousQaWechatContext,
 } from '../anonymousQa/buildAnonymousQaPersonaContext'
 import { assertMomentsChatApiConfigured } from './momentsChatApiReady'
+import {
+  parseMomentsModelJsonPayload,
+  requestMomentsModelJsonText,
+  throwIfMomentModelJsonInvalid,
+} from './momentsChatJsonAi'
 import {
   buildCharacterMomentPrivacyPromptSection,
   CHARACTER_MOMENT_PRIVACY_JSON_HINT,
@@ -200,7 +203,7 @@ export async function generateInstantMomentWithInteractions(params: {
     '请生成极具活人感的朋友圈与后续社交互动，只返回 JSON。',
   ].join('\n\n')
 
-  const raw = await openAiCompatibleChat(
+  const raw = await requestMomentsModelJsonText(
     cfg as ApiConfig,
     [
       { role: 'system', content: `${system}\n\n${INSTANT_GEN_TASK}\n\n${CHARACTER_MOMENT_PRIVACY_RULES}` },
@@ -209,12 +212,7 @@ export async function generateInstantMomentWithInteractions(params: {
     { temperature: 0.9, max_tokens: maxTokens },
   )
   const trimmedRaw = raw.trim()
-  if (!trimmedRaw) {
-    throw new Error(
-      '模型返回为空（无正文）。请检查 API 是否可用、模型 ID 是否正确，或聊天卡片里「最大回复 token」是否过小（建议 ≥4096）',
-    )
-  }
-  const payload = parseModelJsonPayload(trimmedRaw)
+  const payload = parseMomentsModelJsonPayload(trimmedRaw)
   const contentLimit = includesText ? params.config.textLengthTarget : undefined
   const draft = normalizeInstantGenAiDraft(
     payload,
@@ -222,12 +220,7 @@ export async function generateInstantMomentWithInteractions(params: {
     params.config.targetCharacterId,
     contentLimit,
   )
-  if (!draft) {
-    const preview = trimmedRaw.slice(0, 120).replace(/\s+/g, ' ')
-    throw new Error(
-      `模型返回无法解析为朋友圈 JSON。请确认模型支持 JSON 输出后重试。响应开头：${preview}${trimmedRaw.length > 120 ? '…' : ''}`,
-    )
-  }
+  throwIfMomentModelJsonInvalid(trimmedRaw, draft)
   return {
     ...draft,
     location: enforceCharacterLocationConsistency({

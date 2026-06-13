@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
 
 import type { MomentsContactDirectory } from './momentsContactDirectory'
+import { MomentsSerifNumericValue } from './ArchiveTimelineDateColumn'
 import { useMomentsStore } from './useMomentsStore'
 import { resolveProfileAvatarPreviewUrl } from '../../phone/utils/characterAvatarUrl'
 
@@ -46,7 +47,7 @@ export function MomentNoticeBadge({ contactDirectory, onOpenHistory }: MomentNot
           </span>
         )}
         <span className="text-[13px] tracking-[0.01em] text-white">
-          <span className="font-semibold tabular-nums">{unreadCount}</span>
+          <MomentsSerifNumericValue value={unreadCount} className="font-semibold tabular-nums" />
           <span className="font-medium"> 条新消息</span>
         </span>
       </motion.button>

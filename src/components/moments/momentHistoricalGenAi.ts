@@ -1,13 +1,16 @@
 import type { ApiConfig } from '../../phone/apps/api/types'
-import { openAiCompatibleChat } from '../../phone/apps/wechat/newFriendsPersona/ai'
 import { loadPrivateChatNetworkRelationshipsBlock } from '../../phone/apps/wechat/networkRelationshipsPrompt'
 import { buildSystemContent } from '../../phone/apps/wechat/wechatChatAi'
-import { parseModelJsonPayload } from '../anonymousQa/qnaDirectedJsonParse'
 import {
   buildAnonymousQaPersonaPromptPack,
   type AnonymousQaWechatContext,
 } from '../anonymousQa/buildAnonymousQaPersonaContext'
 import { assertMomentsChatApiConfigured } from './momentsChatApiReady'
+import {
+  parseMomentsModelJsonPayload,
+  requestMomentsModelJsonText,
+  throwIfMomentModelJsonInvalid,
+} from './momentsChatJsonAi'
 import {
   buildCharacterLocationPromptBlock,
   detectRelocationSignalsInContext,
@@ -187,7 +190,7 @@ export async function generateHistoricalCharacterMomentPost(params: {
     '请根据上述假定时刻，以你的角色身份发一条历史朋友圈。是否附带 location 由你自行决定，非必要填 null；若附带须自拟符合世界观的真实地名，且遵守上方市级锚点规则。只输出一个 JSON 对象。',
   ].join('\n')
 
-  const raw = await openAiCompatibleChat(
+  const raw = await requestMomentsModelJsonText(
     cfg as ApiConfig,
     [
       {
@@ -198,11 +201,9 @@ export async function generateHistoricalCharacterMomentPost(params: {
     ],
     { temperature: 0.9, max_tokens: 3600 },
   )
-  const payload = parseModelJsonPayload(raw)
+  const payload = parseMomentsModelJsonPayload(raw)
   const draft = normalizeCharacterMomentAiDraft(payload, params.characterId)
-  if (!draft) {
-    throw new Error('模型返回无法解析，请检查 API 模型是否支持 JSON 输出后重试')
-  }
+  throwIfMomentModelJsonInvalid(raw, draft)
 
   const normalizedPostType: CharacterMomentPostType = forcedPostType
   let postType = draft.postType

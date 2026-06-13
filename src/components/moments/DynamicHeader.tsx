@@ -1,5 +1,7 @@
-import { ArrowLeft, Camera, SlidersHorizontal, Sparkles } from 'lucide-react'
+import { ArrowLeft, Bell, Camera, SlidersHorizontal, Sparkles } from 'lucide-react'
 import { motion } from 'framer-motion'
+
+import { MomentsSerifNumericText } from './ArchiveTimelineDateColumn'
 
 type DynamicHeaderProps = {
   opacity: number
@@ -7,6 +9,8 @@ type DynamicHeaderProps = {
   goToPublish?: () => void
   onOpenSettings?: () => void
   onInstantGen?: () => void
+  onOpenInteractionHistory?: () => void
+  interactionUnreadCount?: number
 }
 
 export function DynamicHeader({
@@ -15,6 +19,8 @@ export function DynamicHeader({
   goToPublish,
   onOpenSettings,
   onInstantGen,
+  onOpenInteractionHistory,
+  interactionUnreadCount = 0,
 }: DynamicHeaderProps) {
   const onCover = opacity < 0.5
   const actionBtnClass = onCover
@@ -68,6 +74,28 @@ export function DynamicHeader({
           ) : null}
         </div>
         <div className="relative z-[1] flex shrink-0 items-center gap-0.5">
+          {onOpenInteractionHistory ? (
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.97 }}
+              onClick={onOpenInteractionHistory}
+              className={`relative inline-flex h-9 w-9 items-center justify-center rounded-full focus:outline-none ${actionBtnClass}`}
+              aria-label={
+                interactionUnreadCount > 0
+                  ? `全部互动消息，${interactionUnreadCount} 条未读`
+                  : '全部互动消息'
+              }
+            >
+              <Bell className="size-4" strokeWidth={1.75} />
+              {interactionUnreadCount > 0 ? (
+                <span className="absolute right-1 top-1 flex min-h-[14px] min-w-[14px] items-center justify-center rounded-full bg-[#fa5151] px-0.5 text-[9px] font-semibold leading-none text-white">
+                  <MomentsSerifNumericText
+                    text={interactionUnreadCount > 99 ? '99+' : String(interactionUnreadCount)}
+                  />
+                </span>
+              ) : null}
+            </motion.button>
+          ) : null}
           {onOpenSettings ? (
             <motion.button
               type="button"

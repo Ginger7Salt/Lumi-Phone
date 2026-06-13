@@ -34,6 +34,7 @@ import { buildMomentsContactDirectory, enrichMomentContactsWithLiveCharacterAvat
 import { isMomentsChatApiConfigured, MOMENTS_CHAT_API_NOT_CONFIGURED_MESSAGE } from './momentsChatApiReady'
 import { resolveMomentsCoverDisplayUrl } from './momentsCoverDefaults'
 import { generateMomentInteractions } from './momentInteractionAi'
+import { buildUserMomentLikePatch } from './momentInteractionNoticeEngine'
 import {
   materializeInteractions,
   reanchorPendingInteractionsAfterUserComment,
@@ -143,6 +144,7 @@ export function WeChatMomentsPage({
   const { settings } = useMomentsSettingsStore()
   const { effectiveImageGen: imageGenSettings } = useResolvedMomentsImageGenSettings()
   const bindNoticeAccount = useMomentsStore((s) => s.bindAccount)
+  const interactionUnreadCount = useMomentsStore((s) => s.notices.filter((n) => !n.isRead).length)
   const interactionNow = useMomentInteractionClock(5000)
 
   useEffect(() => {
@@ -685,20 +687,16 @@ export function WeChatMomentsPage({
     async (momentId: string, liked: boolean) => {
       const existing = userMoments.find((m) => m.id === momentId)
       if (!existing) return
-      const likes = [...(existing.likes ?? [])]
-      const idx = likes.indexOf(displayNickname)
-      if (liked && idx < 0) likes.push(displayNickname)
-      if (!liked && idx >= 0) likes.splice(idx, 1)
-      const nextLikes = likes.length ? likes : undefined
+      const likePatch = buildUserMomentLikePatch(existing, displayNickname, liked)
       const next = userMoments.map((m) =>
-        m.id === momentId ? { ...m, likes: nextLikes } : m,
+        m.id === momentId ? { ...m, ...likePatch } : m,
       )
       setUserMoments(next)
-      await patchUserMoment(currentAccountId, momentId, { likes: nextLikes })
+      await patchUserMoment(currentAccountId, momentId, likePatch)
       if (!existing.isUserAuthored && existing.authorCharacterId) {
-        archiveCharacterMoment({ ...existing, likes: nextLikes })
+        archiveCharacterMoment({ ...existing, ...likePatch })
       } else if (existing.isUserAuthored) {
-        archiveCharacterMoment({ ...existing, likes: nextLikes })
+        archiveCharacterMoment({ ...existing, ...likePatch })
       }
     },
     [archiveCharacterMoment, currentAccountId, displayNickname, userMoments],
@@ -789,6 +787,8 @@ export function WeChatMomentsPage({
           onOpenSettings={() => setSettingsOpen(true)}
           goToPublish={() => setPublishOpen(true)}
           onInstantGen={() => setInstantGenOpen(true)}
+          onOpenInteractionHistory={() => setSubView('interaction-history')}
+          interactionUnreadCount={interactionUnreadCount}
         />
         <div className="mx-auto max-w-[560px]">
           <div ref={coverWrapRef} className="relative">

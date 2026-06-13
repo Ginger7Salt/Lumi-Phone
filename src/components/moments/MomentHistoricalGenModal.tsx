@@ -28,6 +28,7 @@ import {
 } from './momentsChatApiReady'
 import { isMomentsImageGenConfigured } from './momentsImageGenAvailability'
 import { MomentGeneratingOverlay } from './MomentGeneratingOverlay'
+import { MomentsErrorAlertDialog } from './MomentsErrorAlertDialog'
 import {
   publishHistoricalCharacterMoments,
   type HistoricalGenPublishStage,
@@ -144,7 +145,7 @@ export function MomentHistoricalGenModal({
   const [stage, setStage] = useState<HistoricalGenPublishStage | 'idle'>('idle')
   const [batchIndex, setBatchIndex] = useState(0)
   const [batchTotal, setBatchTotal] = useState(0)
-  const [error, setError] = useState<string | null>(null)
+  const [errorDialogMessage, setErrorDialogMessage] = useState<string | null>(null)
   const prevOpenRef = useRef(false)
 
   const imageGenReady = useMemo(
@@ -199,7 +200,7 @@ export function MomentHistoricalGenModal({
       return
     }
     if (!justOpened) return
-    setError(null)
+    setErrorDialogMessage(null)
     setStage('idle')
     if (!imageGenReady) {
       setPostTypes(new Set(['text']))
@@ -232,7 +233,7 @@ export function MomentHistoricalGenModal({
   const handleGenerate = useCallback(async () => {
     if (!wechatCtx || !canGenerate || busy) return
     if (!isMomentsChatApiConfigured(wechatCtx.apiConfig)) {
-      setError(MOMENTS_CHAT_API_NOT_CONFIGURED_MESSAGE)
+      setErrorDialogMessage(MOMENTS_CHAT_API_NOT_CONFIGURED_MESSAGE)
       return
     }
 
@@ -250,7 +251,7 @@ export function MomentHistoricalGenModal({
       timeSpan,
     }
 
-    setError(null)
+    setErrorDialogMessage(null)
     setBatchTotal(config.count)
     setBatchIndex(1)
     setStage('writing')
@@ -272,7 +273,7 @@ export function MomentHistoricalGenModal({
       })
 
       if (!result.items.length) {
-        setError(result.failures.join('\n') || '未能生成任何动态')
+        setErrorDialogMessage(result.failures.join('\n') || '未能生成任何动态')
         setStage('idle')
         setBatchIndex(0)
         setBatchTotal(0)
@@ -283,7 +284,7 @@ export function MomentHistoricalGenModal({
       await onPublished(result.items)
 
       if (result.failures.length) {
-        setError(`已生成 ${result.items.length} 条，部分失败：\n${result.failures.join('\n')}`)
+        setErrorDialogMessage(`已生成 ${result.items.length} 条，部分失败：\n${result.failures.join('\n')}`)
         setStage('idle')
         setBatchIndex(0)
         setBatchTotal(0)
@@ -297,7 +298,7 @@ export function MomentHistoricalGenModal({
       setBatchTotal(0)
       onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : '生成失败')
+      setErrorDialogMessage(e instanceof Error ? e.message : '生成失败')
       setStage('idle')
       setBatchIndex(0)
       setBatchTotal(0)
@@ -335,6 +336,12 @@ export function MomentHistoricalGenModal({
         characterName={characterName}
         batchIndex={batchIndex}
         batchTotal={batchTotal}
+      />
+      <MomentsErrorAlertDialog
+        open={errorDialogMessage !== null}
+        title="历史朋友圈生成失败"
+        message={errorDialogMessage ?? ''}
+        onClose={() => setErrorDialogMessage(null)}
       />
       <AnimatePresence>
         {open && !showGenerating ? (
@@ -599,12 +606,6 @@ export function MomentHistoricalGenModal({
                   ) : null}
                 </section>
               </div>
-
-              {error ? (
-                <p className="mt-4 whitespace-pre-wrap text-[12px] leading-relaxed text-[#DC2626]">
-                  {error}
-                </p>
-              ) : null}
 
               {!chatApiReady ? (
                 <p className="mt-4 text-[12px] text-[#9CA3AF]">{MOMENTS_CHAT_API_NOT_CONFIGURED_MESSAGE}</p>
