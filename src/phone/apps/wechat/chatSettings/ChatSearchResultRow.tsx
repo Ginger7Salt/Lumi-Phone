@@ -1,7 +1,10 @@
 import type { WeChatMessageSearchIndexRow } from '../newFriendsPersona/types'
 import { formatWeChatMessageListTimestamp } from '../newFriendsPersona/chatMessageTimestampFormat'
 import { Pressable } from '../../../components/Pressable'
+import { PHONE_NUM_FONT_FAMILY } from '../../../types'
 import { HighlightKeyword } from './HighlightKeyword'
+
+const numStyle = { fontFamily: PHONE_NUM_FONT_FAMILY } as const
 
 export function ChatSearchResultRow({
   row,
@@ -43,7 +46,9 @@ export function ChatSearchResultRow({
           <HighlightKeyword text={row.content} keyword={keyword} />
         </p>
       </div>
-      <span className="shrink-0 pt-0.5 text-right text-[12px] text-[#999999] tabular-nums">{timeLabel}</span>
+      <span className="shrink-0 pt-0.5 text-right text-[12px] text-[#999999]" style={numStyle}>
+        {timeLabel}
+      </span>
     </Pressable>
   )
 }

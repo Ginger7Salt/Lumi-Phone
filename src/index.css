@@ -15,6 +15,10 @@
   /* 默认：艺术衬线 */
   --phone-font: 'Cormorant Garamond', 'Noto Serif SC', 'STKaiti', 'KaiTi',
     'Times New Roman', serif;
+  /* 默认：数字衬线（与朋友圈日期戳一致） */
+  --phone-num-font: 'Songti SC', 'STSong', 'Noto Serif SC', 'Georgia', 'Times New Roman',
+    serif;
+  --wx-num-font: var(--phone-num-font);
 }
 
 * {
@@ -188,6 +192,22 @@ html[data-phone-layout='locked'] #root {
 /** 遇见九维档案等：正文衬线（与全局 --phone-font 独立，便于高奢侧写排版） */
 .font-dossier-serif {
   font-family: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+}
+
+/** 全局数字衬线：与 tabular-nums 搭配，覆盖 Tailwind 默认仅等宽数字的行为 */
+.tabular-nums,
+.font-num {
+  font-family: var(--wx-num-font, var(--phone-num-font));
+  font-weight: 700;
+}
+
+input[type='number'],
+input[type='tel'],
+input[inputmode='numeric'],
+input[inputmode='decimal'] {
+  font-family: var(--wx-num-font, var(--phone-num-font));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Reduce motion */

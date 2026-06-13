@@ -17,6 +17,8 @@ export interface UserAccount {
   baseIdentityId: string
   /** 本账号在「我的身份」中选用的玩家身份 id（会话/聊天隔离指针） */
   sessionPlayerIdentityId?: string
+  /** 朋友圈封面（data URL / 规范路径 / 外链） */
+  momentsCoverUrl?: string
   lastActive: number
   personaContacts: WeChatPersonaContact[]
 }
@@ -99,11 +101,16 @@ export function normalizeUserAccount(raw: unknown): UserAccount | null {
         (c) => c && typeof c.characterId === 'string' && typeof c.remarkName === 'string',
       )
     : []
+  const momentsCoverUrl =
+    typeof o.momentsCoverUrl === 'string' && o.momentsCoverUrl.trim()
+      ? o.momentsCoverUrl.trim()
+      : undefined
   return {
     accountId,
     ...profile,
     baseIdentityId,
     sessionPlayerIdentityId,
+    momentsCoverUrl,
     lastActive,
     personaContacts,
   }

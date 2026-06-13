@@ -13,9 +13,26 @@ import type {
 } from '../newFriendsPersona/types'
 import {
   displayRoundTriggerPercent,
+  IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT,
+  IMAGE_DEFAULT_ROUND_COUNT_MIN,
+  IMAGE_DEFAULT_ROUND_COUNT_MAX,
+  IMAGE_ROUND_COUNT_MIN_LIMIT,
+  IMAGE_ROUND_COUNT_MAX_LIMIT,
+  clampImageRoundCount,
+  formatImageRoundCountRangeLabel,
+  isImageRoundCountRangeCustomized,
   isRoundTriggerCustomized,
+  parseStoredImageRoundCountRange,
   VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT,
 } from '../wechatMediaSendFrequency'
+import { resolveProactiveMessageIntervalSeconds, hasProactiveMessageScheduleSaved, PROACTIVE_MESSAGE_NUMBER_FONT } from '../proactivePrivateMessageTypes'
+import {
+  drawProactiveVariableIntervalSeconds,
+  formatProactiveVariableIntervalRangeLabel,
+  isProactiveVariableIntervalEnabled,
+  resolveCharacterExplicitBusyForProactive,
+} from '../proactiveVariableInterval'
+import { ProactiveMessageIntervalControl } from './ProactiveMessageIntervalControl'
 import { personaDb } from '../newFriendsPersona/idb'
 import { ChatTimeSettingsScreen } from './ChatTimeSettingsScreen'
 import { ChatFindChatHistoryScreen } from './ChatFindChatHistoryScreen'
@@ -51,13 +68,15 @@ function SettingsListCard({ children }: { children: React.ReactNode }) {
   )
 }
 
+const roundTriggerNumStyle = { fontFamily: PROACTIVE_MESSAGE_NUMBER_FONT } as const
+
 function RoundTriggerPercentControl({
   kind,
   stored,
   onChange,
   onResetDefault,
 }: {
-  kind: 'voice' | 'sticker'
+  kind: 'voice' | 'sticker' | 'image'
   stored: number | undefined
   onChange: (percent: number) => void
   onResetDefault: () => void
@@ -67,12 +86,31 @@ function RoundTriggerPercentControl({
   const defaultHint =
     kind === 'voice'
       ? `系统默认约 ${VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%`
-      : '系统默认由语境决定（无固定概率）'
+      : kind === 'image'
+        ? `默认 ${IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%（不发图）`
+        : '系统默认由语境决定（无固定概率）'
 
   return (
     <div className="mt-2">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[14px] font-medium text-black">{customized ? `${display}%` : defaultHint}</span>
+        <span className="text-[14px] font-medium text-black">
+          {customized ? (
+            <>
+              <span style={roundTriggerNumStyle}>{display}%</span>
+            </>
+          ) : kind === 'voice' ? (
+            <>
+              系统默认约{' '}
+              <span style={roundTriggerNumStyle}>{VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>
+            </>
+          ) : kind === 'image' ? (
+            <>
+              默认 <span style={roundTriggerNumStyle}>{IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>（不发图）
+            </>
+          ) : (
+            defaultHint
+          )}
+        </span>
         {customized ? (
           <button
             type="button"
@@ -91,11 +129,111 @@ function RoundTriggerPercentControl({
         value={display}
         onChange={(e) => onChange(Number(e.target.value))}
         className="mt-2 w-full accent-black"
-        aria-label={kind === 'voice' ? '语音消息每轮触发概率' : '表情包每轮触发概率'}
+        aria-label={
+          kind === 'voice'
+            ? '语音消息每轮触发概率'
+            : kind === 'image'
+              ? 'AI 配图每轮触发概率'
+              : '表情包每轮触发概率'
+        }
       />
       <div className="mt-1 flex justify-between text-[11px] text-[#8e8e8e]">
-        <span>0% 不发</span>
-        <span>100% 每轮必发</span>
+        <span>
+          <span style={roundTriggerNumStyle}>0%</span> 不发
+        </span>
+        <span>
+          <span style={roundTriggerNumStyle}>100%</span> 每轮必发
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function ImageRoundCountRangeControl({
+  minStored,
+  maxStored,
+  onChange,
+  onResetDefault,
+}: {
+  minStored?: number
+  maxStored?: number
+  onChange: (min: number, max: number) => void
+  onResetDefault: () => void
+}) {
+  const range = parseStoredImageRoundCountRange(minStored, maxStored)
+  const customized = isImageRoundCountRangeCustomized(minStored, maxStored)
+
+  return (
+    <div className="mt-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[14px] font-medium text-black">
+          {customized ? (
+            <span style={roundTriggerNumStyle}>{formatImageRoundCountRangeLabel(range)}</span>
+          ) : (
+            <>
+              默认{' '}
+              <span style={roundTriggerNumStyle}>
+                {IMAGE_DEFAULT_ROUND_COUNT_MIN}～{IMAGE_DEFAULT_ROUND_COUNT_MAX}
+              </span>{' '}
+              张
+            </>
+          )}
+        </span>
+        {customized ? (
+          <button
+            type="button"
+            onClick={onResetDefault}
+            className="shrink-0 text-[12px] text-[#576b95]"
+          >
+            恢复默认
+          </button>
+        ) : null}
+      </div>
+      <div className="mt-3">
+        <div className="flex items-center justify-between text-[12px] text-[#8e8e8e]">
+          <span>最少张数</span>
+          <span style={roundTriggerNumStyle}>{range.min} 张</span>
+        </div>
+        <input
+          type="range"
+          min={IMAGE_ROUND_COUNT_MIN_LIMIT}
+          max={IMAGE_ROUND_COUNT_MAX_LIMIT}
+          step={1}
+          value={range.min}
+          onChange={(e) => {
+            const min = clampImageRoundCount(Number(e.target.value))
+            onChange(min, Math.max(min, range.max))
+          }}
+          className="mt-1 w-full accent-black"
+          aria-label="AI 配图每次最少张数"
+        />
+      </div>
+      <div className="mt-3">
+        <div className="flex items-center justify-between text-[12px] text-[#8e8e8e]">
+          <span>最多张数</span>
+          <span style={roundTriggerNumStyle}>{range.max} 张</span>
+        </div>
+        <input
+          type="range"
+          min={IMAGE_ROUND_COUNT_MIN_LIMIT}
+          max={IMAGE_ROUND_COUNT_MAX_LIMIT}
+          step={1}
+          value={range.max}
+          onChange={(e) => {
+            const max = clampImageRoundCount(Number(e.target.value))
+            onChange(Math.min(range.min, max), max)
+          }}
+          className="mt-1 w-full accent-black"
+          aria-label="AI 配图每次最多张数"
+        />
+      </div>
+      <div className="mt-1 flex justify-between text-[11px] text-[#8e8e8e]">
+        <span>
+          <span style={roundTriggerNumStyle}>{IMAGE_ROUND_COUNT_MIN_LIMIT}</span> 张
+        </span>
+        <span>
+          <span style={roundTriggerNumStyle}>{IMAGE_ROUND_COUNT_MAX_LIMIT}</span> 张
+        </span>
       </div>
     </div>
   )
@@ -153,6 +291,8 @@ export type ChatSettingsScreenProps = {
   onJumpToChatMessage: (messageId: string) => void
   /** 点击对方头像进入联系人资料卡 */
   onOpenPeerProfile?: () => void
+  /** 角色私聊：展示「主动消息」开关与频率配置 */
+  showProactiveMessageSettings?: boolean
   /** 非空时展示「发起群聊」入口：与当前私聊对象一并拉群 */
   inviteGroupFromPeerCharacterId?: string | null
   personaContactsForGroup?: CreateGroupContactPick[]
@@ -170,6 +310,7 @@ export function ChatSettingsScreen({
   onOpenPersonaEdit,
   onJumpToChatMessage,
   onOpenPeerProfile,
+  showProactiveMessageSettings = false,
   inviteGroupFromPeerCharacterId = null,
   personaContactsForGroup = [],
   onInviteCreateGroup,
@@ -300,10 +441,21 @@ export function ChatSettingsScreen({
           | 'chatBackground'
           | 'stickerRoundTriggerPercent'
           | 'voiceRoundTriggerPercent'
+          | 'imageRoundTriggerPercent'
+          | 'imageRoundCountMin'
+          | 'imageRoundCountMax'
+          | 'proactiveMessageEnabled'
+          | 'proactiveMessageIntervalSeconds'
+          | 'proactiveMessageLastFiredAtMs'
+          | 'proactiveMessageVariableIntervalEnabled'
+          | 'proactiveMessageNextIntervalSeconds'
         >
       > & {
         clearStickerRoundTriggerPercent?: boolean
         clearVoiceRoundTriggerPercent?: boolean
+        clearImageRoundTriggerPercent?: boolean
+        clearImageRoundCountRange?: boolean
+        clearProactiveMessageIntervalSeconds?: boolean
       },
     ) => {
       await personaDb.upsertChatConversationSettings({
@@ -319,6 +471,77 @@ export function ChatSettingsScreen({
 
   const stickerStored = effective.stickerRoundTriggerPercent
   const voiceStored = effective.voiceRoundTriggerPercent
+  const imageStored = effective.imageRoundTriggerPercent
+  const imageCountMinStored = effective.imageRoundCountMin
+  const imageCountMaxStored = effective.imageRoundCountMax
+  const proactiveEnabled = effective.proactiveMessageEnabled ?? false
+  const proactiveVariableEnabled = isProactiveVariableIntervalEnabled(effective)
+  const proactiveIntervalSeconds = resolveProactiveMessageIntervalSeconds(effective)
+  const proactiveScheduleSaved = hasProactiveMessageScheduleSaved(effective)
+  const [proactiveIntervalSaving, setProactiveIntervalSaving] = useState(false)
+  const [proactiveVariableBusyHint, setProactiveVariableBusyHint] = useState(false)
+
+  useEffect(() => {
+    if (!proactiveEnabled || !proactiveVariableEnabled) {
+      setProactiveVariableBusyHint(false)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const busy = await resolveCharacterExplicitBusyForProactive({
+        row: effective,
+        now: Date.now(),
+      })
+      if (!cancelled) setProactiveVariableBusyHint(busy)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [proactiveEnabled, proactiveVariableEnabled, effective, conversationKey])
+
+  const toggleProactiveMessage = useCallback(async () => {
+    const next = !proactiveEnabled
+    await personaDb.upsertChatConversationSettings({
+      conversationKey,
+      peerCharacterId,
+      playerIdentityId,
+      proactiveMessageEnabled: next,
+    })
+    await load()
+  }, [conversationKey, peerCharacterId, playerIdentityId, proactiveEnabled, load])
+
+  const saveProactiveInterval = useCallback(
+    async (seconds: number) => {
+      setProactiveIntervalSaving(true)
+      try {
+        await patch({
+          proactiveMessageIntervalSeconds: seconds,
+          proactiveMessageLastFiredAtMs: Date.now(),
+        })
+      } finally {
+        setProactiveIntervalSaving(false)
+      }
+    },
+    [patch],
+  )
+
+  const toggleProactiveVariableInterval = useCallback(async () => {
+    const next = !proactiveVariableEnabled
+    if (!next) {
+      await patch({ proactiveMessageVariableIntervalEnabled: false })
+      return
+    }
+    const explicitBusy = await resolveCharacterExplicitBusyForProactive({
+      row: effective,
+      now: Date.now(),
+    })
+    const nextSeconds = drawProactiveVariableIntervalSeconds(explicitBusy)
+    await patch({
+      proactiveMessageVariableIntervalEnabled: true,
+      proactiveMessageNextIntervalSeconds: nextSeconds,
+      proactiveMessageLastFiredAtMs: Date.now(),
+    })
+  }, [effective, patch, proactiveVariableEnabled])
 
   const toggleMute = useCallback(async () => {
     await personaDb.updateMuteStatus({
@@ -592,9 +815,58 @@ export function ChatSettingsScreen({
             <span className="text-[16px] text-black">开启忙碌</span>
             <WxSwitch on={effectiveBusyEnabled} onToggle={() => void toggleBusy()} />
           </ListRow>
+          {showProactiveMessageSettings ? (
+            <ListRow stacked borderBottom>
+              <div className="flex w-full items-center justify-between gap-3">
+                <span className="text-[16px] text-black">主动消息</span>
+                <WxSwitch on={proactiveEnabled} onToggle={() => void toggleProactiveMessage()} />
+              </div>
+              <p className="mt-2 text-[12px] leading-relaxed text-[#8e8e8e]">
+                开启后，角色会按设定频率结合聊天上下文主动发来消息（不重复上一轮内容）。切到后台时若已开启「后台保活」或「后台推送」，仍可收到系统通知。
+              </p>
+              {proactiveEnabled ? (
+                <>
+                  <div className="mt-4 flex w-full items-center justify-between gap-3 border-t border-[#f0f0f0] pt-3">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[15px] font-medium text-black">灵动间隔</span>
+                      <p className="mt-1 text-[11px] leading-relaxed text-[#8e8e8e]">
+                        像真人聊天一样不固定节奏：空闲时随机{' '}
+                        <span style={{ fontFamily: PROACTIVE_MESSAGE_NUMBER_FONT }}>1 秒～5 分钟</span>
+                        触达；角色说忙或开启忙碌后，下次等待自动拉长到数分钟～数小时。
+                      </p>
+                    </div>
+                    <WxSwitch
+                      on={proactiveVariableEnabled}
+                      onToggle={() => void toggleProactiveVariableInterval()}
+                    />
+                  </div>
+                  {proactiveVariableEnabled ? (
+                    <p className="mt-2 text-[11px] text-[#8e8e8e]">
+                      当前模式：{formatProactiveVariableIntervalRangeLabel(proactiveVariableBusyHint)}
+                      {proactiveScheduleSaved ? ' · 每次触达后重新随机' : ' · 开启后将立即开始随机倒计时'}
+                    </p>
+                  ) : (
+                    <ProactiveMessageIntervalControl
+                      savedIntervalSeconds={proactiveIntervalSeconds}
+                      scheduleSaved={proactiveScheduleSaved}
+                      saving={proactiveIntervalSaving}
+                      onSave={(seconds) => void saveProactiveInterval(seconds)}
+                    />
+                  )}
+                </>
+              ) : null}
+            </ListRow>
+          ) : null}
           <ListRow borderBottom>
             <span className="text-[16px] text-black">置顶聊天</span>
             <WxSwitch on={effective.isPinned} onToggle={() => void togglePin()} />
+          </ListRow>
+          <ListRow borderBottom>
+            <span className="text-[16px] text-black">弹幕模式</span>
+            <WxSwitch
+              on={effective.isDanmakuMode}
+              onToggle={() => void patch({ isDanmakuMode: !effective.isDanmakuMode })}
+            />
           </ListRow>
           <ListRow onClick={() => setTimeSettingsOpen(true)} borderBottom>
             <span className="text-[16px] text-black">角色时间设置</span>
@@ -612,7 +884,8 @@ export function ChatSettingsScreen({
             <div>
               <span className="text-[16px] text-black">表情包每轮触发概率</span>
               <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
-                拖动滑块设定角色每轮回复中至少发 1 条表情包的目标概率（0% 为完全不发）。
+                拖动滑块设定角色每轮回复中至少发 1 条表情包的目标概率（
+                <span style={roundTriggerNumStyle}>0%</span> 为完全不发）。
               </p>
               <RoundTriggerPercentControl
                 kind="sticker"
@@ -626,7 +899,8 @@ export function ChatSettingsScreen({
             <div>
               <span className="text-[16px] text-black">语音消息每轮触发概率</span>
               <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
-                拖动滑块设定角色每轮回复中至少发 1 条语音的目标概率（未定制时系统默认约 30%）。
+                拖动滑块设定角色每轮回复中至少发 1 条语音的目标概率（未定制时系统默认约{' '}
+                <span style={roundTriggerNumStyle}>{VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>）。
               </p>
               <RoundTriggerPercentControl
                 kind="voice"
@@ -636,12 +910,31 @@ export function ChatSettingsScreen({
               />
             </div>
           </ListRow>
-          <ListRow borderBottom>
-            <span className="text-[16px] text-black">弹幕模式</span>
-            <WxSwitch
-              on={effective.isDanmakuMode}
-              onToggle={() => void patch({ isDanmakuMode: !effective.isDanmakuMode })}
-            />
+          <ListRow stacked borderBottom>
+            <div>
+              <span className="text-[16px] text-black">AI 配图每轮触发概率</span>
+              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                拖动滑块设定角色每轮回复中至少发 1 张 AI 配图的目标概率（默认{' '}
+                <span style={roundTriggerNumStyle}>{IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>{' '}
+                不发；用户直接要求发图时不受限制；须已配置生图 API）。
+              </p>
+              <RoundTriggerPercentControl
+                kind="image"
+                stored={imageStored}
+                onChange={(percent) => void patch({ imageRoundTriggerPercent: percent })}
+                onResetDefault={() => void patch({ clearImageRoundTriggerPercent: true })}
+              />
+              <p className="mt-4 text-[12px] leading-relaxed text-[#8e8e8e]">
+                每次触发发图时，角色可发送的图片张数范围（每条 <span className="font-mono">[图片]</span>{' '}
+                行计 1 张）。
+              </p>
+              <ImageRoundCountRangeControl
+                minStored={imageCountMinStored}
+                maxStored={imageCountMaxStored}
+                onChange={(min, max) => void patch({ imageRoundCountMin: min, imageRoundCountMax: max })}
+                onResetDefault={() => void patch({ clearImageRoundCountRange: true })}
+              />
+            </div>
           </ListRow>
           <ListRow
             onClick={() => {

@@ -202,10 +202,7 @@ export function RedPacketModal({
                 transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
               >
                 <p className="text-[11px] font-medium tracking-[0.2em] text-[#94a3b8]">AMOUNT</p>
-                <p
-                  className="mt-2 text-[28px] font-semibold tabular-nums tracking-tight text-[#1e293b]"
-                  style={{ fontFamily: 'ui-monospace, "DIN Alternate", "Helvetica Neue", sans-serif' }}
-                >
+                <p className="mt-2 text-[28px] tabular-nums tracking-tight text-[#1e293b]">
                   {amtLine}
                 </p>
               </motion.div>

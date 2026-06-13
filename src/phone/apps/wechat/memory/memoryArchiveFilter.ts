@@ -3,6 +3,10 @@ import type { CharacterMemory } from '../newFriendsPersona/types'
 import { isCharacterLinkedMemory } from './memoryCharacterScope'
 import type { MemoryArchiveKind, MemoryEntry, MemorySourceIdentity } from './memoryArchiveTypes'
 
+export function sortMemoryEntriesByRecency(entries: MemoryEntry[]): MemoryEntry[] {
+  return [...entries].sort((a, b) => b.timestamp - a.timestamp)
+}
+
 export function filterMemoryEntries(params: {
   entries: MemoryEntry[]
   rawById: Map<string, CharacterMemory>
@@ -35,6 +39,12 @@ export function filterMemoryEntries(params: {
       .toLowerCase()
     return hay.includes(q.toLowerCase())
   })
+}
+
+export function filterAndSortMemoryEntries(
+  params: Parameters<typeof filterMemoryEntries>[0],
+): MemoryEntry[] {
+  return sortMemoryEntriesByRecency(filterMemoryEntries(params))
 }
 
 export function buildCharacterFocusRoster(entries: MemoryEntry[]): Array<{

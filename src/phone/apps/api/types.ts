@@ -1,3 +1,5 @@
+import type { MomentsImageGenSettings } from '../../../components/moments/useMomentsSettingsStore'
+
 export type SubApiType = 'xinyu' | 'chatCard' | 'danmaku' | 'voiceAsr'
 
 export type ApiConfig = {
@@ -22,6 +24,8 @@ export type ApiPreset = {
   description?: string
   main: ApiConfig
   sub: Record<SubApiType, SubApiConfig>
+  /** 文生图 API（朋友圈配图、聊天室角色发图） */
+  imageGen: MomentsImageGenSettings
   createdAt: number
   updatedAt: number
 }

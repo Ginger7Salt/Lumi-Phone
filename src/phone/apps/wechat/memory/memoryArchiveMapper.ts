@@ -54,6 +54,7 @@ export function resolveMemorySourceIdentity(
 export function memorySceneTagsFromRow(m: CharacterMemory): MemorySceneTag[] {
   const parsed = parseMemorySourcePrefix(m.content)
   const tags: MemorySceneTag[] = []
+  if (parsed.hasMomentTag || m.memoryScope === 'moment') tags.push('朋友圈')
   if (parsed.hasMeetTag || m.memoryScope === 'meet') tags.push('遇见')
   if (parsed.hasOnlineTag) tags.push('私聊')
   if (parsed.hasGroupChatTag || m.memoryScope === 'group') tags.push('群聊')
@@ -77,6 +78,19 @@ function resolveFocusCharId(m: CharacterMemory): string {
   return m.characterId.trim()
 }
 
+export function resolveMemoryEntryTimestamp(m: CharacterMemory): number {
+  const updatedAt = typeof m.updatedAt === 'number' && Number.isFinite(m.updatedAt) ? m.updatedAt : 0
+  const createdAt = typeof m.createdAt === 'number' && Number.isFinite(m.createdAt) ? m.createdAt : 0
+  const base = updatedAt || createdAt
+  if (m.memoryScope === 'moment') {
+    const publishedAt = m.momentPayload?.publishedAt
+    if (typeof publishedAt === 'number' && Number.isFinite(publishedAt) && publishedAt > 0) {
+      return Math.max(base, publishedAt)
+    }
+  }
+  return base
+}
+
 function resolveCharDisplayName(charId: string, lookup: MemoryArchiveLookup): string {
   const c = lookup.contactByCharId.get(charId)
   if (c?.remarkName?.trim()) return c.remarkName.trim()
@@ -97,6 +111,20 @@ export function characterMemoryToMemoryEntry(
   const charId = resolveFocusCharId(m)
   const contact = lookup.contactByCharId.get(charId)
   const gid = m.groupId?.trim() || parseGroupIdFromMemoryBucketCharacterId(m.characterId) || undefined
+  const linkedInteractorIds =
+    m.momentMemoryRole !== 'interactor' ? (m.momentLinkedInteractorCharIds ?? []) : []
+  const momentLinkedInteractors = linkedInteractorIds
+    .map((id) => {
+      const trimmed = id.trim()
+      if (!trimmed) return null
+      const contact = lookup.contactByCharId.get(trimmed)
+      return {
+        charId: trimmed,
+        displayName: resolveCharDisplayName(trimmed, lookup),
+        avatarUrl: contact?.avatarUrl,
+      }
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x)
   return {
     id: m.id,
     sourceIdentity: resolveMemorySourceIdentity(m, lookup.primaryAccountId),
@@ -109,10 +137,13 @@ export function characterMemoryToMemoryEntry(
     triggerType: m.memoryTriggerMode === 'always' ? 'always' : 'keyword',
     triggerKeywords:
       m.memoryTriggerMode === 'keyword' ? flattenMemoryTriggerKeywords(m) : undefined,
-    timestamp: m.updatedAt || m.createdAt,
+    timestamp: resolveMemoryEntryTimestamp(m),
     ...(gid ? { groupId: gid, groupDisplayName: lookup.groupNameById.get(gid) } : {}),
     memoryScope: m.memoryScope,
     linkedFromCharacterId: m.linkedFromCharacterId,
+    ...(m.momentPayload ? { momentPayload: m.momentPayload } : {}),
+    ...(momentLinkedInteractors.length ? { momentLinkedInteractors } : {}),
+    ...(m.momentMemoryRole ? { momentMemoryRole: m.momentMemoryRole } : {}),
   }
 }
 
@@ -124,6 +155,7 @@ export function memoryTagsToPrefixFlags(tags: MemorySceneTag[]): ParsedMemoryWit
     hasGroupChatTag: set.has('群聊'),
     hasOfflineTag: set.has('线下'),
     hasLinkedOfflineTag: set.has('关联线下'),
+    hasMomentTag: set.has('朋友圈'),
     body: '',
   }
 }
@@ -145,7 +177,9 @@ export function memoryEntryToPersistPayload(
   const flags = memoryTagsToPrefixFlags(entry.tags)
   const content = composeMemoryWithSourcePrefix(flags, entry.content.trim())
   const scope =
-    entry.tags.includes('群聊') || raw?.memoryScope === 'group'
+    entry.tags.includes('朋友圈') || raw?.memoryScope === 'moment'
+      ? 'moment'
+      : entry.tags.includes('群聊') || raw?.memoryScope === 'group'
       ? 'group'
       : entry.tags.includes('关联线下') || raw?.memoryScope === 'linked'
         ? 'linked'
@@ -194,5 +228,14 @@ export function memoryEntryToPersistPayload(
       : {}),
     ...(raw?.memoryEmbedding ? { memoryEmbedding: raw.memoryEmbedding } : {}),
     ...(raw?.memoryEmbeddingHash ? { memoryEmbeddingHash: raw.memoryEmbeddingHash } : {}),
+    ...(raw?.momentSourceMomentId ? { momentSourceMomentId: raw.momentSourceMomentId } : {}),
+    ...(raw?.momentPayload ? { momentPayload: raw.momentPayload } : {}),
+    ...(raw?.momentMemoryRole ? { momentMemoryRole: raw.momentMemoryRole } : {}),
+    ...(raw?.momentPublisherCharacterId
+      ? { momentPublisherCharacterId: raw.momentPublisherCharacterId }
+      : {}),
+    ...(raw?.momentLinkedInteractorCharIds?.length
+      ? { momentLinkedInteractorCharIds: raw.momentLinkedInteractorCharIds }
+      : {}),
   }
 }

@@ -6,6 +6,7 @@ import type {
 } from './newFriendsPersona/types'
 import {
   formatPlayerIdentityDisplayName,
+  getCharacterBoundPlayerIdentityId,
   isWechatAccountSessionSlotIdentityId,
 } from './wechatCharacterPlayerIdentity'
 import { loadAccountsBundle } from './wechatAccountPersistence'
@@ -51,6 +52,34 @@ export function countWorldBookUserPlaceholderSlotsBefore(content: string, index:
 function isAnonymousUserDisplayLabel(name: string | null | undefined): boolean {
   const n = String(name ?? '').trim()
   return !n || n === '未命名身份' || n === '微信账号槽位' || n === '用户'
+}
+
+function bindingDisplayNameMatchesIdentity(
+  cached: string,
+  row: import('./newFriendsPersona/types').PlayerIdentity | null,
+  playerIdentityId: string,
+): boolean {
+  const label = cached.trim()
+  if (!label || isAnonymousUserDisplayLabel(label)) return false
+  const fresh = formatPlayerIdentityDisplayName(row, playerIdentityId)
+  if (label === fresh) return true
+  const identityNames = new Set(
+    [row?.name?.trim(), row?.wechatNickname?.trim()].filter((x): x is string => !!x),
+  )
+  return identityNames.has(label)
+}
+
+function collectBindingDisplayNames(character: Character): string[] {
+  const names = new Set<string>()
+  for (const w of character.worldBooks ?? []) {
+    for (const it of w.items ?? []) {
+      for (const b of it.userPlaceholderBindings ?? []) {
+        const n = b.displayName?.trim()
+        if (n && !isAnonymousUserDisplayLabel(n)) names.add(n)
+      }
+    }
+  }
+  return [...names]
 }
 
 export function bindingFromInsertContext(ctx: WorldBookUserInsertContext): WorldBookUserPlaceholderBinding {
@@ -162,8 +191,25 @@ export async function resolveBindingDisplayName(
   b: WorldBookUserPlaceholderBinding,
   character?: Character | null,
 ): Promise<string> {
-  const acc = b.wechatAccountId.trim()
   let pid = b.playerIdentityId.trim()
+  let acc = b.wechatAccountId.trim()
+
+  const boundPid = character ? getCharacterBoundPlayerIdentityId(character) : null
+  if (boundPid && boundPid !== pid && boundPid !== '__none__') {
+    pid = boundPid
+    acc =
+      character?.playerIdentityLinkMeta?.find((m) => m.playerIdentityId === pid)?.wechatAccountId?.trim() ||
+      acc
+    let row = null
+    try {
+      row = await personaDb.getPlayerIdentity(pid)
+    } catch {
+      row = null
+    }
+    if (!acc) acc = row?.wechatAccountId?.trim() || ''
+    return formatPlayerIdentityDisplayName(row, pid)
+  }
+
   if (
     isWechatAccountSessionSlotIdentityId(pid) ||
     b.displayName?.trim() === '微信账号槽位'
@@ -176,20 +222,17 @@ export async function resolveBindingDisplayName(
     if (resolved?.playerIdentityId) pid = resolved.playerIdentityId
   }
   const cached = b.displayName?.trim()
-  if (
-    cached &&
-    !isAnonymousUserDisplayLabel(cached) &&
-    !isWechatAccountSessionSlotIdentityId(b.playerIdentityId)
-  ) {
-    return cached
-  }
   let row = null
   try {
     row = await personaDb.getPlayerIdentity(pid)
   } catch {
     row = null
   }
-  return formatPlayerIdentityDisplayName(row, pid)
+  const freshName = formatPlayerIdentityDisplayName(row, pid)
+  if (cached && bindingDisplayNameMatchesIdentity(cached, row, pid)) {
+    return cached
+  }
+  return freshName
 }
 
 /** 按出现顺序把 `{{user}}` 展开为绑定身份名；兼容旧式 `{{user:账号:身份}}`。 */
@@ -198,7 +241,7 @@ export async function expandWorldBookItemUserPlaceholders(
   bindings: WorldBookUserPlaceholderBinding[] | null | undefined,
   character?: Character | null,
 ): Promise<string> {
-  let s = await expandScopedWorldBookUserPlaceholdersInText(String(content ?? ''))
+  let s = await expandScopedWorldBookUserPlaceholdersInText(String(content ?? ''), character)
   const list = bindings ?? []
   if (!s.includes('{{user}}')) return s
 
@@ -326,9 +369,7 @@ async function enrichWorldBookUserPlaceholderBinding(
   const freshName = formatPlayerIdentityDisplayName(row, pid)
   const cached = b.displayName?.trim()
   const displayName =
-    cached && cached !== '微信账号槽位' && !isWechatAccountSessionSlotIdentityId(b.playerIdentityId)
-      ? cached
-      : freshName
+    cached && bindingDisplayNameMatchesIdentity(cached, row, pid) ? cached : freshName
   let lineLabel = b.lineLabel?.trim()
   if (!lineLabel || lineLabel.includes('微信账号槽位')) {
     const bundle = await loadAccountsBundle()
@@ -483,6 +524,95 @@ export function summarizeWorldBookUserPlaceholdersOnCharacter(character: Charact
     itemCount,
     needsAlign: characterWorldBooksNeedUserPlaceholderAlignment(character),
   }
+}
+
+/**
+ * 人设包导入：将档案主绑定、世界书 `{{user}}` 槽位与缓存 displayName 统一切到当前导入身份。
+ * 返回导入前绑定里出现过的旧显示名，供清理人脉称呼等硬编码字段。
+ */
+export async function rebindCharacterIdentityForBundleImport(
+  character: Character,
+  wechatAccountId: string,
+  importPlayerIdentityId: string,
+): Promise<{ character: Character; staleDisplayNames: string[] }> {
+  const acc = wechatAccountId.trim()
+  const pid = importPlayerIdentityId.trim()
+  const staleDisplayNames = collectBindingDisplayNames(character)
+
+  let identityRow = null
+  try {
+    identityRow = await personaDb.getPlayerIdentity(pid)
+  } catch {
+    identityRow = null
+  }
+
+  const bundle = await loadAccountsBundle()
+  const scope = { wechatAccountId: acc, sessionPlayerIdentityId: pid }
+  const lineLabel = await formatPlayerLineScopeLabel(scope, bundle)
+  const displayName = formatPlayerIdentityDisplayName(identityRow, pid)
+  const fallback: WorldBookUserInsertContext = {
+    wechatAccountId: acc,
+    playerIdentityId: pid,
+    lineLabel,
+    displayName,
+  }
+
+  let base: Character = {
+    ...character,
+    playerIdentityId: pid,
+    linkedPlayerIdentityIds: [pid],
+    playerIdentityLinkMeta: [{ wechatAccountId: acc, playerIdentityId: pid }],
+  }
+
+  const worldBooks = await Promise.all(
+    (base.worldBooks ?? []).map(async (w) => {
+      const items = await Promise.all(
+        (w.items ?? []).map(async (it) => {
+          let content = String(it.content ?? '')
+          let bindings = [...(it.userPlaceholderBindings ?? [])]
+
+          if (contentHasScopedWorldBookUserPlaceholder(content)) {
+            const migrated = await migrateWorldBookItemUserPlaceholderLegacy(
+              { content, userPlaceholderBindings: bindings },
+              { fallback, character: base },
+            )
+            if (migrated) {
+              content = migrated.content
+              bindings = [...(migrated.userPlaceholderBindings ?? [])]
+            }
+          }
+
+          const slotCount = countWorldBookUserPlaceholderSlots(content)
+          const forcedBindings: WorldBookUserPlaceholderBinding[] = Array.from(
+            { length: slotCount },
+            () => ({
+              wechatAccountId: acc,
+              playerIdentityId: pid,
+              lineLabel,
+              displayName,
+            }),
+          )
+          const sync = normalizeWorldBookItemUserPlaceholders(content, forcedBindings, fallback)
+          return {
+            ...it,
+            content: sync.content,
+            userPlaceholderBindings: sync.bindings.map((b) => ({
+              ...b,
+              wechatAccountId: acc,
+              playerIdentityId: pid,
+              lineLabel,
+              displayName,
+            })),
+            updatedAt: Date.now(),
+          }
+        }),
+      )
+      return { ...w, items }
+    }),
+  )
+
+  base = { ...base, worldBooks, updatedAt: Date.now() }
+  return { character: base, staleDisplayNames }
 }
 
 /**

@@ -31,6 +31,7 @@ import { loadOfflineDatingPlotsPromptBlock } from './loadOfflineDatingPlotsForWe
 import { requestWeChatHeartWhisper, type ChatTranscriptTurn } from '../wechatChatAi'
 import { buildMemoryRelevanceHaystack } from '../wechatMemoryPromptBlocks'
 import { formatHeartWhisperGenerateError, HeartWhisperModal } from '../HeartWhisperModal'
+import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
 import { useDating, vnRollbackJumpStorageKey } from './DatingContext'
 import { splitDatingAssistantOutput } from './plotCoT'
 import { StoryFeed } from './StoryFeed'
@@ -66,6 +67,10 @@ import { createMiniMaxT2ASyncAudioBlob } from '../../voiceprint/services/minimax
 import { densityToTrackCount, hexAndOpacityToRgba, resolveEffectiveDanmakuVisuals } from '../danmakuResolve'
 import { DanmakuOverlay, type DanmakuOverlayBullet } from '../DanmakuOverlay'
 import { registerDatingOfflineDanmakuSink } from './datingOfflineDanmakuBridge'
+import { isIOSWebKit } from '../../../utils/platform'
+import { useEditableKeyboardLift } from '../../../hooks/useEditableKeyboardLift'
+import { isAndroidWeb, keyboardScrollPaddingBottom } from '../../../hooks/keyboardInset'
+import { KeyboardBottomWhitePad } from '../../../components/KeyboardBottomWhitePad'
 
 function randomBetweenInclusive(min: number, max: number) {
   return Math.floor(min + Math.random() * (max - min + 1))
@@ -585,9 +590,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     vnRollbackLastRound,
   } = useDating()
   const [input, setInput] = useState('')
-  const [keyboardPad, setKeyboardPad] = useState(0)
+  const [iosKeyboardPad, setIosKeyboardPad] = useState(0)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const composerRef = useRef<HTMLDivElement | null>(null)
+  const androidKeyboardInsetPx = useEditableKeyboardLift(composerRef, inputRef)
+  const keyboardInsetPx = isIOSWebKit() ? iosKeyboardPad : androidKeyboardInsetPx.padPx
   const [menuOpen, setMenuOpen] = useState(false)
   const [portraitSetupOpen, setPortraitSetupOpen] = useState(false)
   const [bgmConfigOpen, setBgmConfigOpen] = useState(false)
@@ -948,6 +955,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const effectiveCardStyle = useMemo(() => {
     return { ...defaultCardStyle, ...(currentCharacter.cardStyle ?? {}) }
   }, [currentCharacter.cardStyle, defaultCardStyle])
+
+  const displayAvatarUrl = useMemo(
+    () => resolveCharacterAvatarUrl({ avatarUrl: currentCharacter.avatarUrl }),
+    [currentCharacter.avatarUrl],
+  )
 
   const [editDraft, setEditDraft] = useState(() => ({
     avatarUrl: '',
@@ -1349,15 +1361,15 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const autoUserLabel = godLocksNoInterrupt ? '不抢话' : autoUserReaction ? '抢话' : '不抢话'
 
   useEffect(() => {
-    if (isVn) {
-      setKeyboardPad(0)
+    if (!isIOSWebKit() || isVn) {
+      setIosKeyboardPad(0)
       return
     }
     const vv = window.visualViewport
     if (!vv) return
     const update = () => {
       const overlap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-      setKeyboardPad(Math.round(overlap))
+      setIosKeyboardPad(Math.round(overlap))
     }
     update()
     vv.addEventListener('resize', update)
@@ -1367,6 +1379,16 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       vv.removeEventListener('scroll', update)
     }
   }, [isVn])
+
+  useEffect(() => {
+    if (isVn || keyboardInsetPx <= 0) return
+    if (document.activeElement !== inputRef.current) return
+    const scroll = normalScrollRef.current
+    if (!scroll) return
+    requestAnimationFrame(() => {
+      scroll.scrollTo({ top: scroll.scrollHeight, behavior: 'smooth' })
+    })
+  }, [keyboardInsetPx, isVn])
 
   // 进入线下剧情页时默认滚到底部（与聊天室一致：展示最新进度，而不是顶部）
   useEffect(() => {
@@ -1384,16 +1406,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       })
     })
   }, [currentArchive.modePreference, currentCharacter.id, isVn])
-
-  useEffect(() => {
-    if (isVn || keyboardPad <= 0) return
-    if (document.activeElement !== inputRef.current) return
-    const scroll = normalScrollRef.current
-    if (!scroll) return
-    requestAnimationFrame(() => {
-      scroll.scrollTo({ top: scroll.scrollHeight, behavior: 'smooth' })
-    })
-  }, [keyboardPad, isVn])
 
   const scrollComposerIntoView = useCallback(() => {
     const scroll = normalScrollRef.current
@@ -2907,7 +2919,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               {effectiveCardStyle.showContent ? (
                 <div className="relative ml-8 mr-8 flex items-start gap-4">
                   <img
-                    src={currentCharacter.avatarUrl}
+                    src={displayAvatarUrl}
                     alt={currentCharacter.realName}
                     className="h-[90px] w-[90px] rounded-full border-2 border-stone-200 object-cover"
                   />
@@ -3042,8 +3054,12 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               ref={normalScrollRef}
               className="relative min-h-0 h-full overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
               style={
-                keyboardPad > 0
-                  ? { paddingBottom: `calc(${keyboardPad}px + max(1rem, env(safe-area-inset-bottom, 0px)))` }
+                keyboardInsetPx > 0
+                  ? {
+                      paddingBottom: isIOSWebKit()
+                        ? `calc(${keyboardInsetPx}px + max(1rem, env(safe-area-inset-bottom, 0px)))`
+                        : keyboardScrollPaddingBottom(keyboardInsetPx, { basePx: 16 }),
+                    }
                   : undefined
               }
             >
@@ -3280,6 +3296,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
             </div>
           </div>
           </div>
+          {isAndroidWeb() ? <KeyboardBottomWhitePad insetPx={keyboardInsetPx} zIndex={45} /> : null}
         </div>
       ) : (
         <motion.div ref={vnRootRef} className="relative h-full" animate={vnViewportShake} initial={false}>

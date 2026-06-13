@@ -6,10 +6,10 @@ import type { MomentComment } from './mockMoments'
 type InteractionPanelProps = {
   likes?: string[]
   comments?: MomentComment[]
-  onReplyMock?: (comment: MomentComment) => void
+  onReply?: (comment: MomentComment) => void
 }
 
-export function InteractionPanel({ likes, comments, onReplyMock }: InteractionPanelProps) {
+export function InteractionPanel({ likes, comments, onReply }: InteractionPanelProps) {
   const hasLikes = !!likes?.length
   const hasComments = !!comments?.length
   if (!hasLikes && !hasComments) return null
@@ -28,7 +28,7 @@ export function InteractionPanel({ likes, comments, onReplyMock }: InteractionPa
               key={comment.id}
               type="button"
               whileTap={{ scale: 0.97 }}
-              onClick={() => onReplyMock?.(comment)}
+              onClick={() => onReply?.(comment)}
               className="block w-full rounded-md px-1 py-0.5 text-left text-[13px] leading-relaxed text-[#374151] transition-colors hover:bg-white"
             >
               {comment.replyTo ? (

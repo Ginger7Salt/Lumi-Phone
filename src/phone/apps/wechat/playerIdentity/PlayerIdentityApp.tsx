@@ -29,6 +29,7 @@ import {
 import { useWechatStore } from '../useWechatStore'
 import { resolveCanonicalCharacterId } from '../wechatGlobalCharacterRegistry'
 import { identityBelongsToWechatAccount, stampWechatAccountOwner } from '../wechatAccountScope'
+import { PHONE_NUM_FONT_FAMILY } from '../../../types'
 
 const COLORS = {
   bg: '#f5f5f5',
@@ -38,6 +39,8 @@ const COLORS = {
   faint: '#999999',
   border: '#e5e5e5',
 } as const
+
+const numStyle = { fontFamily: PHONE_NUM_FONT_FAMILY } as const
 
 const IDENTITY_OPTIONS = [
   '学生',
@@ -978,7 +981,7 @@ function IdentityEditPage({
                     onChange={(e) => setField('age', e.target.value ? Number(e.target.value) : null)}
                     placeholder="请输入年龄"
                     className="mt-2 w-full rounded-[12px] border bg-white px-4 py-3 text-[14px] outline-none transition-all duration-200 ease-out"
-                    style={{ borderColor: COLORS.border, color: COLORS.text }}
+                    style={{ borderColor: COLORS.border, color: COLORS.text, ...numStyle }}
                   />
                 </label>
 
@@ -990,6 +993,7 @@ function IdentityEditPage({
                     <InlineDropdown
                       label="选择月份"
                       valueText={`${birthdayParts.month} 月`}
+                      valueTextStyle={numStyle}
                       open={monthOpen}
                       onToggle={() => {
                         setMonthOpen((v) => !v)
@@ -1020,7 +1024,7 @@ function IdentityEditPage({
                               setMonthOpen(false)
                             }}
                           >
-                            {m} 月
+                            <span style={numStyle}>{m}</span> 月
                           </button>
                         )
                       })}
@@ -1029,6 +1033,7 @@ function IdentityEditPage({
                     <InlineDropdown
                       label="选择日期"
                       valueText={`${birthdayParts.day} 日`}
+                      valueTextStyle={numStyle}
                       open={dayOpen}
                       onToggle={() => {
                         setDayOpen((v) => !v)
@@ -1057,7 +1062,7 @@ function IdentityEditPage({
                               setDayOpen(false)
                             }}
                           >
-                            {d} 日
+                            <span style={numStyle}>{d}</span> 日
                           </button>
                         )
                       })}

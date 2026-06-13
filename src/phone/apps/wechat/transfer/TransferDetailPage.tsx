@@ -218,13 +218,7 @@ export function TransferDetailPage({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 pt-10">
         <p className="text-center text-[11px] font-medium tracking-[0.2em] text-[#b0b0b0]">AMOUNT</p>
-        <p
-          className="mt-2 text-center text-[44px] font-semibold tabular-nums text-[#333]"
-          style={{
-            fontFamily: 'ui-monospace, "DIN Alternate", sans-serif',
-            color: GOLD,
-          }}
-        >
+        <p className="mt-2 text-center text-[44px] tabular-nums text-[#333]" style={{ color: GOLD }}>
           ¥{rec.amount.toFixed(2)}
         </p>
 

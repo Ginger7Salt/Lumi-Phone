@@ -1,0 +1,20 @@
+{
+  "name": "lumi-push",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 execute lumi-push --local --file=./schema.sql",
+    "db:migrate:remote": "wrangler d1 execute lumi-push --remote --file=./schema.sql"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250214.0",
+    "@types/web-push": "^3.6.4",
+    "typescript": "^5.8.2",
+    "wrangler": "^4.14.0"
+  }
+}

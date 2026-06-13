@@ -5,7 +5,13 @@ import { Pressable } from '../../../components/Pressable'
 import { useCustomization } from '../../../CustomizationContext'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { WeChatTimeConfig } from '../newFriendsPersona/types'
-import { formatWeChatChatTimestamp, normalizeWeChatTimeConfig, parseDateTimeLocalValue, toDateTimeLocalValue } from '../time/wechatTimeUtils'
+import {
+  formatWeChatChatTimestamp,
+  isCharacterTimePerceptionEnabled,
+  normalizeWeChatTimeConfig,
+  parseDateTimeLocalValue,
+  toDateTimeLocalValue,
+} from '../time/wechatTimeUtils'
 import { useWeChatCurrentTime } from '../time/useWeChatCurrentTime'
 
 function WxSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
@@ -71,14 +77,17 @@ export function ChatTimeSettingsScreen({
   const disableTransitions = state.ui.disablePageTransitions
   const { currentTimeMs } = useWeChatCurrentTime({ characterId })
   const [form, setForm] = useState<WeChatTimeConfig>(() => normalizeWeChatTimeConfig())
+  const [timePerceptionEnabled, setTimePerceptionEnabled] = useState(true)
   const [savedSnapshot, setSavedSnapshot] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
 
   const load = useCallback(async () => {
     const [gs, row] = await Promise.all([personaDb.getGlobalSettings(), personaDb.getCharacterTimeSettings(characterId)])
     const config = normalizeWeChatTimeConfig(row?.config ?? gs.globalTimeConfig)
+    const perception = isCharacterTimePerceptionEnabled(row)
     setForm(config)
-    setSavedSnapshot(JSON.stringify(config))
+    setTimePerceptionEnabled(perception)
+    setSavedSnapshot(JSON.stringify({ config, timePerceptionEnabled: perception }))
   }, [characterId])
 
   useEffect(() => {
@@ -86,13 +95,19 @@ export function ChatTimeSettingsScreen({
     void load()
   }, [load, open])
 
-  const dirty = savedSnapshot !== JSON.stringify(normalizeWeChatTimeConfig(form))
+  const dirty =
+    savedSnapshot !==
+    JSON.stringify({ config: normalizeWeChatTimeConfig(form), timePerceptionEnabled })
 
   const save = useCallback(async () => {
     const next = normalizeWeChatTimeConfig(form)
-    await personaDb.putCharacterTimeSettings({ characterId, config: next })
-    setSavedSnapshot(JSON.stringify(next))
-  }, [characterId, form])
+    await personaDb.putCharacterTimeSettings({
+      characterId,
+      config: next,
+      timePerceptionEnabled,
+    })
+    setSavedSnapshot(JSON.stringify({ config: next, timePerceptionEnabled }))
+  }, [characterId, form, timePerceptionEnabled])
 
   const requestClose = useCallback(() => {
     if (dirty) {
@@ -144,6 +159,21 @@ export function ChatTimeSettingsScreen({
 
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
                 <div className="space-y-3">
+                  <section className="rounded-[14px] border border-[#e5e5e5] bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[16px] font-medium text-[#111111]">启用时间感知</p>
+                        <p className="mt-1 text-[13px] text-[#888888]">
+                          关闭后模型不再接收系统注入的「当前时间点」，仅根据聊天记录与对话语境推断时段
+                        </p>
+                      </div>
+                      <WxSwitch
+                        on={timePerceptionEnabled}
+                        onToggle={() => setTimePerceptionEnabled((v) => !v)}
+                      />
+                    </div>
+                  </section>
+
                   <section className="rounded-[14px] border border-[#e5e5e5] bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
                     <div className="flex items-center justify-between gap-3">
                       <div>

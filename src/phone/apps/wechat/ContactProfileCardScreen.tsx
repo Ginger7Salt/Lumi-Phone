@@ -8,13 +8,19 @@ import {
   ContactProfileGenderGlyph,
   type ContactProfileGenderUi,
 } from './ContactProfileGenderIcons'
+import { ContactMomentsSnapshot } from '../../../components/moments/ContactMomentsSnapshot'
+import type { MomentContactRef } from '../../../components/moments/newMomentTypes'
 import { personaDb } from './newFriendsPersona/idb'
 import type { Character } from './newFriendsPersona/types'
-import { WECHAT_LUMI_PEER_CHARACTER_ID } from './wechatConversationKey'
+import { WECHAT_LUMI_PEER_CHARACTER_ID, WECHAT_SELF_PEER_CHARACTER_ID } from './wechatConversationKey'
+import type { WechatProfile } from './wechatProfileTypes'
 
 import lumiDefaultAvatar from '../../../../image/主屏幕图标.png'
 
-export type ContactProfileTarget = { kind: 'lumi' } | { kind: 'persona'; characterId: string }
+export type ContactProfileTarget =
+  | { kind: 'lumi' }
+  | { kind: 'persona'; characterId: string }
+  | { kind: 'self' }
 
 export type ContactProfileCardScreenProps = {
   target: ContactProfileTarget
@@ -25,6 +31,10 @@ export type ContactProfileCardScreenProps = {
   onOpenProfileSettings: () => void
   onOpenContactSettings: (characterId: string) => void
   onOpenMoments?: () => void
+  accountId?: string | null
+  momentContacts?: MomentContactRef[]
+  /** 本人资料卡：当前微信马甲资料（kind === 'self' 时使用） */
+  selfAccountProfile?: Pick<WechatProfile, 'nickname' | 'wechatId' | 'signature' | 'avatarUrl' | 'gender'> | null
 }
 
 function mapGender(g: Character['gender'] | undefined | null): ContactProfileGenderUi {
@@ -126,6 +136,9 @@ export function ContactProfileCardScreen({
   onOpenProfileSettings,
   onOpenContactSettings,
   onOpenMoments,
+  accountId,
+  momentContacts = [],
+  selfAccountProfile = null,
 }: ContactProfileCardScreenProps) {
   const { state } = useCustomization()
   const disableTransitions = state.ui.disablePageTransitions
@@ -134,9 +147,19 @@ export function ContactProfileCardScreen({
   const [callPanelOpen, setCallPanelOpen] = useState(false)
   const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false)
 
-  const characterId = target.kind === 'persona' ? target.characterId : WECHAT_LUMI_PEER_CHARACTER_ID
+  const isSelf = target.kind === 'self'
+  const characterId =
+    target.kind === 'persona'
+      ? target.characterId
+      : target.kind === 'self'
+        ? WECHAT_SELF_PEER_CHARACTER_ID
+        : WECHAT_LUMI_PEER_CHARACTER_ID
 
   useEffect(() => {
+    if (isSelf) {
+      setCharacter(null)
+      return
+    }
     let cancelled = false
     const load = async () => {
       try {
@@ -153,36 +176,52 @@ export function ContactProfileCardScreen({
       cancelled = true
       window.removeEventListener('wechat-storage-changed', onStorage)
     }
-  }, [characterId])
+  }, [characterId, isSelf])
 
   const wechatNickLine = useMemo(() => {
     if (target.kind === 'lumi') return 'Lumi'
+    if (target.kind === 'self') {
+      return selfAccountProfile?.nickname?.trim() || remarkName.trim() || '未设置'
+    }
     const nick = character?.wechatNickname?.trim()
     const name = character?.name?.trim()
     return nick || name || '未设置'
-  }, [target.kind, character])
+  }, [target.kind, character, selfAccountProfile?.nickname, remarkName])
 
   const headlineName = useMemo(() => {
+    if (target.kind === 'self') return wechatNickLine
     const r = character?.remark?.trim() || remarkName.trim()
     if (r) return r
     return wechatNickLine
-  }, [character?.remark, remarkName, wechatNickLine])
+  }, [target.kind, character?.remark, remarkName, wechatNickLine])
 
   const wechatIdDisplay = useMemo(() => {
+    if (target.kind === 'self') {
+      return selfAccountProfile?.wechatId?.trim() || '未设置'
+    }
     const raw = character?.wechatId?.trim()
     if (raw) return raw
     const slug = characterId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 16) || 'user'
     return `wxid_${slug}`
-  }, [character, characterId])
+  }, [target.kind, character, characterId, selfAccountProfile?.wechatId])
 
-  const genderUi = useMemo(() => mapGender(character?.gender), [character?.gender])
+  const genderUi = useMemo(() => {
+    if (target.kind === 'self') {
+      if (selfAccountProfile?.gender === 'male') return 'male' as const
+      if (selfAccountProfile?.gender === 'female') return 'female' as const
+      return 'private' as const
+    }
+    return mapGender(character?.gender)
+  }, [target.kind, character?.gender, selfAccountProfile?.gender])
 
   const avatarSrc = useMemo(() => {
-    const a = avatarUrlProp?.trim() || character?.avatarUrl?.trim()
+    const a =
+      avatarUrlProp?.trim() ||
+      (target.kind === 'self' ? selfAccountProfile?.avatarUrl?.trim() : character?.avatarUrl?.trim())
     if (a) return a
     if (target.kind === 'lumi') return lumiDefaultAvatar
     return ''
-  }, [avatarUrlProp, character?.avatarUrl, target.kind])
+  }, [avatarUrlProp, character?.avatarUrl, selfAccountProfile?.avatarUrl, target.kind])
 
   const onAvatarClick = useCallback(() => {
     setAvatarPreviewOpen(true)
@@ -202,22 +241,18 @@ export function ContactProfileCardScreen({
       window.setTimeout(() => setToast(null), 1800)
       return
     }
+    if (target.kind === 'self') {
+      onOpenProfileSettings()
+      return
+    }
     onOpenContactSettings(target.characterId)
-  }, [target, onOpenContactSettings])
+  }, [target, onOpenContactSettings, onOpenProfileSettings])
 
-  const momentsCoverUrl = character?.momentsCoverUrl?.trim() || ''
-  const hasMomentsImage = Boolean(momentsCoverUrl)
-  const momentThumbs = useMemo(() => {
-    if (!momentsCoverUrl) return null
-    return Array.from({ length: 4 }, (_, i) => (
-      <div key={i} className="h-12 w-12 shrink-0 overflow-hidden rounded-[4px] bg-[#ececec]">
-        {i === 0 ? <img src={momentsCoverUrl} alt="" className="h-full w-full object-cover" /> : null}
-      </div>
-    ))
-  }, [momentsCoverUrl])
-
-  const summarySignature = character?.wechatSignature?.trim() || character?.motto?.trim() || '这个人很低调，什么也没写'
-  const summaryRegion = character?.wechatRegion?.trim() || ''
+  const summarySignature =
+    target.kind === 'self'
+      ? selfAccountProfile?.signature?.trim() || '这个人很低调，什么也没写'
+      : character?.wechatSignature?.trim() || character?.motto?.trim() || '这个人很低调，什么也没写'
+  const summaryRegion = target.kind === 'self' ? '' : character?.wechatRegion?.trim() || ''
 
   return (
     <motion.div
@@ -272,33 +307,24 @@ export function ContactProfileCardScreen({
           </div>
         </div>
 
-        <div className="mt-2 border-y-[0.5px] border-gray-100 bg-white">
-          <ProfileInfoRow
-            label="备注名"
-            subLabel="REMARK"
-            value={character?.remark?.trim() || '未设置'}
-          />
-          <ProfileInfoRow
-            label="微信昵称"
-            subLabel="NICKNAME"
-            value={wechatNickLine || '未设置'}
-          />
-        </div>
-
-        <div className="mt-2 border-y-[0.5px] border-gray-100 bg-white">
-          <SectionRow
-            label="朋友圈"
-            subLabel="MOMENTS"
-            onClick={onMoments}
-            trailing={
-              hasMomentsImage ? (
-                <div className="flex items-center gap-1">{momentThumbs}</div>
-              ) : (
-                <span className="max-w-[170px] truncate text-[12px] text-[#b0b0b0]">该角色很神秘，什么都没留下</span>
-              )
-            }
-          />
-        </div>
+        {target.kind !== 'self' ? (
+          <div className="mt-2 border-y-[0.5px] border-gray-100 bg-white">
+            <ProfileInfoRow
+              label="备注名"
+              subLabel="REMARK"
+              value={character?.remark?.trim() || '未设置'}
+            />
+            <ProfileInfoRow
+              label="微信昵称"
+              subLabel="NICKNAME"
+              value={wechatNickLine || '未设置'}
+            />
+          </div>
+        ) : (
+          <div className="mt-2 border-y-[0.5px] border-gray-100 bg-white">
+            <ProfileInfoRow label="微信昵称" subLabel="NICKNAME" value={wechatNickLine || '未设置'} />
+          </div>
+        )}
 
         <div className="mt-2 border-y-[0.5px] border-gray-100 bg-white">
           <SectionRow
@@ -312,10 +338,19 @@ export function ContactProfileCardScreen({
             value={summarySignature}
           />
           <SectionRow
-            label="更多资料"
+            label={target.kind === 'self' ? '编辑资料' : '更多资料'}
             subLabel="DETAILS"
-            value="查看详细资料与权限设置"
+            value={target.kind === 'self' ? '修改昵称、头像与个性签名' : '查看详细资料与权限设置'}
             onClick={onFriendProfileInfo}
+          />
+        </div>
+
+        <div className="mt-2">
+          <ContactMomentsSnapshot
+            characterId={characterId}
+            accountId={accountId}
+            momentContacts={momentContacts}
+            onOpenArchive={onMoments}
           />
         </div>
 
@@ -328,14 +363,16 @@ export function ContactProfileCardScreen({
             <MessageCircle className="size-[18px]" strokeWidth={1.8} />
             <span className="text-[16px] font-medium">发消息</span>
           </Pressable>
-          <Pressable
-            type="button"
-            onClick={() => setCallPanelOpen(true)}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-[12px] border border-black bg-white text-black active:bg-gray-100"
-          >
-            <Phone className="size-[18px]" strokeWidth={1.8} />
-            <span className="text-[16px]">音视频通话</span>
-          </Pressable>
+          {target.kind !== 'self' ? (
+            <Pressable
+              type="button"
+              onClick={() => setCallPanelOpen(true)}
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-[12px] border border-black bg-white text-black active:bg-gray-100"
+            >
+              <Phone className="size-[18px]" strokeWidth={1.8} />
+              <span className="text-[16px]">音视频通话</span>
+            </Pressable>
+          ) : null}
         </div>
       </div>
 

@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { Sparkles, Trash2, X } from 'lucide-react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { isAndroidWeb, resolveAndroidKeyboardPadPx } from '../../../hooks/keyboardInset'
 import {
   WORLD_BOOK_CHAR_PLACEHOLDER,
   WORLD_BOOK_USER_PLACEHOLDER,
@@ -21,6 +22,9 @@ import {
 import type { Character, WorldBook, WorldBookItem } from './types'
 
 const WB_ITEM_GENERATING_TEXT = '生成中…'
+
+const BODY_TEXTAREA_CLASS =
+  'block min-h-[220px] w-full resize-y overflow-y-auto border-0 bg-transparent text-[15px] leading-relaxed text-stone-800 outline-none placeholder:text-stone-300 read-only:cursor-wait [-webkit-overflow-scrolling:touch]'
 
 type PeerRow = { id: string; label: string; role: 'archive_root' | 'network_npc' }
 
@@ -57,8 +61,60 @@ export function LoreEntryEditorSheet({
   onOpenAiLengthModal: () => void
   worldBookUserInsertContext?: WorldBookUserInsertContext | null
 }) {
+  const sheetRef = useRef<HTMLDivElement | null>(null)
   const taHandleRef = useRef<PlaceholderAwareTextareaHandle | null>(null)
   const caretRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
+  const inputFocusedRef = useRef(false)
+  const [androidKbPad, setAndroidKbPad] = useState(0)
+
+  /** Android：整页 bottom 抬升贴键盘，不压缩 maxHeight（避免顶栏被裁切） */
+  useEffect(() => {
+    if (!open || !isAndroidWeb()) {
+      setAndroidKbPad(0)
+      inputFocusedRef.current = false
+      return
+    }
+    const vv = window.visualViewport
+    if (!vv) return
+
+    const syncPad = () => {
+      const pad = resolveAndroidKeyboardPadPx(inputFocusedRef.current)
+      setAndroidKbPad((prev) => (Math.abs(prev - pad) < 4 ? prev : pad))
+    }
+
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target
+      if (!(t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement)) return
+      if (!sheetRef.current?.contains(t)) return
+      inputFocusedRef.current = true
+      syncPad()
+    }
+
+    const onFocusOut = () => {
+      window.setTimeout(() => {
+        const active = document.activeElement
+        if (active instanceof HTMLElement && sheetRef.current?.contains(active)) return
+        inputFocusedRef.current = false
+        syncPad()
+      }, 80)
+    }
+
+    syncPad()
+    vv.addEventListener('resize', syncPad)
+    vv.addEventListener('scroll', syncPad)
+    window.addEventListener('orientationchange', syncPad)
+    document.addEventListener('focusin', onFocusIn, true)
+    document.addEventListener('focusout', onFocusOut, true)
+    return () => {
+      vv.removeEventListener('resize', syncPad)
+      vv.removeEventListener('scroll', syncPad)
+      window.removeEventListener('orientationchange', syncPad)
+      document.removeEventListener('focusin', onFocusIn, true)
+      document.removeEventListener('focusout', onFocusOut, true)
+      setAndroidKbPad(0)
+      inputFocusedRef.current = false
+    }
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -161,8 +217,6 @@ export function LoreEntryEditorSheet({
     item.userPlaceholderBindings,
   )
 
-  /** 关闭时若正文只有空白可选不变 — 保持简单：不关逻辑 */
-
   return (
     <AnimatePresence>
       {open ? (
@@ -179,16 +233,20 @@ export function LoreEntryEditorSheet({
             onClick={onClose}
           />
           <motion.div
+            ref={sheetRef}
             key="lore-sheet-panel"
             role="dialog"
             aria-modal="true"
             aria-labelledby="lore-entry-editor-title"
-            className="fixed inset-x-0 bottom-0 z-[1160] flex max-h-[85vh] flex-col rounded-t-[26px] border border-white/70 bg-white/80 shadow-[0_-12px_48px_rgba(0,0,0,0.12)] backdrop-blur-2xl"
+            className="fixed inset-x-0 z-[1160] flex max-h-[85vh] flex-col overflow-hidden rounded-t-[26px] border border-white/70 bg-white/80 shadow-[0_-12px_48px_rgba(0,0,0,0.12)] backdrop-blur-2xl"
             initial={{ y: '105%' }}
             animate={{ y: 0 }}
             exit={{ y: '105%' }}
             transition={{ type: 'spring', damping: 34, stiffness: 380 }}
-            style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+            style={{
+              bottom: isAndroidWeb() && androidKbPad > 0 ? androidKbPad : 0,
+              paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))',
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex shrink-0 flex-col px-4 pt-2">
@@ -353,9 +411,9 @@ export function LoreEntryEditorSheet({
               ) : null}
             </div>
 
-            <div className="mt-2 min-h-0 flex-1 overflow-hidden px-4 pb-2">
-              <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-stone-400">正文</p>
-              <div className="h-full min-h-[200px] overflow-hidden rounded-2xl bg-stone-50/50 px-3 py-2">
+            <div className="mt-2 flex min-h-0 flex-1 flex-col px-4 pb-2">
+              <p className="mb-1 shrink-0 text-[10px] font-medium uppercase tracking-wider text-stone-400">正文</p>
+              <div className="min-h-[200px] flex-1 basis-0 overflow-y-auto overscroll-contain touch-pan-y rounded-2xl bg-stone-50/50 px-3 py-2 [-webkit-overflow-scrolling:touch]">
                 {forPlayerIdentity ? (
                   <textarea
                     value={generating ? WB_ITEM_GENERATING_TEXT : (item.content ?? '')}
@@ -363,7 +421,7 @@ export function LoreEntryEditorSheet({
                     onChange={(e) => {
                       if (!generating) patchContent(e.target.value)
                     }}
-                    className="h-full min-h-[220px] w-full resize-none border-0 bg-transparent text-[15px] leading-relaxed text-stone-800 outline-none placeholder:text-stone-300 read-only:cursor-wait"
+                    className={BODY_TEXTAREA_CLASS}
                     placeholder="书写属于你的世界片段…"
                   />
                 ) : (
@@ -385,7 +443,7 @@ export function LoreEntryEditorSheet({
                     previewEditRequiresDoubleClick={false}
                     previewShellWorldBook={false}
                     rows={14}
-                    className="min-h-[220px] w-full resize-none border-0 bg-transparent text-[15px] leading-relaxed text-stone-800 outline-none placeholder:text-stone-300 read-only:cursor-wait"
+                    className={BODY_TEXTAREA_CLASS}
                     placeholder="沉浸式书写… 占位符在预览中会展开为姓名"
                   />
                 )}

@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterTimeSettingsRow, WeChatTimeConfig } from '../newFriendsPersona/types'
-import { normalizeWeChatTimeConfig, resolveWeChatCurrentTimeMs } from './wechatTimeUtils'
+import {
+  isCharacterTimePerceptionEnabled,
+  normalizeWeChatTimeConfig,
+  resolveWeChatCurrentTimeMs,
+} from './wechatTimeUtils'
 
 type UseWeChatCurrentTimeOptions = {
   characterId?: string | null
@@ -12,6 +16,7 @@ export function useWeChatCurrentTime(options?: UseWeChatCurrentTimeOptions) {
   const characterId = options?.characterId?.trim() || ''
   const [globalConfig, setGlobalConfig] = useState<WeChatTimeConfig>(() => normalizeWeChatTimeConfig())
   const [characterRow, setCharacterRow] = useState<CharacterTimeSettingsRow | null>(null)
+  const [timePerceptionEnabled, setTimePerceptionEnabled] = useState(true)
   const effectiveConfig = useMemo(
     () => normalizeWeChatTimeConfig(characterRow?.config ?? globalConfig),
     [characterRow?.config, globalConfig],
@@ -30,10 +35,12 @@ export function useWeChatCurrentTime(options?: UseWeChatCurrentTimeOptions) {
     setGlobalConfig(normalizeWeChatTimeConfig(global.globalTimeConfig))
     if (!characterId) {
       setCharacterRow(null)
+      setTimePerceptionEnabled(true)
       return
     }
     const row = await personaDb.getCharacterTimeSettings(characterId)
     setCharacterRow(row)
+    setTimePerceptionEnabled(isCharacterTimePerceptionEnabled(row))
   }, [characterId])
 
   useEffect(() => {
@@ -63,6 +70,7 @@ export function useWeChatCurrentTime(options?: UseWeChatCurrentTimeOptions) {
     globalConfig,
     characterConfig: characterRow?.config ?? null,
     effectiveConfig,
+    timePerceptionEnabled,
     getCurrentTimeMs,
     reload,
   }

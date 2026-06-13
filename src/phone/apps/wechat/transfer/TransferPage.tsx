@@ -176,8 +176,7 @@ export function TransferPage({
               ¥
             </span>
             <span
-              className="text-[46px] font-semibold tabular-nums tracking-tight text-[#111]"
-              style={{ fontFamily: 'ui-rounded, system-ui, \"SF Pro Display\", \"DIN Alternate\", sans-serif' }}
+              className="text-[46px] tabular-nums tracking-tight text-[#111]"
             >
               {displayAmount}
             </span>

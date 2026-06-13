@@ -398,6 +398,12 @@ function normalizeBirthdayMD(v: string): string {
   return `${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`
 }
 
+function resolveDatingLiveAvatarUrl(row: Character): string {
+  return repairCharacterAvatarForBundleImport({
+    avatarUrl: migrateLegacyRootPublicUrl(row.avatarUrl?.trim() || ''),
+  })
+}
+
 function toCharacterInfo(row: Character, remarkName: string): CharacterInfo {
   const realName = row.name?.trim() || remarkName || '未命名'
   const baseTags = [row.identity?.trim(), row.mbti?.trim()].filter(Boolean) as string[]
@@ -406,9 +412,7 @@ function toCharacterInfo(row: Character, remarkName: string): CharacterInfo {
   const tags = [...new Set([...baseTags, ...painPointTags])].slice(0, 8)
   return {
     id: row.id,
-    avatarUrl: repairCharacterAvatarForBundleImport({
-      avatarUrl: migrateLegacyRootPublicUrl(row.avatarUrl?.trim() || ''),
-    }),
+    avatarUrl: resolveDatingLiveAvatarUrl(row),
     realName,
     pinyin: toPinyinLike(realName),
     age: typeof row.age === 'number' && Number.isFinite(row.age) ? row.age : 22,
@@ -470,10 +474,8 @@ function mergeSavedCharacters(baseChars: CharacterInfo[], parsed: unknown | null
       const birthday = /^\d{1,2}-\d{1,2}$/.test(birthdayRaw.trim()) ? birthdayRaw.trim() : base.birthdayMD
       res.push({
         ...base,
-        avatarUrl:
-          typeof saved.avatarUrl === 'string'
-            ? migrateLegacyRootPublicUrl(saved.avatarUrl)
-            : base.avatarUrl,
+        /** 头像以人设库为准，与微信/朋友圈换头像同步；本地缓存仅保留卡片样式等约会页字段 */
+        avatarUrl: base.avatarUrl,
         realName: typeof saved.realName === 'string' ? saved.realName : base.realName,
         pinyin: typeof saved.pinyin === 'string' ? saved.pinyin : base.pinyin,
         age: typeof saved.age === 'number' ? saved.age : base.age,
@@ -1437,6 +1439,40 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       }
     })()
   }, [state.wechatPersonaContacts])
+
+  const charactersRef = useRef(characters)
+  charactersRef.current = characters
+
+  const refreshDatingCharacterAvatarsFromPersona = useCallback(async () => {
+    const prev = charactersRef.current
+    if (!prev.length) return
+    const updates = new Map<string, string>()
+    await Promise.all(
+      prev.map(async (c) => {
+        try {
+          const row = await personaDb.getCharacter(c.id)
+          if (!row) return
+          updates.set(c.id, resolveDatingLiveAvatarUrl(row))
+        } catch {
+          /* ignore */
+        }
+      }),
+    )
+    if (!updates.size) return
+    setCharacters((current) =>
+      current.map((c) => {
+        const nextUrl = updates.get(c.id)
+        return nextUrl && nextUrl !== c.avatarUrl ? { ...c, avatarUrl: nextUrl } : c
+      }),
+    )
+  }, [])
+
+  useEffect(() => {
+    if (!datingHydrated) return
+    const onStorage = () => void refreshDatingCharacterAvatarsFromPersona()
+    window.addEventListener('wechat-storage-changed', onStorage)
+    return () => window.removeEventListener('wechat-storage-changed', onStorage)
+  }, [datingHydrated, refreshDatingCharacterAvatarsFromPersona])
 
   useEffect(() => {
     if (!datingHydrated) return

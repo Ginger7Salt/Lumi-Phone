@@ -2,12 +2,15 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Loader2, Search, X } from 'lucide
 import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { PHONE_NUM_FONT_FAMILY } from '../../../types'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { WeChatMessageSearchIndexRow } from '../newFriendsPersona/types'
 import { useWeChatCurrentTime } from '../time/useWeChatCurrentTime'
 import { ChatSearchResultRow } from './ChatSearchResultRow'
 
 const WEEK_LABELS = ['一', '二', '三', '四', '五', '六', '日'] as const
+
+const numStyle = { fontFamily: PHONE_NUM_FONT_FAMILY } as const
 
 function pad2(n: number) {
   return String(n).padStart(2, '0')
@@ -66,7 +69,7 @@ function CalendarDayCell({
 
   const content = (
     <>
-      <span>{label}</span>
+      <span style={numStyle}>{label}</span>
       {showTodayDot && !selected ? (
         <span className="mt-0.5 block h-1 w-1 shrink-0 rounded-full bg-black" aria-hidden />
       ) : (
@@ -490,7 +493,9 @@ export function ChatFindChatHistoryScreen({
                     style={{ color: canPrevMonth ? '#000000' : '#999999' }}
                   />
                 </Pressable>
-                <p className="text-[16px] font-semibold text-black">{titleText}</p>
+                <p className="text-[16px] font-semibold text-black" style={numStyle}>
+                  {titleText}
+                </p>
                 <Pressable
                   type="button"
                   aria-label="下月"

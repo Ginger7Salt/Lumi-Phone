@@ -12,7 +12,12 @@ import { useEffect, useState } from 'react'
 import { AnonymousQnAApp } from './anonymousQa/AnonymousQnAApp'
 import type { AnonymousQaWechatContext } from './anonymousQa/buildAnonymousQaPersonaContext'
 import type { MockContact } from './anonymousQa/types'
+import { DiscoverListenTogetherApp } from './discoverListen/DiscoverListenTogetherApp'
 import { LISTEN_TOGETHER_NAVIGATE_EVENT } from './discoverListen/listenTogetherNavigation'
+import { useMomentsInteractionUnreadCount } from './moments/MomentsNoticeRuntime'
+import type { OnOpenMomentParticipantProfile } from './moments/momentProfileNavigation'
+import { WeChatMomentsPage } from './moments/WeChatMomentsPage'
+import { mockContactsToMomentRefs } from './moments/publishMomentUtils'
 
 type DiscoverActionId = 'moments' | 'anonymous-qa' | 'listen-together' | 'shop' | 'jubensha'
 
@@ -25,10 +30,21 @@ type DiscoverAction = {
 export type WeChatDiscoverInstagramProps = {
   onActionClick?: (id: DiscoverActionId) => void
   onImmersiveViewChange?: (open: boolean) => void
+  /** 当前微信账号昵称（朋友圈封面、互动展示） */
+  wechatNickname?: string
+  /** 当前微信账号头像 */
+  wechatAvatarUrl?: string
+  /** 朋友圈封面（空则默认图） */
+  momentsCoverUrl?: string
+  onMomentsCoverChange?: (url: string) => void | Promise<void>
+  /** @deprecated 请用 wechatNickname；保留供匿问我答等复用 */
   currentUserName?: string
   /** 匿问我答：真实通讯录（含 self + 人脉 NPC） */
   qnaContacts?: MockContact[]
   qnaWechatCtx?: AnonymousQaWechatContext | null
+  onOpenParticipantProfile?: OnOpenMomentParticipantProfile
+  restoreView?: 'moments' | null
+  onRestoreViewConsumed?: () => void
   className?: string
 }
 
@@ -88,11 +104,21 @@ function DiscoverFeatureUnderDev({
 export function WeChatDiscoverInstagram({
   onActionClick,
   onImmersiveViewChange,
+  wechatNickname,
+  wechatAvatarUrl,
+  momentsCoverUrl,
+  onMomentsCoverChange,
   currentUserName,
   qnaContacts,
   qnaWechatCtx = null,
+  onOpenParticipantProfile,
+  restoreView = null,
+  onRestoreViewConsumed,
   className = '',
 }: WeChatDiscoverInstagramProps) {
+  const momentsDisplayName = wechatNickname?.trim() || currentUserName?.trim() || '我'
+  const momentContacts = mockContactsToMomentRefs(qnaContacts ?? [])
+  const momentsUnreadCount = useMomentsInteractionUnreadCount()
   const [activeView, setActiveView] = useState<
     'list' | 'moments' | 'listen-together' | 'anonymous-qa' | 'jubensha'
   >('list')
@@ -109,22 +135,33 @@ export function WeChatDiscoverInstagram({
     window.addEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigate)
     return () => window.removeEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigate)
   }, [])
+  useEffect(() => {
+    if (restoreView !== 'moments') return
+    setActiveView('moments')
+    onRestoreViewConsumed?.()
+  }, [onRestoreViewConsumed, restoreView])
+
   if (activeView === 'moments') {
     return (
-      <DiscoverFeatureUnderDev
-        className={className}
-        title="朋友圈"
-        hint="朋友圈动态、发布与互动能力正在开发，稍后将在此接入。"
-        onBack={() => setActiveView('list')}
-      />
+      <div className={`h-full min-h-0 ${className}`}>
+        <WeChatMomentsPage
+          onBack={() => setActiveView('list')}
+          wechatNickname={momentsDisplayName}
+          wechatAvatarUrl={wechatAvatarUrl}
+          momentsCoverUrl={momentsCoverUrl}
+          onMomentsCoverChange={onMomentsCoverChange}
+          momentContacts={momentContacts}
+          currentUserName={momentsDisplayName}
+          qnaWechatCtx={qnaWechatCtx}
+          onOpenParticipantProfile={onOpenParticipantProfile}
+        />
+      </div>
     )
   }
   if (activeView === 'listen-together') {
     return (
-      <DiscoverFeatureUnderDev
-        className={className}
-        title="听一听"
-        hint="音乐发现、一起听与网易云同步能力正在开发，稍后将在此接入。"
+      <DiscoverListenTogetherApp
+        className={`h-full min-h-0 ${className}`}
         onBack={() => setActiveView('list')}
       />
     )
@@ -134,7 +171,7 @@ export function WeChatDiscoverInstagram({
       <div className={`h-full min-h-0 ${className}`}>
         <AnonymousQnAApp
           onBack={() => setActiveView('list')}
-          currentUserName={currentUserName}
+          currentUserName={currentUserName ?? momentsDisplayName}
           contacts={qnaContacts}
           wechatCtx={qnaWechatCtx}
         />
@@ -178,7 +215,22 @@ export function WeChatDiscoverInstagram({
                   >
                     <Icon className="size-5 text-[#262626]" strokeWidth={1.75} aria-hidden />
                     <span className="ml-3 text-[16px] font-normal text-[#262626]">{item.label}</span>
-                    <ChevronRight className="ml-auto size-4 text-[#8e8e8e]" strokeWidth={1.75} aria-hidden />
+                    <div className="ml-auto flex shrink-0 items-center gap-2">
+                      {item.id === 'moments' && momentsUnreadCount > 0 ? (
+                        <span
+                          className="flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full px-[5px] text-[10px] font-semibold leading-none tabular-nums text-white"
+                          style={{
+                            background: '#fa5151',
+                            fontFamily:
+                              'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+                          }}
+                          aria-label={`${momentsUnreadCount} 条未读互动消息`}
+                        >
+                          {momentsUnreadCount > 99 ? '99+' : momentsUnreadCount}
+                        </span>
+                      ) : null}
+                      <ChevronRight className="size-4 text-[#8e8e8e]" strokeWidth={1.75} aria-hidden />
+                    </div>
                   </button>
                 </li>
               )

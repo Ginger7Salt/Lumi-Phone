@@ -1,0 +1,21 @@
+name = "lumi-push"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 公钥可提交；私钥请 wrangler secret put VAPID_PRIVATE_KEY
+# 生成：cd workers/lumi-push && npx web-push generate-vapid-keys
+[vars]
+VAPID_PUBLIC_KEY = "BKWSsSQ6Qv7oNFWYAnxcXSPa99dLfaWD9GxKoVLq1CIGAoV1V5UdZtR3h3PJ0zIPMnfQvOXX2IhzoaCJTeIWF8w"
+VAPID_SUBJECT = "mailto:lumi-push@lumi-phone.local"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lumi-push"
+database_id = "6c6d3955-7f71-4e16-a838-e6261124e3e8"
+
+# 部署前：wrangler d1 create lumi-push → 替换 database_id
+# wrangler d1 execute lumi-push --remote --file=./schema.sql
+
+[triggers]
+crons = ["* * * * *"]

@@ -756,10 +756,7 @@ function WealthDashboardInner({ onBack }: { onBack: () => void }) {
             <p className="text-center text-[11px] tracking-[0.2em] text-gray-500">
               总资产 <span className="ml-2 text-gray-400">TOTAL ASSETS</span>
             </p>
-            <p
-              className="mt-2 text-center text-[44px] font-semibold tracking-tight text-black sm:text-[52px]"
-              style={{ fontFamily: '"DIN Alternate", "SF Pro Display", ui-sans-serif, system-ui, sans-serif' }}
-            >
+            <p className="mt-2 text-center text-[44px] tabular-nums tracking-tight text-black sm:text-[52px]">
               <motion.span
                 key={`${moneyPulse}-${Math.round(displayAssets * 100)}`}
                 initial={disableTransitions ? false : { opacity: 0.88, y: 1 }}

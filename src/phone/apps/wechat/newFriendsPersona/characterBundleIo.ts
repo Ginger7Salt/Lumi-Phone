@@ -11,6 +11,9 @@ import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { uid } from './utils'
 import { canonicalPublicImagePath, migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
 import { repairCharacterAvatarForBundleImport } from '../../../utils/characterAvatarUrl'
+import { rebindCharacterIdentityForBundleImport } from '../worldBookUserPlaceholderBindings'
+import { listAfterAttitudeWorldBookItems } from './personaIdentityBindingAudit'
+import { clearCliqueIdentitySyncAck } from './personaIdentitySyncAck'
 
 export const CHARACTER_BUNDLE_KIND = 'lumi-phone-character-bundle' as const
 export const CHARACTER_BUNDLE_VERSION = 5 as const
@@ -432,6 +435,51 @@ function stampBundleCharactersForAccount(
   )
 }
 
+async function finalizeCharactersForBundleImport(
+  characters: Character[],
+  wechatAccountId: string,
+  importPlayerIdentityId: string,
+): Promise<{ characters: Character[]; staleDisplayNames: Set<string> }> {
+  const staleDisplayNames = new Set<string>()
+  const out: Character[] = []
+  for (const ch of characters) {
+    const reb = await rebindCharacterIdentityForBundleImport(ch, wechatAccountId, importPlayerIdentityId)
+    for (const name of reb.staleDisplayNames) staleDisplayNames.add(name)
+    out.push(reb.character)
+  }
+  return { characters: out, staleDisplayNames }
+}
+
+function sanitizePlayerNetworkLinksForImport(
+  links: PlayerNetworkLink[],
+  staleDisplayNames: Set<string>,
+  nextDisplayName: string,
+): PlayerNetworkLink[] {
+  if (!staleDisplayNames.size) return links
+  return links.map((link) => {
+    const they = link.theyCallYou?.trim()
+    if (they && staleDisplayNames.has(they) && they !== nextDisplayName.trim()) {
+      return { ...link, theyCallYou: '' }
+    }
+    return link
+  })
+}
+
+async function syncImportPlayerIdentityBindings(
+  characters: Character[],
+  importPlayerIdentityId: string,
+  playerIdentityName: string,
+): Promise<void> {
+  for (const ch of characters) {
+    await personaDb.upsertPlayerIdentityBindings({
+      identityId: importPlayerIdentityId,
+      characterId: ch.id,
+      identityName: playerIdentityName,
+      characterName: ch.name?.trim() || '角色',
+    })
+  }
+}
+
 function cloneBundleWithNewIds(
   bundle: CharacterBundleV5,
   importPlayerIdentityId: string | undefined,
@@ -571,6 +619,131 @@ function cloneBundleWithNewIds(
   }
 }
 
+/** 导入后若身份显示名与包内缓存不一致，供 UI 提示 AI 重写称呼与尾声延展 */
+export type CharacterBundleIdentityAddressingHint = {
+  identityMismatch: boolean
+  /** 包内世界书 user 槽位曾绑定的旧身份显示名 */
+  previousIdentityNames: string[]
+  /** 当前导入所用身份名 */
+  currentIdentityName: string
+  /** 包内是否含「角色如何称呼你」相关字段 */
+  hasPlayerAddressing: boolean
+  /** 因称呼与旧身份名冲突而被清空的条数 */
+  clearedAddressingCount: number
+  /** 包内是否含「当前对你的态度」类尾声延展条目 */
+  hasAfterAttitudeEntries: boolean
+  afterAttitudeEntryCount: number
+}
+
+export type CharacterBundleImportResult = {
+  rootId: string
+  mode: 'new' | 'overwrite'
+  addressingHint?: CharacterBundleIdentityAddressingHint
+}
+
+/** 导入后自动检测：由 audit 结果构造弹窗 hint */
+export function buildAddressingHintFromAudit(
+  audit: import('./personaIdentityBindingAudit').CliqueIdentityBindingAudit,
+  bundleHint?: CharacterBundleIdentityAddressingHint,
+  playerLinks: import('./types').PlayerNetworkLink[] = [],
+): CharacterBundleIdentityAddressingHint {
+  const linksHaveContent = playerLinks.some(
+    (l) => String(l.theyCallYou ?? '').trim() || String(l.theySeeYou ?? '').trim(),
+  )
+  const hasPlayerIssues =
+    audit.hasStalePlayerAddressing ||
+    audit.hasStalePlayerView ||
+    audit.issues.some((i) => i.kind.startsWith('player_')) ||
+    linksHaveContent
+  return {
+    identityMismatch:
+      audit.needsAttention || !!bundleHint?.identityMismatch || audit.foreignIdentityNames.length > 0,
+    previousIdentityNames: audit.foreignIdentityNames.length
+      ? audit.foreignIdentityNames
+      : (bundleHint?.previousIdentityNames ?? []),
+    currentIdentityName: audit.currentIdentityName,
+    hasPlayerAddressing: hasPlayerIssues || !!bundleHint?.hasPlayerAddressing,
+    clearedAddressingCount: bundleHint?.clearedAddressingCount ?? 0,
+    hasAfterAttitudeEntries: audit.hasAfterAttitudeEntries || !!bundleHint?.hasAfterAttitudeEntries,
+    afterAttitudeEntryCount: audit.afterAttitudeEntryCount || bundleHint?.afterAttitudeEntryCount || 0,
+  }
+}
+
+/** 导入完成后是否应弹出身份/称呼同步引导 */
+export function shouldPromptImportIdentitySync(
+  audit: import('./personaIdentityBindingAudit').CliqueIdentityBindingAudit,
+  bundleHint: CharacterBundleIdentityAddressingHint | undefined,
+  playerLinks: import('./types').PlayerNetworkLink[],
+): boolean {
+  if (audit.needsAttention) return true
+  if (bundleHint) return true
+  if (playerLinks.some((l) => String(l.theyCallYou ?? '').trim() || String(l.theySeeYou ?? '').trim())) {
+    return true
+  }
+  if (audit.hasAfterAttitudeEntries && audit.afterAttitudeEntryCount > 0) return true
+  return false
+}
+
+function bundleHasPlayerAddressingTerms(bundle: CharacterBundleV5): boolean {
+  return bundle.playerNetworkLinks.some((l) => String(l.theyCallYou ?? '').trim().length > 0)
+}
+
+function countClearedPlayerAddressing(
+  before: PlayerNetworkLink[],
+  after: PlayerNetworkLink[],
+): number {
+  const afterByChar = new Map(after.map((l) => [l.characterId, l]))
+  let n = 0
+  for (const link of before) {
+    const prev = String(link.theyCallYou ?? '').trim()
+    if (!prev) continue
+    const next = afterByChar.get(link.characterId)
+    if (!String(next?.theyCallYou ?? '').trim()) n += 1
+  }
+  return n
+}
+
+function bundleHasAfterAttitudeEntries(bundle: CharacterBundleV5): number {
+  const chars = [bundle.mainCharacter, ...bundle.npcs]
+  let n = 0
+  for (const ch of chars) {
+    n += listAfterAttitudeWorldBookItems(ch).filter(
+      (x) => x.worldBookName === '当前对你的态度' && x.content.trim(),
+    ).length
+  }
+  return n
+}
+
+function buildIdentityAddressingHint(
+  bundle: CharacterBundleV5,
+  staleDisplayNames: Set<string>,
+  playerIdentityName: string,
+  linksBeforeSanitize: PlayerNetworkLink[],
+  linksAfterSanitize: PlayerNetworkLink[],
+): CharacterBundleIdentityAddressingHint | undefined {
+  const currentIdentityName = playerIdentityName.trim() || '未命名身份'
+  const previousIdentityNames = [...staleDisplayNames]
+    .map((n) => n.trim())
+    .filter((n) => n && n !== currentIdentityName)
+  const identityMismatch = previousIdentityNames.length > 0
+  const hasPlayerAddressing =
+    bundleHasPlayerAddressingTerms(bundle) ||
+    linksAfterSanitize.some((l) => String(l.theyCallYou ?? '').trim().length > 0)
+  const afterAttitudeEntryCount = bundleHasAfterAttitudeEntries(bundle)
+  const hasAfterAttitudeEntries = afterAttitudeEntryCount > 0
+  if (!identityMismatch) return undefined
+  if (!hasPlayerAddressing && !hasAfterAttitudeEntries) return undefined
+  return {
+    identityMismatch,
+    previousIdentityNames,
+    currentIdentityName,
+    hasPlayerAddressing,
+    clearedAddressingCount: countClearedPlayerAddressing(linksBeforeSanitize, linksAfterSanitize),
+    hasAfterAttitudeEntries,
+    afterAttitudeEntryCount,
+  }
+}
+
 /**
  * 写入完整人脉包；返回新根 id 与模式。
  * - `new`：复制为新的人脉圈（新角色 id），与本地已有数据并存，适合重复导入同一模板做微调。
@@ -580,7 +753,7 @@ export async function importCharacterBundle(
   bundle: CharacterBundleV5,
   mode: 'new' | 'overwrite',
   opts: { wechatAccountId: string },
-): Promise<{ rootId: string; mode: 'new' | 'overwrite' }> {
+): Promise<CharacterBundleImportResult> {
   bundle = migrateBundlePublicUrls(bundle)
   const wechatAccountId = opts.wechatAccountId.trim()
   if (!wechatAccountId) {
@@ -598,16 +771,35 @@ export async function importCharacterBundle(
 
   if (mode === 'new') {
     const cloned = cloneBundleWithNewIds(bundle, importPlayerIdentityId, wechatAccountId)
+    const finalized = await finalizeCharactersForBundleImport(
+      [cloned.main, ...cloned.npcs],
+      wechatAccountId,
+      importPlayerIdentityId,
+    )
+    const [main, ...npcs] = finalized.characters
+    const linksBeforeSanitize = cloned.links
+    const links = sanitizePlayerNetworkLinksForImport(
+      linksBeforeSanitize,
+      finalized.staleDisplayNames,
+      playerIdentityName,
+    )
+    const addressingHint = buildIdentityAddressingHint(
+      bundle,
+      finalized.staleDisplayNames,
+      playerIdentityName,
+      linksBeforeSanitize,
+      links,
+    )
     if (cloned.worldBackground) {
       await personaDb.upsertWorldBackground(cloned.worldBackground)
     }
-    await personaDb.upsertCharacter(cloned.main)
-    for (const n of cloned.npcs) await personaDb.upsertCharacter(n)
+    await personaDb.upsertCharacter(main)
+    for (const n of npcs) await personaDb.upsertCharacter(n)
     await personaDb.bulkPutRelationships(cloned.relationships)
     for (const g of cloned.graphs) await personaDb.putNetworkGraphView(g)
-    const mainAfter = await personaDb.getCharacter(cloned.main.id)
-    const rootId = mainAfter?.id ?? cloned.newRootId
-    await personaDb.putPlayerNetworkLinks(rootId, cloned.links)
+    const rootId = main?.id ?? cloned.newRootId
+    await personaDb.putPlayerNetworkLinks(rootId, links)
+    await syncImportPlayerIdentityBindings(finalized.characters, importPlayerIdentityId, playerIdentityName)
     await appendImportedCharacterBundleArchive({
       wechatAccountId,
       playerIdentityId: importPlayerIdentityId,
@@ -616,7 +808,8 @@ export async function importCharacterBundle(
       bundle,
     })
     emitWeChatStorageChanged()
-    return { rootId, mode: 'new' }
+    await clearCliqueIdentitySyncAck(rootId)
+    return { rootId, mode: 'new', addressingHint }
   }
 
   const existingMain = await personaDb.getCharacter(bundle.rootCharacterId)
@@ -633,17 +826,35 @@ export async function importCharacterBundle(
     await personaDb.upsertWorldBackground(bundle.worldBackground)
   }
 
-  await personaDb.upsertCharacter(
+  const stamped = [
     stampBundleCharactersForAccount(bundle.mainCharacter, wechatAccountId, importPlayerIdentityId),
+    ...bundle.npcs.map((n) => stampBundleCharactersForAccount(n, wechatAccountId, importPlayerIdentityId)),
+  ]
+  const finalized = await finalizeCharactersForBundleImport(
+    stamped,
+    wechatAccountId,
+    importPlayerIdentityId,
   )
-  for (const n of bundle.npcs) {
-    await personaDb.upsertCharacter(
-      stampBundleCharactersForAccount(n, wechatAccountId, importPlayerIdentityId),
-    )
+  for (const ch of finalized.characters) {
+    await personaDb.upsertCharacter(ch)
   }
   await personaDb.bulkPutRelationships(bundle.relationships.filter((r) => !r.isPlayerIdentity))
   for (const g of bundle.networkGraphViews) await personaDb.putNetworkGraphView(g)
-  await personaDb.putPlayerNetworkLinks(bundle.rootCharacterId, bundle.playerNetworkLinks)
+  const linksBeforeSanitize = bundle.playerNetworkLinks
+  const sanitizedLinks = sanitizePlayerNetworkLinksForImport(
+    linksBeforeSanitize,
+    finalized.staleDisplayNames,
+    playerIdentityName,
+  )
+  const addressingHint = buildIdentityAddressingHint(
+    bundle,
+    finalized.staleDisplayNames,
+    playerIdentityName,
+    linksBeforeSanitize,
+    sanitizedLinks,
+  )
+  await personaDb.putPlayerNetworkLinks(bundle.rootCharacterId, sanitizedLinks)
+  await syncImportPlayerIdentityBindings(finalized.characters, importPlayerIdentityId, playerIdentityName)
   await personaDb.replaceWeChatChatMessagesByCharacterIds([...cliqueOld], [])
 
   await appendImportedCharacterBundleArchive({
@@ -655,5 +866,6 @@ export async function importCharacterBundle(
   })
 
   emitWeChatStorageChanged()
-  return { rootId: bundle.rootCharacterId, mode: 'overwrite' }
+  await clearCliqueIdentitySyncAck(bundle.rootCharacterId)
+  return { rootId: bundle.rootCharacterId, mode: 'overwrite', addressingHint }
 }

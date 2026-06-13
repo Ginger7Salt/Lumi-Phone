@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { Character } from '../types'
 import { PlaceholderAwareTextarea } from '../characterFieldPlaceholderPreview'
+import { MOMENTS_COVER_ASPECT, resolveMomentsCoverDisplayUrl } from '../../../../../components/moments/momentsCoverDefaults'
 
 export function WeChatProfileTab({
   data,
@@ -36,16 +37,24 @@ export function WeChatProfileTab({
         className="mx-auto max-w-md overflow-y-auto rounded-[16px] border border-neutral-200/80 bg-[#F7F7F7]"
         style={{ maxHeight: 'min(72vh, 560px)' }}
       >
-        <div className="relative h-40 w-full overflow-hidden bg-neutral-300">
+        <div
+          className="relative w-full overflow-hidden bg-neutral-300"
+          style={{ aspectRatio: `${MOMENTS_COVER_ASPECT} / 1` }}
+        >
           {data.momentsCoverUrl?.trim() ? (
             <img
-              src={data.momentsCoverUrl}
+              src={resolveMomentsCoverDisplayUrl(data.momentsCoverUrl)}
               alt=""
               className="h-[calc(100%+24px)] w-full object-cover will-change-transform"
               style={{ transform: `translateY(${-coverScroll * 0.35}px)` }}
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-[12px] text-neutral-500">朋友圈封面 · 未设置</div>
+            <img
+              src={resolveMomentsCoverDisplayUrl()}
+              alt=""
+              className="h-[calc(100%+24px)] w-full object-cover will-change-transform"
+              style={{ transform: `translateY(${-coverScroll * 0.35}px)` }}
+            />
           )}
         </div>
 
@@ -134,7 +143,7 @@ export function WeChatProfileTab({
         </div>
         <div>
           <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-neutral-400">Moments · 朋友圈封面</span>
-          <p className="mt-1 text-[11px] font-light text-neutral-500">URL 与本地裁剪二选一；列表内预览带轻视差滚动。</p>
+          <p className="mt-1 text-[11px] font-light text-neutral-500">URL 与本地裁剪二选一；比例 {MOMENTS_COVER_ASPECT}:1。</p>
           <input
             value={data.momentsCoverUrl?.startsWith('data:') ? '' : (data.momentsCoverUrl ?? '')}
             onChange={(e) => setField('momentsCoverUrl', e.target.value)}
@@ -148,7 +157,7 @@ export function WeChatProfileTab({
               className="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-4 py-2 text-[12px] text-[#1C1C1E] transition-colors hover:bg-neutral-50"
               onClick={() => momentsCoverFileRef.current?.click()}
             >
-              上传 · 1:1 裁剪
+              上传 · {MOMENTS_COVER_ASPECT}:1 裁剪
               <ChevronRight className="size-3.5 opacity-40" />
             </button>
             {data.momentsCoverUrl?.trim() ? (

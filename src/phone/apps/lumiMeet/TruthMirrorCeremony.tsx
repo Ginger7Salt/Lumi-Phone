@@ -265,7 +265,7 @@ export function TruthMirrorCeremonyPortal({
   if (!el) return null
 
   const tripletReady = triplet.every((t) => t.trim().length > 0)
-  const keyboardInsetPx = useKeyboardInset()
+  const keyboardInsetPx = useKeyboardInset().padPx
 
   const fanAngles: [number, number, number] = [-14, 0, 14]
   const fanY: [number, number, number] = [10, 0, 10]

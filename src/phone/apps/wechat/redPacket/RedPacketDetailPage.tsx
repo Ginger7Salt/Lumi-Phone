@@ -99,12 +99,7 @@ export function RedPacketDetailPage({
         </div>
 
         <p className="mt-10 text-center text-[11px] font-medium tracking-[0.24em] text-[#9a958c]">AMOUNT</p>
-        <p
-          className="mt-2 text-center text-[48px] font-semibold tabular-nums leading-none text-[#1c1c1c]"
-          style={{
-            fontFamily: 'ui-monospace, "DIN Alternate", "SF Pro Display", system-ui, sans-serif',
-          }}
-        >
+        <p className="mt-2 text-center text-[48px] tabular-nums leading-none text-[#1c1c1c]">
           ¥{amountYuan.toFixed(2)}
         </p>
 

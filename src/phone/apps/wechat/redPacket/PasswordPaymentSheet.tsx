@@ -85,10 +85,7 @@ export function PasswordPaymentSheet({
             <div className="mb-1 text-center text-[11px] font-medium tracking-[0.2em] text-[#9a9a9a]">SECURE PAY</div>
             <div className="text-center text-[13px] text-[#666]">支付金额 · AMOUNT</div>
             <div
-              className="mt-2 text-center text-[32px] font-semibold tabular-nums text-black"
-              style={{
-                fontFamily: 'ui-rounded, system-ui, "SF Pro Display", "DIN Alternate", sans-serif',
-              }}
+              className="mt-2 text-center text-[32px] tabular-nums text-black"
             >
               ¥{fmt}
             </div>

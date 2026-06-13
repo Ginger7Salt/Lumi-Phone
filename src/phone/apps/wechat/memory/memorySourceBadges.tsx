@@ -8,6 +8,8 @@ export type ParsedMemoryWithSources = {
   hasLinkedOfflineTag: boolean
   /** 来自遇见 App 临时邂逅会话的总结 */
   hasMeetTag: boolean
+  /** 来自微信朋友圈刻录 */
+  hasMomentTag: boolean
   body: string
 }
 
@@ -19,6 +21,7 @@ export function parseMemorySourcePrefix(raw: string): ParsedMemoryWithSources {
   let hasOfflineTag = false
   let hasLinkedOfflineTag = false
   let hasMeetTag = false
+  let hasMomentTag = false
   if (s.startsWith('[遇见]')) {
     hasMeetTag = true
     s = s.slice('[遇见]'.length)
@@ -42,16 +45,27 @@ export function parseMemorySourcePrefix(raw: string): ParsedMemoryWithSources {
     hasLinkedOfflineTag = true
     s = s.slice('[关联线下]'.length)
   }
+  if (s.startsWith('[朋友圈]')) {
+    hasMomentTag = true
+    s = s.slice('[朋友圈]'.length)
+  }
   const body = s.replace(/^\s+/, '')
-  return { hasOnlineTag, hasGroupChatTag, hasOfflineTag, hasLinkedOfflineTag, hasMeetTag, body }
+  return { hasOnlineTag, hasGroupChatTag, hasOfflineTag, hasLinkedOfflineTag, hasMeetTag, hasMomentTag, body }
 }
 
 /** 按与 `parseMemorySourcePrefix` 相同顺序拼接前缀与正文（用于编辑后写回） */
+type MemorySourcePrefixFlags = Pick<
+  ParsedMemoryWithSources,
+  | 'hasOnlineTag'
+  | 'hasGroupChatTag'
+  | 'hasOfflineTag'
+  | 'hasLinkedOfflineTag'
+  | 'hasMeetTag'
+  | 'hasMomentTag'
+>
+
 export function composeMemoryWithSourcePrefix(
-  flags: Pick<
-    ParsedMemoryWithSources,
-    'hasOnlineTag' | 'hasGroupChatTag' | 'hasOfflineTag' | 'hasLinkedOfflineTag' | 'hasMeetTag'
-  >,
+  flags: Partial<MemorySourcePrefixFlags>,
   body: string,
 ): string {
   let s = ''
@@ -60,6 +74,7 @@ export function composeMemoryWithSourcePrefix(
   if (flags.hasGroupChatTag) s += '[群聊]'
   if (flags.hasOfflineTag) s += '[线下]'
   if (flags.hasLinkedOfflineTag) s += '[关联线下]'
+  if (flags.hasMomentTag) s += '[朋友圈]'
   const b = String(body ?? '').replace(/^\s+/, '')
   return s + b
 }
@@ -111,6 +126,9 @@ export function MemorySourceLegendStrip({ className }: { className?: string }) {
       </span>
       <span className={chip} style={BADGE_MEET}>
         遇见
+      </span>
+      <span className={chip} style={{ background: '#374151', color: '#ffffff' }}>
+        朋友圈
       </span>
     </div>
   )

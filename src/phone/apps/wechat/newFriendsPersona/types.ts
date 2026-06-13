@@ -80,6 +80,12 @@ export type PlayerIdentityLinkMeta = {
   wechatAccountId: string
 }
 
+export type CharacterProfileImageHistoryEntry = {
+  id: string
+  url: string
+  savedAt: number
+}
+
 export type Character = {
   id: string
   createdAt: number
@@ -108,6 +114,14 @@ export type Character = {
   wechatRegion?: string
   /** 微信朋友圈顶部背景图（dataURL 或 http(s) URL） */
   momentsCoverUrl?: string
+  /** 角色首次有效微信头像（供恢复「原始头像」） */
+  originalAvatarUrl?: string
+  /** 曾用过的微信头像（不含当前；用序号或 id 恢复） */
+  avatarHistory?: CharacterProfileImageHistoryEntry[]
+  /** 角色首次有效朋友圈背景（非默认图） */
+  originalMomentsCoverUrl?: string
+  /** 曾用过的朋友圈背景 */
+  momentsCoverHistory?: CharacterProfileImageHistoryEntry[]
   worldBooks: WorldBook[]
   /** 关联的世界背景 id（IndexedDB `worldBackgrounds`，缺省为预设「现代都市」） */
   worldBackgroundId?: string
@@ -185,6 +199,24 @@ export type ChatConversationSettingsRow = {
   stickerRoundTriggerPercent?: number
   /** 角色每轮至少发 1 条语音的目标概率 0–100；缺省 = 不覆写系统协议（语音默认约 30%） */
   voiceRoundTriggerPercent?: number
+  /** 角色每轮至少发 1 条 AI 配图（`[图片]`）的目标概率 0–100；缺省 = 0%（不发，用户直接要求除外） */
+  imageRoundTriggerPercent?: number
+  /** 每次发图最少张数 1–9；缺省 1 */
+  imageRoundCountMin?: number
+  /** 每次发图最多张数 1–9；缺省 1 */
+  imageRoundCountMax?: number
+  /** 角色私聊：是否开启主动消息（按频率在后台也可能发来新消息） */
+  proactiveMessageEnabled?: boolean
+  /** 主动消息间隔（秒）；缺省 7200（2 小时）；最短 30 秒 */
+  proactiveMessageIntervalSeconds?: number
+  /** @deprecated 旧版按分钟存储，读取时自动换算为秒 */
+  proactiveMessageIntervalMinutes?: number
+  /** 上次主动消息触发时间（真实毫秒），用于调度 */
+  proactiveMessageLastFiredAtMs?: number
+  /** 灵动间隔：开启后每次随机等待，不固定频率 */
+  proactiveMessageVariableIntervalEnabled?: boolean
+  /** 灵动间隔：当前周期已抽中的等待秒数（下次触达用） */
+  proactiveMessageNextIntervalSeconds?: number
   /** 最后一条消息时间戳，用于会话列表排序（与消息表同步更新） */
   lastMessageTime: number
   updatedAt: number
@@ -278,6 +310,11 @@ export type CharacterBusySettingsRow = {
 export type CharacterTimeSettingsRow = {
   characterId: string
   config: WeChatTimeConfig
+  /**
+   * 是否向模型注入「当前时间点」（含自定义时间/流速）。
+   * 关闭时模型仅根据聊天记录与对话语境推断时段；缺省 true。
+   */
+  timePerceptionEnabled?: boolean
   updatedAt: number
 }
 
@@ -370,8 +407,37 @@ export type GroupChatRow = {
   memberIds?: string[]
 }
 
-/** 长期记忆来源：私聊 / 群聊 / 约会关联 / 遇见临时邂逅 */
-export type CharacterMemoryScope = 'private' | 'group' | 'linked' | 'meet'
+/** 长期记忆来源：私聊 / 群聊 / 约会关联 / 遇见临时邂逅 / 朋友圈刻录 */
+export type CharacterMemoryScope = 'private' | 'group' | 'linked' | 'meet' | 'moment'
+
+/** 朋友圈记忆 UI 复原与侧写备份 */
+export type MomentMemoryPayload = {
+  originalText: string
+  /** 朋友圈发布时间戳（与动态 `timestamp` 一致） */
+  publishedAt?: number
+  location?: string
+  imagesCount: number
+  /** 序列化的点赞与评论摘要（供检索） */
+  interactionsSnapshot: string
+  /** 档案馆「史官旁白」展示用 */
+  socialNarrative?: string
+  /** 互动者侧：来源发布者 */
+  publisherCharacterId?: string
+  publisherDisplayName?: string
+  /** 互动者侧：本角色在该条下的互动摘要 */
+  ownInteractionSummary?: string
+  /** 用户朋友圈：是否置顶 */
+  isPinned?: boolean
+  /** 用户朋友圈：可见范围文案 */
+  visibilityLabel?: string
+  /** 用户朋友圈：隐私模式 */
+  privacyMode?: string
+  /** 用户朋友圈：该条是否 @ 了当前观众角色 */
+  mentionedViewer?: boolean
+}
+
+/** 朋友圈记忆在角色记忆库中的角色：发布者刻录 / 互动者侧写 / 用户动态观众 */
+export type MomentMemoryRole = 'publisher' | 'interactor' | 'viewer'
 
 /** 记忆注入方式：始终进参考 vs 仅关键词命中时注入 */
 export type CharacterMemoryTriggerMode = 'always' | 'keyword'
@@ -421,6 +487,18 @@ export type CharacterMemory = {
   memoryEmbedding?: number[]
   /** 与 `memoryEmbedding` 对应的 `buildMemoryEmbedText` 内容哈希，正文或触发词变更后需重算向量 */
   memoryEmbeddingHash?: string
+  /** memoryScope === 'moment'：来源朋友圈动态 id，用于 upsert */
+  momentSourceMomentId?: string
+  /** 朋友圈专属元数据（高定 UI 复原） */
+  momentPayload?: MomentMemoryPayload
+  /** 朋友圈记忆角色：缺省为发布者（兼容旧数据） */
+  momentMemoryRole?: MomentMemoryRole
+  /** 互动者记忆：来源发布者 characterId */
+  momentPublisherCharacterId?: string
+  /** 发布者记忆：曾在此条朋友圈点赞/评论过的角色 id */
+  momentLinkedInteractorCharIds?: string[]
+  /** 用户朋友圈写入观众角色记忆库；不在记忆管理页展示 */
+  momentUserAuthored?: boolean
 }
 
 /** 全局记忆设置（IndexedDB `memorySettings`，主键 id 固定为 `default`） */

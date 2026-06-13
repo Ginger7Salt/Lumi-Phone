@@ -4,7 +4,6 @@ import {
   ChevronRight,
   CreditCard,
   Fingerprint,
-  Image as ImageIcon,
   Settings,
   Smile,
   User,
@@ -55,7 +54,7 @@ export type WeChatMeInstagramProfileProps = {
   className?: string
 }
 
-export type MenuRowId = 'favorites' | 'memory' | 'identity' | 'album' | 'card' | 'emoji' | 'settings'
+export type MenuRowId = 'favorites' | 'memory' | 'identity' | 'card' | 'emoji' | 'settings'
   | 'persona'
 
 type MenuRow = {
@@ -70,7 +69,6 @@ const MENU_ROWS: MenuRow[] = [
   { id: 'memory', label: '记忆', en: 'Memory', icon: BookOpen },
   { id: 'identity', label: '身份', en: 'Identity', icon: User },
   { id: 'persona', label: '角色人设', en: 'Persona', icon: Fingerprint },
-  { id: 'album', label: '相册', en: 'Album', icon: ImageIcon },
   { id: 'card', label: '卡包', en: 'Cards', icon: CreditCard },
   { id: 'emoji', label: '表情', en: 'Stickers', icon: Smile },
   { id: 'settings', label: '设置', en: 'Settings', icon: Settings },

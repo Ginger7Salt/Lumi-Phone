@@ -50,6 +50,7 @@ export async function upsertMeetArchiveMemoryEntry(params: {
         hasGroupChatTag: false,
         hasOfflineTag: false,
         hasLinkedOfflineTag: false,
+        hasMomentTag: false,
       }
   const content = composeMemoryWithSourcePrefix(
     { ...flags, hasMeetTag: true },

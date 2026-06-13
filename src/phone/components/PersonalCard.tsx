@@ -138,7 +138,7 @@ export function PersonalCard({ interactive = true }: PersonalCardProps) {
                   <span
                     key={`${idx}-${p.value}`}
                     style={{
-                      fontFamily: 'var(--wx-num-font, var(--phone-font))',
+                      fontFamily: 'var(--wx-num-font, var(--phone-num-font))',
                       fontVariantNumeric: 'tabular-nums lining-nums',
                       fontFeatureSettings: '"tnum" 1, "lnum" 1',
                       display: 'inline-block',

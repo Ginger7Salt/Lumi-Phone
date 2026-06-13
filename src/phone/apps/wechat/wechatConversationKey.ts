@@ -6,6 +6,13 @@ import { resolvePrivateChatSessionPlayerIdentityId } from './wechatCharacterPlay
  */
 export const WECHAT_LUMI_PEER_CHARACTER_ID = 'wechat-lumi-assistant'
 
+/** 用户本人备忘录私聊：IndexedDB 会话占位 characterId（与通讯录联系人 id 一致） */
+export const WECHAT_SELF_PEER_CHARACTER_ID = 'wechat-self-account'
+
+export function isWechatSelfMemoPeerCharacterId(characterId: string): boolean {
+  return characterId.trim() === WECHAT_SELF_PEER_CHARACTER_ID
+}
+
 /** 群成员表里表示「当前用户」的 charId（非 IndexedDB 角色 id） */
 export const WECHAT_GROUP_USER_CHAR_ID = '__wx_group_user__'
 
@@ -220,4 +227,67 @@ export function parseGroupIdFromConversationKey(conversationKey: string): string
   if (idx <= 0) return null
   const gid = rest.slice(0, idx).trim()
   return gid || null
+}
+
+type WeChatStorageConversationIdentity =
+  | { kind: 'private'; characterId: string; sessionPlayerId: string }
+  | { kind: 'group'; groupId: string; sessionPlayerId: string }
+
+function resolveWeChatStorageConversationIdentity(conversationKey: string): WeChatStorageConversationIdentity | null {
+  const k = conversationKey.trim()
+  if (!k) return null
+
+  const accountPrivate = parseWechatAccountPrivateConversationKey(k)
+  if (accountPrivate) {
+    return {
+      kind: 'private',
+      characterId: accountPrivate.characterId,
+      sessionPlayerId: accountPrivate.sessionPlayerId,
+    }
+  }
+
+  const legacyPrivate = parsePrivateWeChatConversationCharacterAndSession(k)
+  if (legacyPrivate && !isWechatGroupConversationKey(k)) {
+    return {
+      kind: 'private',
+      characterId: legacyPrivate.characterId,
+      sessionPlayerId: legacyPrivate.sessionPlayerId,
+    }
+  }
+
+  const accountGroup = parseWechatAccountGroupConversationKey(k)
+  if (accountGroup) {
+    return {
+      kind: 'group',
+      groupId: accountGroup.groupId,
+      sessionPlayerId: accountGroup.sessionPlayerId,
+    }
+  }
+
+  const legacyGroupId = parseGroupIdFromConversationKey(k)
+  if (legacyGroupId) {
+    const rest = k.slice(GROUP_CONV_PREFIX.length)
+    const idx = rest.lastIndexOf('::')
+    const sessionPlayerId = idx > 0 ? (rest.slice(idx + 2).trim() || '__none__') : '__none__'
+    return { kind: 'group', groupId: legacyGroupId, sessionPlayerId }
+  }
+
+  return null
+}
+
+/**
+ * 无马甲旧键升级为 `wxapriv:` / `wxagrp:` 等 rekey 前后：逻辑上仍是同一聊天室。
+ * 用于避免逐条露出队列在键名变更时被误 flush 或清空列表。
+ */
+export function isSameWeChatStorageConversationMigration(oldKey: string, newKey: string): boolean {
+  const a = resolveWeChatStorageConversationIdentity(oldKey)
+  const b = resolveWeChatStorageConversationIdentity(newKey)
+  if (!a || !b || a.kind !== b.kind) return false
+  if (a.kind === 'private' && b.kind === 'private') {
+    return a.characterId === b.characterId && a.sessionPlayerId === b.sessionPlayerId
+  }
+  if (a.kind === 'group' && b.kind === 'group') {
+    return a.groupId === b.groupId && a.sessionPlayerId === b.sessionPlayerId
+  }
+  return false
 }

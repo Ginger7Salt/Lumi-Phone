@@ -38,8 +38,15 @@ import {
   WeChatContactsInstagram,
 } from '../../../components/WeChatContactsInstagram'
 import { WeChatDiscoverInstagram } from '../../../components/WeChatDiscoverInstagram'
+import {
+  MomentsNoticeRuntime,
+  useMomentsInteractionUnreadCount,
+} from '../../../components/moments/MomentsNoticeRuntime'
+import { mockContactsToMomentRefs } from '../../../components/moments/publishMomentUtils'
+import { UserMomentsArchive } from '../../../components/moments/UserMomentsArchive'
 import type { MockContact } from '../../../components/anonymousQa/types'
 import type { AnonymousQaWechatContext } from '../../../components/anonymousQa/buildAnonymousQaPersonaContext'
+import type { MomentParticipantProfilePayload } from '../../../components/moments/momentProfileNavigation'
 import { DatingSystem } from './dating/DatingSystem'
 import { NewFriendsPersonaApp } from './newFriendsPersona/NewFriendsPersonaApp'
 import type { FriendRequest } from './newFriendsPersona/friendRequestTypes'
@@ -87,9 +94,10 @@ import { WeChatConsoleFloatingPanel } from './WeChatConsoleFloatingPanel'
 import { WeChatConsoleProvider, useWeChatConsole } from './WeChatConsoleContext'
 import { MemoryManagementApp } from './memory/MemoryManagementApp'
 import { emitWeChatStorageChanged, personaDb } from './newFriendsPersona/idb'
-import { formatWeChatMessagesTabPreviewFromStoredMessageContent } from './wechatThreadPreviewText'
+import { formatWeChatMessagesTabPreviewFromStoredMessage } from './wechatThreadPreviewText'
 import {
   WECHAT_LUMI_PEER_CHARACTER_ID,
+  WECHAT_SELF_PEER_CHARACTER_ID,
   resolvePrivateChatSessionPlayerIdentityId,
   resolveGroupWeChatStorageConversationKey,
   resolvePrivateWeChatStorageConversationKey,
@@ -168,6 +176,7 @@ import { WeChatTimeSettingsScreen } from './settings/WeChatTimeSettingsScreen'
 import { WeChatSettingsStubScreen } from './settings/WeChatSettingsStubScreen'
 import { AccountSecurityPage } from './settings/accountSecurity/AccountSecurityPage'
 import { useWeChatCurrentTime } from './time/useWeChatCurrentTime'
+import { isCharacterTimePerceptionEnabled } from './time/wechatTimeUtils'
 import { WalletCardsPage } from './wallet/WalletCardsPage'
 import { AffectionPayPage } from './wallet/AffectionPayPage'
 import { walletSpend } from './wallet/walletMockStore'
@@ -211,7 +220,11 @@ const WECHAT_APPEARANCE_GUIDE_SEEN_KEY = 'lumi-wechat-appearance-guide-seen-v1'
 type TabId = 'messages' | 'contacts' | 'dates' | 'discover' | 'profile'
 
 /** 当前打开的会话：Lumi 小助手、私聊人设角色，或群聊 */
-type WxActiveChat = { kind: 'lumi' } | { kind: 'persona'; characterId: string } | { kind: 'group'; groupId: string }
+type WxActiveChat =
+  | { kind: 'lumi' }
+  | { kind: 'self' }
+  | { kind: 'persona'; characterId: string }
+  | { kind: 'group'; groupId: string }
 
 /** 红包详情导航载荷（与 ChatRoom.onNavigateRedPacketDetail 对齐） */
 type WxRedPacketDetailPayload = {
@@ -227,6 +240,27 @@ type WxRedPacketDetailPayload = {
   /** 是否已拆；false 为只读详情（如本人发出的待对方领取） */
   opened: boolean
 }
+
+type WxContactProfileReturnTo =
+  | { mode: 'tabs-contacts' }
+  | { mode: 'chat'; chat: WxActiveChat; reopenChatSettings: boolean }
+  | { mode: 'moments-feed' }
+  | {
+      mode: 'user-moments-archive'
+      userId: string
+      coverNickname?: string
+      returnTo: WxUserMomentsArchiveReturnTo
+    }
+
+type WxUserMomentsArchiveReturnTo =
+  | { mode: 'tabs-profile' }
+  | {
+      mode: 'contact-profile'
+      target: { kind: 'lumi' } | { kind: 'self' } | { kind: 'persona'; characterId: string }
+      remarkName: string
+      avatarUrl?: string
+      returnTo: WxContactProfileReturnTo
+    }
 
 type WxRoute =
   | { name: 'tabs'; tab: TabId }
@@ -258,39 +292,31 @@ type WxRoute =
   | { name: 'memory-manage' }
   | {
       name: 'contact-profile'
-      target: { kind: 'lumi' } | { kind: 'persona'; characterId: string }
+      target: { kind: 'lumi' } | { kind: 'self' } | { kind: 'persona'; characterId: string }
       remarkName: string
       avatarUrl?: string
-      returnTo:
-        | { mode: 'tabs-contacts' }
-        | { mode: 'chat'; chat: WxActiveChat; reopenChatSettings: boolean }
+      returnTo: WxContactProfileReturnTo
     }
   | {
       name: 'contact-profile-settings'
-      target: { kind: 'lumi' } | { kind: 'persona'; characterId: string }
+      target: { kind: 'lumi' } | { kind: 'self' } | { kind: 'persona'; characterId: string }
       remarkName: string
       avatarUrl?: string
-      returnTo:
-        | { mode: 'tabs-contacts' }
-        | { mode: 'chat'; chat: WxActiveChat; reopenChatSettings: boolean }
+      returnTo: WxContactProfileReturnTo
     }
   | {
       name: 'contact-recommend-select'
       target: { kind: 'persona'; characterId: string }
       remarkName: string
       avatarUrl?: string
-      returnTo:
-        | { mode: 'tabs-contacts' }
-        | { mode: 'chat'; chat: WxActiveChat; reopenChatSettings: boolean }
+      returnTo: WxContactProfileReturnTo
     }
   | {
       name: 'contact-complaint'
       target: { kind: 'persona'; characterId: string }
       remarkName: string
       avatarUrl?: string
-      returnTo:
-        | { mode: 'tabs-contacts' }
-        | { mode: 'chat'; chat: WxActiveChat; reopenChatSettings: boolean }
+      returnTo: WxContactProfileReturnTo
     }
   /** 发红包独立页：完成后回到 `chat` */
   | { name: 'red-packet-send'; chat: WxActiveChat }
@@ -303,10 +329,21 @@ type WxRoute =
   | { name: 'add-friend' }
   | { name: 'add-friend-stranger'; characterId: string }
   | { name: 'add-friend-request-form'; characterId: string }
+  | {
+      name: 'user-moments-archive'
+      userId: string
+      returnTo: WxUserMomentsArchiveReturnTo
+    }
 
-/** 红包/转账等：IndexedDB 会话 peer characterId（含群占位 `wxgrp:`） */
+function wxContactProfileTarget(payload: MomentParticipantProfilePayload) {
+  if (payload.kind === 'lumi') return { kind: 'lumi' as const }
+  if (payload.kind === 'self') return { kind: 'self' as const }
+  return { kind: 'persona' as const, characterId: payload.characterId!.trim() }
+}
+
 function wxWalletPeerCharacterId(chat: WxActiveChat): string {
   if (chat.kind === 'lumi') return WECHAT_LUMI_PEER_CHARACTER_ID
+  if (chat.kind === 'self') return WECHAT_SELF_PEER_CHARACTER_ID
   if (chat.kind === 'persona') return chat.characterId
   return wechatGroupPeerCharacterId(chat.groupId)
 }
@@ -334,7 +371,13 @@ function wxChatTargetForRedPacket(chat: WxActiveChat): WxChatTarget {
   if (chat.kind === 'group') {
     return { kind: 'persona', characterId: wechatGroupPeerCharacterId(chat.groupId) }
   }
-  return chat
+  if (chat.kind === 'self') {
+    return { kind: 'persona', characterId: WECHAT_SELF_PEER_CHARACTER_ID }
+  }
+  if (chat.kind === 'persona') {
+    return chat
+  }
+  return { kind: 'lumi' }
 }
 
 const transition = { duration: 0.26, ease: [0.22, 1, 0.36, 1] as const }
@@ -1023,6 +1066,7 @@ function TabBar({
   onChange,
   messagesUnreadCount = 0,
   contactsUnreadCount = 0,
+  discoverUnreadCount = 0,
 }: {
   active: TabId
   onChange: (id: TabId) => void
@@ -1030,6 +1074,8 @@ function TabBar({
   messagesUnreadCount?: number
   /** 「通讯录」Tab 未读数（新的朋友） */
   contactsUnreadCount?: number
+  /** 「发现」Tab 未读数（朋友圈互动消息） */
+  discoverUnreadCount?: number
 }) {
   const { state } = useCustomization()
   const { wechatTheme } = state
@@ -1062,7 +1108,14 @@ function TabBar({
           const labelColor = isActive
             ? it.labelActiveColor?.trim() || wechatTheme.tabBarLabelActive
             : it.labelInactiveColor?.trim() || wechatTheme.tabBarLabelInactive
-          const badgeCount = it.id === 'messages' ? messagesUnreadCount : it.id === 'contacts' ? contactsUnreadCount : 0
+          const badgeCount =
+            it.id === 'messages'
+              ? messagesUnreadCount
+              : it.id === 'contacts'
+                ? contactsUnreadCount
+                : it.id === 'discover'
+                  ? discoverUnreadCount
+                  : 0
           const showBadge = badgeCount > 0
           const iconNode = it.iconUrl?.trim() ? (
             <img
@@ -1088,8 +1141,11 @@ function TabBar({
                 <span className="relative inline-flex shrink-0">
                   {iconNode}
                   <span
-                    className="pointer-events-none absolute -right-1 -top-1 z-[1] flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full px-[5px] text-[10px] font-semibold leading-none text-white"
-                    style={{ background: '#fa5151', boxShadow: '0 0 0 1.5px var(--wx-surface, #fff)' }}
+                    className="pointer-events-none absolute -right-1 -top-1 z-[1] flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full px-[5px] text-[10px] font-semibold leading-none tabular-nums text-white"
+                    style={{
+                      background: '#fa5151',
+                      boxShadow: '0 0 0 1.5px var(--wx-surface, #fff)',
+                    }}
                   >
                     {badgeCount > 99 ? '99+' : badgeCount}
                   </span>
@@ -1117,6 +1173,18 @@ type MessagesThreadRow =
   | {
       key: 'lumi'
       kind: 'lumi'
+      conversationKey: string
+      peerCharacterId: string
+      isPinned: boolean
+      name: string
+      time: string
+      preview: string
+      avatarUrl: string
+      unread: number
+    }
+  | {
+      key: 'self'
+      kind: 'self'
       conversationKey: string
       peerCharacterId: string
       isPinned: boolean
@@ -1398,9 +1466,11 @@ function MessageThreadListItem({
             onOpenChat(
               t.kind === 'lumi'
                 ? { kind: 'lumi' }
-                : t.kind === 'group'
-                  ? { kind: 'group', groupId: t.groupId }
-                  : { kind: 'persona', characterId: t.characterId },
+                : t.kind === 'self'
+                  ? { kind: 'self' }
+                  : t.kind === 'group'
+                    ? { kind: 'group', groupId: t.groupId }
+                    : { kind: 'persona', characterId: t.characterId },
             )
           }}
           onContextMenu={(e) => e.preventDefault()}
@@ -3647,9 +3717,15 @@ function WeChatAppInner({ onBack }: Props) {
     accounts,
     appendPersonaContactsForCurrentAccount,
     updatePhoneProfile,
+    updateMomentsCoverUrl,
     profile: wechatAccountProfile,
   } = useWechatStore()
   const { state, wechatThemeStyle, removeWeChatPersonaContactsByCharacterIds } = useCustomization()
+  const currentAccountMomentsCoverUrl = useMemo(() => {
+    const acc = accounts.find((a) => a.accountId === currentAccountId)
+    return acc?.momentsCoverUrl
+  }, [accounts, currentAccountId])
+
   const wechatEditProfile = useMemo(
     () =>
       wechatAccountProfile
@@ -3663,6 +3739,26 @@ function WeChatAppInner({ onBack }: Props) {
   const { appPageStyles, wechatTheme } = state
   const pageStyle = appPageStyles.wechat
 
+  const weChatSelfAccountContact = useMemo(() => {
+    const nickname =
+      wechatAccountProfile?.nickname?.trim() || state.profile.displayName?.trim() || '我'
+    const avatarUrl =
+      resolveCharacterAvatarUrl({
+        avatarUrl: wechatAccountProfile?.avatarUrl ?? state.profile.avatarImageUrl,
+      }) || undefined
+    return {
+      id: WECHAT_SELF_PEER_CHARACTER_ID,
+      remarkName: nickname,
+      avatarUrl,
+      tag: '我',
+    }
+  }, [
+    state.profile.avatarImageUrl,
+    state.profile.displayName,
+    wechatAccountProfile?.avatarUrl,
+    wechatAccountProfile?.nickname,
+  ])
+
   const weChatMergedContacts = useMemo((): ComponentProps<typeof WeChatContactsInstagram>['contacts'] => {
     const persona = state.wechatPersonaContacts.map((c) => ({
       id: c.id,
@@ -3670,8 +3766,8 @@ function WeChatAppInner({ onBack }: Props) {
       avatarUrl: resolveCharacterAvatarUrl({ avatarUrl: c.avatarUrl }) || undefined,
       isStarred: c.isStarred,
     }))
-    return [...persona, ...WECHAT_DEFAULT_CONTACTS]
-  }, [state.wechatPersonaContacts])
+    return [weChatSelfAccountContact, ...persona, ...WECHAT_DEFAULT_CONTACTS]
+  }, [state.wechatPersonaContacts, weChatSelfAccountContact])
 
   // 记忆管理需要用 characterId 作为主键，否则会出现“聊天可读到记忆，但记忆页显示 0 条”
   const memoryManageContacts = useMemo((): ComponentProps<typeof WeChatContactsInstagram>['contacts'] => {
@@ -3723,6 +3819,7 @@ function WeChatAppInner({ onBack }: Props) {
 
   const [hideDatingChrome, setHideDatingChrome] = useState(false)
   const [discoverMomentsOpen, setDiscoverMomentsOpen] = useState(false)
+  const [discoverRestoreView, setDiscoverRestoreView] = useState<'moments' | null>(null)
 
   useEffect(() => {
     const onNavigateListen = () => setRoute({ name: 'tabs', tab: 'discover' })
@@ -3827,6 +3924,9 @@ function WeChatAppInner({ onBack }: Props) {
     if (chat.kind === 'lumi') {
       return weChatMergedContacts?.find((c) => c.id === 'wechat-lumi-assistant') ?? WECHAT_LUMI_ASSISTANT_CONTACT
     }
+    if (chat.kind === 'self') {
+      return weChatSelfAccountContact
+    }
     if (chat.kind === 'group') {
       const g = activeGroupRow
       const count = g?.members.length ?? 0
@@ -3847,9 +3947,10 @@ function WeChatAppInner({ onBack }: Props) {
       }
     }
     return { id: row.id, remarkName: row.remarkName, avatarUrl: row.avatarUrl }
-  }, [wxDockChat, activeGroupRow, weChatMergedContacts, state.wechatPersonaContacts])
+  }, [wxDockChat, activeGroupRow, weChatMergedContacts, weChatSelfAccountContact, state.wechatPersonaContacts])
 
-  const chatHeaderShowPsycheRadar = route.name === 'chat' && wxDockChat?.kind !== 'group'
+  const chatHeaderShowPsycheRadar =
+    route.name === 'chat' && wxDockChat?.kind !== 'group' && wxDockChat?.kind !== 'self'
 
   useEffect(() => {
     const layer = wxDockChat
@@ -3918,6 +4019,7 @@ function WeChatAppInner({ onBack }: Props) {
     const layer = wxDockChat
     if (!layer) return null
     if (layer.kind === 'lumi') return WECHAT_LUMI_PEER_CHARACTER_ID
+    if (layer.kind === 'self') return WECHAT_SELF_PEER_CHARACTER_ID
     if (layer.kind === 'group') return wechatGroupPeerCharacterId(layer.groupId)
     return layer.characterId
   }, [wxDockChat])
@@ -3927,7 +4029,7 @@ function WeChatAppInner({ onBack }: Props) {
   const chatRoomPersonaCharacterId = useMemo(() => {
     const layer = wxDockChat
     if (!layer) return null
-    if (layer.kind === 'group') return null
+    if (layer.kind === 'group' || layer.kind === 'self') return null
     if (layer.kind === 'persona') return layer.characterId
     return lumiBindingPersonaCharacterId
   }, [wxDockChat, lumiBindingPersonaCharacterId])
@@ -3966,6 +4068,45 @@ function WeChatAppInner({ onBack }: Props) {
       apiConfig,
     }
   }, [apiConfig, currentAccountId, playerIdentityId, state.profile.displayName])
+
+  const momentContactsForNotices = useMemo(
+    () => mockContactsToMomentRefs(anonymousQnaContacts),
+    [anonymousQnaContacts],
+  )
+  const momentsInteractionUnreadCount = useMomentsInteractionUnreadCount()
+  const momentsDisplayName =
+    wechatAccountProfile?.nickname?.trim() || state.profile.displayName?.trim() || '我'
+
+  const openContactProfileFromMomentsFeed = useCallback((payload: MomentParticipantProfilePayload) => {
+    setDiscoverRestoreView('moments')
+    setRoute({
+      name: 'contact-profile',
+      target: wxContactProfileTarget(payload),
+      remarkName: payload.remarkName,
+      avatarUrl: payload.avatarUrl,
+      returnTo: { mode: 'moments-feed' },
+    })
+  }, [])
+
+  const openContactProfileFromUserMomentsArchive = useCallback(
+    (payload: MomentParticipantProfilePayload) => {
+      if (route.name !== 'user-moments-archive') return
+      setRoute({
+        name: 'contact-profile',
+        target: wxContactProfileTarget(payload),
+        remarkName: payload.remarkName,
+        avatarUrl: payload.avatarUrl,
+        returnTo: {
+          mode: 'user-moments-archive',
+          userId: route.userId,
+          coverNickname:
+            route.returnTo.mode === 'contact-profile' ? route.returnTo.remarkName : undefined,
+          returnTo: route.returnTo,
+        },
+      })
+    },
+    [route],
+  )
 
   /** 把仍落在「未选身份」(__none__) 下的会话迁到当前身份；随后修复曾误入私聊键的群消息，避免与群会话双份并存。 */
   useEffect(() => {
@@ -4136,7 +4277,7 @@ function WeChatAppInner({ onBack }: Props) {
 
     const buildOne = async (
       conversationKey: string,
-      kind: 'lumi' | 'persona',
+      kind: 'lumi' | 'self' | 'persona',
       name: string,
       avatarUrl: string | undefined,
       characterIdForKey: string,
@@ -4150,12 +4291,16 @@ function WeChatAppInner({ onBack }: Props) {
       })
       const last = recent[recent.length - 1]
       let preview =
-        kind === 'lumi' ? '点击开始与 Lumi 聊天' : `点击开始与 ${name || '角色'} 聊天`
+        kind === 'lumi'
+          ? '点击开始与 Lumi 聊天'
+          : kind === 'self'
+            ? '发消息给自己，当作备忘录'
+            : `点击开始与 ${name || '角色'} 聊天`
       let time = '—'
       const msgTs = last ? last.timestamp : 0
       const sortTs = Math.max(msgTs, st?.lastMessageTime ?? 0)
       if (last) {
-        const pv = formatWeChatMessagesTabPreviewFromStoredMessageContent(last.content)
+        const pv = formatWeChatMessagesTabPreviewFromStoredMessage(last)
         preview = pv.slice(0, 48) + (pv.length > 48 ? '…' : '')
         const d = new Date(last.timestamp)
         time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -4171,6 +4316,25 @@ function WeChatAppInner({ onBack }: Props) {
           time,
           preview,
           avatarUrl: lumiWechatAvatarUrl,
+          unread,
+          sortTs,
+        }
+      }
+      if (kind === 'self') {
+        const selfAvatar =
+          resolveCharacterAvatarUrl({
+            avatarUrl: wechatAccountProfile?.avatarUrl ?? state.profile.avatarImageUrl,
+          }) || ''
+        return {
+          key: 'self',
+          kind: 'self',
+          conversationKey,
+          peerCharacterId: WECHAT_SELF_PEER_CHARACTER_ID,
+          isPinned,
+          name: name || '我',
+          time,
+          preview,
+          avatarUrl: selfAvatar,
           unread,
           sortTs,
         }
@@ -4200,6 +4364,23 @@ function WeChatAppInner({ onBack }: Props) {
         })
       : wechatConversationKey(WECHAT_LUMI_PEER_CHARACTER_ID, pid)
     const lumiRowData = await buildOne(lumiKey, 'lumi', 'Lumi', lumiWechatAvatarUrl, WECHAT_LUMI_PEER_CHARACTER_ID)
+
+    const selfDisplayName =
+      wechatAccountProfile?.nickname?.trim() || state.profile.displayName?.trim() || '我'
+    const selfKey = acc
+      ? await ensureAccountScopedPrivateConversation({
+          wechatAccountId: acc,
+          characterId: WECHAT_SELF_PEER_CHARACTER_ID,
+          appSessionPlayerIdentityId: pid,
+        })
+      : wechatConversationKey(WECHAT_SELF_PEER_CHARACTER_ID, pid)
+    const selfRowData = await buildOne(
+      selfKey,
+      'self',
+      selfDisplayName,
+      wechatAccountProfile?.avatarUrl ?? state.profile.avatarImageUrl,
+      WECHAT_SELF_PEER_CHARACTER_ID,
+    )
 
     const personaRowsData = await Promise.all(
       state.wechatPersonaContacts.map(async (c) => {
@@ -4247,7 +4428,7 @@ function WeChatAppInner({ onBack }: Props) {
         const msgTs = last ? last.timestamp : 0
         const sortTs = Math.max(msgTs, st?.lastMessageTime ?? 0)
         if (last) {
-          const pv = formatWeChatMessagesTabPreviewFromStoredMessageContent(last.content)
+          const pv = formatWeChatMessagesTabPreviewFromStoredMessage(last)
           preview = pv.slice(0, 48) + (pv.length > 48 ? '…' : '')
           const d = new Date(last.timestamp)
           time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -4273,6 +4454,7 @@ function WeChatAppInner({ onBack }: Props) {
 
     const pack: Array<MessagesThreadRow & { sortTs: number }> = [
       lumiRowData,
+      selfRowData,
       ...personaRowsData,
       ...groupRowsData,
     ]
@@ -4284,7 +4466,15 @@ function WeChatAppInner({ onBack }: Props) {
       return rest
     })
     setMessageThreads(merged)
-  }, [currentAccountId, playerIdentityId, state.wechatPersonaContacts])
+  }, [
+    currentAccountId,
+    playerIdentityId,
+    state.profile.avatarImageUrl,
+    state.profile.displayName,
+    state.wechatPersonaContacts,
+    wechatAccountProfile?.avatarUrl,
+    wechatAccountProfile?.nickname,
+  ])
 
   useEffect(() => {
     void refreshMessageThreadsMeta()
@@ -4396,11 +4586,14 @@ function WeChatAppInner({ onBack }: Props) {
         const c = weChatMergedContacts?.find((x) => x.id === 'wechat-lumi-assistant') ?? WECHAT_LUMI_ASSISTANT_CONTACT
         return { remarkName: c.remarkName, avatarUrl: c.avatarUrl }
       }
+      if (cid === WECHAT_SELF_PEER_CHARACTER_ID) {
+        return { remarkName: weChatSelfAccountContact.remarkName, avatarUrl: weChatSelfAccountContact.avatarUrl }
+      }
       const row = state.wechatPersonaContacts.find((x) => x.characterId === cid)
       if (!row) return { remarkName: '聊天', avatarUrl: undefined as string | undefined }
       return { remarkName: row.remarkName, avatarUrl: row.avatarUrl }
     },
-    [state.wechatPersonaContacts, weChatMergedContacts],
+    [state.wechatPersonaContacts, weChatMergedContacts, weChatSelfAccountContact],
   )
 
   useEffect(() => {
@@ -4663,7 +4856,6 @@ function WeChatAppInner({ onBack }: Props) {
   const exitChatToMessages = useCallback(() => {
     const convKey = activeConversationKey
     chatMarkOnceForConvKeyRef.current = null
-    wxDockChatRef.current = null
     setRoute({ name: 'tabs', tab: 'messages' })
     void (async () => {
       try {
@@ -4722,7 +4914,8 @@ function WeChatAppInner({ onBack }: Props) {
     (route.name === 'tabs' && route.tab === 'discover' && discoverMomentsOpen) ||
     wxGlobalNav != null ||
     (route.name === 'tabs' && newGroupFromMessagesOpen) ||
-    (route.name === 'contacts-group-chats' && newGroupFromMessagesOpen)
+    (route.name === 'contacts-group-chats' && newGroupFromMessagesOpen) ||
+    route.name === 'user-moments-archive'
   const hideWeChatHeader =
     route.name === 'new-friends-persona' ||
     route.name === 'contacts-group-chats' ||
@@ -4748,6 +4941,7 @@ function WeChatAppInner({ onBack }: Props) {
     route.name === 'add-friend' ||
     route.name === 'add-friend-stranger' ||
     route.name === 'add-friend-request-form' ||
+    route.name === 'user-moments-archive' ||
     wxGlobalNav != null ||
     (route.name === 'tabs' && route.tab === 'discover' && discoverMomentsOpen) ||
     (route.name === 'chat' && chatSettingsOpen) ||
@@ -4906,6 +5100,8 @@ function WeChatAppInner({ onBack }: Props) {
       }
       const friendReqWbIds = [character.id?.trim()].filter(Boolean) as string[]
       const worldBookBinding = await resolveWorldBookUserBinding(character)
+      const charTimeRow = await personaDb.getCharacterTimeSettings(character.id)
+      const timePerceptionEnabled = isCharacterTimePerceptionEnabled(charTimeRow)
       const ai = await requestWeChatPeerReplyBubbles({
         apiConfig,
         character,
@@ -4928,6 +5124,7 @@ function WeChatAppInner({ onBack }: Props) {
         friendRequestAdjudication,
         altAccountProbeBlock: altAccountProbeBlock || undefined,
         currentTimeMs: getCurrentTimeMs(),
+        timePerceptionEnabled,
         chatMemberIds: friendReqWbIds,
         globalWechatPlate: 'private_chat',
         nonPrimarySpeakerLine: nonPrimarySession || useHomeOnly,
@@ -5901,6 +6098,16 @@ function WeChatAppInner({ onBack }: Props) {
                         })
                         return
                       }
+                      if (contactId === WECHAT_SELF_PEER_CHARACTER_ID) {
+                        setRoute({
+                          name: 'contact-profile',
+                          target: { kind: 'self' },
+                          remarkName: weChatSelfAccountContact.remarkName,
+                          avatarUrl: weChatSelfAccountContact.avatarUrl,
+                          returnTo: { mode: 'tabs-contacts' },
+                        })
+                        return
+                      }
                       const pc = state.wechatPersonaContacts.find((c) => c.id === contactId)
                       if (pc) {
                         setRoute({
@@ -5925,6 +6132,15 @@ function WeChatAppInner({ onBack }: Props) {
                 <div className="min-h-0 flex-1">
                   <WeChatDiscoverInstagram
                     onImmersiveViewChange={setDiscoverMomentsOpen}
+                    restoreView={discoverRestoreView}
+                    onRestoreViewConsumed={() => setDiscoverRestoreView(null)}
+                    onOpenParticipantProfile={openContactProfileFromMomentsFeed}
+                    wechatNickname={wechatAccountProfile?.nickname ?? state.profile.displayName}
+                    wechatAvatarUrl={
+                      wechatAccountProfile?.avatarUrl ?? state.profile.avatarImageUrl
+                    }
+                    momentsCoverUrl={currentAccountMomentsCoverUrl}
+                    onMomentsCoverChange={updateMomentsCoverUrl}
                     currentUserName={state.profile.displayName || '我'}
                     qnaContacts={anonymousQnaContacts}
                     qnaWechatCtx={anonymousQnaWechatCtx}
@@ -6228,9 +6444,27 @@ function WeChatAppInner({ onBack }: Props) {
                 target={route.target}
                 remarkName={route.remarkName}
                 avatarUrl={route.avatarUrl}
+                accountId={currentAccountId}
+                momentContacts={momentContactsForNotices}
+                selfAccountProfile={
+                  route.target.kind === 'self' ? wechatAccountProfile : undefined
+                }
                 onBack={() => {
                   if (route.returnTo.mode === 'tabs-contacts') {
                     setRoute({ name: 'tabs', tab: 'contacts' })
+                    return
+                  }
+                  if (route.returnTo.mode === 'moments-feed') {
+                    setDiscoverRestoreView('moments')
+                    setRoute({ name: 'tabs', tab: 'discover' })
+                    return
+                  }
+                  if (route.returnTo.mode === 'user-moments-archive') {
+                    setRoute({
+                      name: 'user-moments-archive',
+                      userId: route.returnTo.userId,
+                      returnTo: route.returnTo.returnTo,
+                    })
                     return
                   }
                   setRoute({ name: 'chat', chat: route.returnTo.chat })
@@ -6240,12 +6474,21 @@ function WeChatAppInner({ onBack }: Props) {
                   const t = route.target
                   setRoute({
                     name: 'chat',
-                    chat: t.kind === 'lumi' ? { kind: 'lumi' } : { kind: 'persona', characterId: t.characterId },
+                    chat:
+                      t.kind === 'lumi'
+                        ? { kind: 'lumi' }
+                        : t.kind === 'self'
+                          ? { kind: 'self' }
+                          : { kind: 'persona', characterId: t.characterId },
                   })
                 }}
                 onOpenProfileSettings={() => {
                   if (route.target.kind === 'lumi') {
                     window.alert('设置与备注开发中')
+                    return
+                  }
+                  if (route.target.kind === 'self') {
+                    setProfileEditOpen(true)
                     return
                   }
                   setRoute({
@@ -6265,8 +6508,76 @@ function WeChatAppInner({ onBack }: Props) {
                     source: 'contacts',
                   })
                 }}
+                onOpenMoments={() => {
+                  if (route.target.kind === 'self') {
+                    setRoute({
+                      name: 'user-moments-archive',
+                      userId: 'self',
+                      returnTo: {
+                        mode: 'contact-profile',
+                        target: route.target,
+                        remarkName: route.remarkName,
+                        avatarUrl: route.avatarUrl,
+                        returnTo: route.returnTo,
+                      },
+                    })
+                    return
+                  }
+                  if (route.target.kind !== 'persona') return
+                  setRoute({
+                    name: 'user-moments-archive',
+                    userId: route.target.characterId,
+                    returnTo: {
+                      mode: 'contact-profile',
+                      target: route.target,
+                      remarkName: route.remarkName,
+                      avatarUrl: route.avatarUrl,
+                      returnTo: route.returnTo,
+                    },
+                  })
+                }}
               />
             </div>
+          ) : route.name === 'user-moments-archive' ? (
+            <motion.div
+              key="user-moments-archive"
+              className="flex h-full min-h-0 flex-1 flex-col"
+              {...pageProps}
+            >
+              <UserMomentsArchive
+                userId={route.userId}
+                accountId={currentAccountId}
+                qnaWechatCtx={anonymousQnaWechatCtx}
+                coverNickname={
+                  route.returnTo.mode === 'contact-profile'
+                    ? route.returnTo.remarkName
+                    : momentsDisplayName
+                }
+                selfProfile={{
+                  displayName: momentsDisplayName,
+                  signature:
+                    wechatAccountProfile?.signature?.trim() || state.profile.signature?.trim(),
+                  avatarUrl:
+                    wechatAccountProfile?.avatarUrl ?? state.profile.avatarImageUrl ?? undefined,
+                  coverUrl: currentAccountMomentsCoverUrl,
+                }}
+                momentContacts={momentContactsForNotices}
+                onOpenParticipantProfile={openContactProfileFromUserMomentsArchive}
+                onBack={() => {
+                  if (route.returnTo.mode === 'tabs-profile') {
+                    setRoute({ name: 'tabs', tab: 'profile' })
+                    return
+                  }
+                  setRoute({
+                    name: 'contact-profile',
+                    target: route.returnTo.target,
+                    remarkName: route.returnTo.remarkName,
+                    avatarUrl: route.returnTo.avatarUrl,
+                    returnTo: route.returnTo.returnTo,
+                  })
+                }}
+              />
+            </motion.div>
           ) : route.name === 'forward-select-chat' ? (
             <motion.div key="forward-select-chat" className="flex min-h-0 flex-1 flex-col" {...pageProps}>
               {/* 进入转发页时，底层聊天保持不渲染（微信同款：新页面承载） */}
@@ -6778,6 +7089,7 @@ function WeChatAppInner({ onBack }: Props) {
                   playerIdentityId={playerIdentityId}
                   peerDisplayName={chatPeerContact?.remarkName ?? '聊天'}
                   peerAvatarUrl={chatPeerContact?.avatarUrl}
+                  showProactiveMessageSettings={route.chat.kind === 'persona'}
                   personaEditTargetId={
                     route.chat.kind === 'persona' ? route.chat.characterId : lumiBindingPersonaCharacterId
                   }
@@ -6814,6 +7126,16 @@ function WeChatAppInner({ onBack }: Props) {
                         target: { kind: 'lumi' },
                         remarkName: chatPeerContact?.remarkName ?? 'Lumi',
                         avatarUrl: chatPeerContact?.avatarUrl ?? lumiWechatAvatarUrl,
+                        returnTo: { mode: 'chat', chat, reopenChatSettings: true },
+                      })
+                      return
+                    }
+                    if (chat.kind === 'self') {
+                      setRoute({
+                        name: 'contact-profile',
+                        target: { kind: 'self' },
+                        remarkName: weChatSelfAccountContact.remarkName,
+                        avatarUrl: weChatSelfAccountContact.avatarUrl,
                         returnTo: { mode: 'chat', chat, reopenChatSettings: true },
                       })
                       return
@@ -6880,6 +7202,7 @@ function WeChatAppInner({ onBack }: Props) {
           onChange={(id) => setRoute({ name: 'tabs', tab: id })}
           messagesUnreadCount={messagesTabUnreadTotal}
           contactsUnreadCount={newFriendsUnreadCount}
+          discoverUnreadCount={momentsInteractionUnreadCount}
         />
       ) : null}
       </WeChatWelcomeRevealLayer>
@@ -6904,6 +7227,12 @@ function WeChatAppInner({ onBack }: Props) {
       <WorldBookAfterPatchNoticeHost />
       <DatingPlotCompletionToastHost />
       <MeetVol10EpilogueNoticeHost />
+      <MomentsNoticeRuntime
+        accountId={currentAccountId}
+        userDisplayName={momentsDisplayName}
+        playerIdentityId={playerIdentityId}
+        momentContacts={momentContactsForNotices}
+      />
 
       <AnimatePresence>
         {consoleOpen ? (

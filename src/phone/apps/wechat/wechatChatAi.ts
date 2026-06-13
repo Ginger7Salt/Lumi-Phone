@@ -40,11 +40,23 @@ import {
 } from './wechatReplyOutputPrompt'
 import { WECHAT_FRIEND_REQUEST_ADJUDICATION_OUTPUT_APPENDIX } from './wechatFriendRequestAdjudicationPrompt'
 import { WECHAT_ROLEPLAY_SYSTEM_PROMPT } from './wechatChatPrompt'
+import { PROACTIVE_INITIATION_USER_NUDGE } from './proactivePrivateMessageTypes'
 import { buildStickerCatalogPromptBlock } from './stickers/stickerStore'
 import {
   buildMediaSendFrequencyPromptBlock,
   resolveStickerCatalogPromptBlockForSession,
 } from './wechatMediaSendFrequency'
+import { buildCharacterImageGenPromptBlock } from './wechatCharacterImageGen'
+import {
+  WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_APPENDIX,
+  WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_IMAGE_ROUND_HINT,
+  buildCharacterSelfProfileVisionParts,
+} from './wechatCharacterProfileImageApply'
+import {
+  WECHAT_CHARACTER_PROFILE_UPDATE_APPENDIX,
+} from './wechatCharacterProfileUpdateApply'
+import { WECHAT_CHARACTER_MOMENT_PIN_APPENDIX } from './wechatCharacterMomentPinApply'
+import { WECHAT_CHARACTER_MOMENT_PUBLISH_APPENDIX } from './wechatCharacterMomentPublishApply'
 import { WECHAT_HEART_WHISPER_SYSTEM_PROMPT } from './wechatHeartWhisperPrompt'
 import { WECHAT_CHARACTER_PSYCHE_SYSTEM_PROMPT } from './wechatCharacterPsychePrompt'
 import type { CharacterPsychePageSummaries } from './characterPsyche/characterPsycheSummaries'
@@ -87,6 +99,7 @@ import {
   hasChatAfterWorldBookItems,
   type WorldBookAfterPatch,
 } from './newFriendsPersona/worldBookAfterPatch'
+import { resolveTimePromptSection } from './time/wechatTimeUtils'
 
 export { buildWorldbookContext } from '../../worldbook/buildWorldbookContext'
 export type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
@@ -512,20 +525,7 @@ function safeScheduleJson(s: ScheduleTable): string {
   }
 }
 
-export function formatCurrentTimeBlock(currentTimeMs?: number, opts?: { forLumiAssistant?: boolean }): string {
-  const ts = Number(currentTimeMs)
-  const safeTs = Number.isFinite(ts) && ts > 0 ? ts : Date.now()
-  const d = new Date(safeTs)
-  const week = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'][d.getDay()] ?? ''
-  const pad2 = (n: number) => String(n).padStart(2, '0')
-  const stamp = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${week} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(
-    d.getSeconds(),
-  )}`
-  const tail = opts?.forLumiAssistant
-    ? `可将时段体现在问候或语气里（如早晚安），但不要编造与用户私密剧情。\n`
-    : `请将时间感（早/午/晚、是否深夜、是否工作时段）自然体现在角色回复里；若无自定义时间配置，默认按系统当前时间理解。\n`
-  return `\n\n---\n【当前时间】\n当前时间点：${stamp}\n${tail}`
-}
+export { formatCurrentTimeBlock, resolveTimePromptSection } from './time/wechatTimeUtils'
 
 export function buildSystemContent(params: {
   character: Character | null
@@ -560,6 +560,8 @@ export function buildSystemContent(params: {
   replyBias?: string
   /** 当前会话时间戳（毫秒）；未传时默认系统时间 */
   currentTimeMs?: number
+  /** false 时不注入系统时间点，改由模型据聊天内容推断时段 */
+  timePerceptionEnabled?: boolean
   /** 档案室「世界线法则」已拼好的片段；优先于 chatMemberIds */
   worldbookLoreContext?: string
   /** 当前场景涉及的角色 / 玩家身份 ID，用于从档案室动态组装法则 */
@@ -649,7 +651,11 @@ export function buildSystemContent(params: {
     : ''
   const replyBias = params.replyBias?.trim() ? `\n\n---\n【本轮回复偏向（最高优先级）】\n${params.replyBias.trim()}\n` : ''
   const isLumiAssistant = params.promptMode === 'lumi-assistant'
-  const currentTime = formatCurrentTimeBlock(params.currentTimeMs, { forLumiAssistant: isLumiAssistant })
+  const currentTime = resolveTimePromptSection({
+    timePerceptionEnabled: params.timePerceptionEnabled,
+    currentTimeMs: params.currentTimeMs,
+    forLumiAssistant: isLumiAssistant,
+  })
   const schedule = buildScheduleSection({
     playerIdentity: (params.playerIdentity?.schedule as ScheduleTable | undefined) ?? null,
     character: (params.character?.schedule as ScheduleTable | undefined) ?? null,
@@ -715,8 +721,8 @@ export function buildSystemContent(params: {
 
 type BuildSystemContentParams = Parameters<typeof buildSystemContent>[0]
 
-/** 先展开世界书绑定 {{user}}，再展开正文里残留的 {{char}} / 裸 {{user}}。 */
-async function materializeSystemContent(params: BuildSystemContentParams): Promise<string> {
+/** 与私聊一致：异步展开世界书 {{user}}、人脉分轨后再拼 system（朋友圈 AI 须用此入口） */
+export async function materializeSystemContent(params: BuildSystemContentParams): Promise<string> {
   const worldBookTextForPrompt = params.character
     ? await buildWorldBookTextForPrompt(params.character)
     : ''
@@ -1044,9 +1050,113 @@ function appendWorldBookAfterPatchOutputRules(
   return `${baseAppendix}\n\n${buildWorldBookAfterPatchOutputAppendix()}`
 }
 
+function buildPersonaPrivateChatSelfServiceAppendix(params: {
+  character: Character | null
+  characterWechatProfileBlock?: string
+  characterMomentsPinCatalog?: string
+  userMomentsViewerCatalog?: string
+}): string {
+  const profileBlock = params.characterWechatProfileBlock?.trim()
+  const pinCatalog = params.characterMomentsPinCatalog?.trim()
+  const userMomentsCatalog = params.userMomentsViewerCatalog?.trim()
+  return appendWorldBookAfterPatchOutputRules(
+    params.character,
+    false,
+    `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}\n\n${WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_APPENDIX}${profileBlock ? `\n\n${profileBlock}` : ''}\n\n${WECHAT_CHARACTER_PROFILE_UPDATE_APPENDIX}${pinCatalog ? `\n\n${pinCatalog}` : ''}${userMomentsCatalog ? `\n\n${userMomentsCatalog}` : ''}\n\n${WECHAT_CHARACTER_MOMENT_PUBLISH_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_PIN_APPENDIX}`,
+  )
+}
+
 /**
  * 根据当前聊天记录请求对方回复，解析为多条气泡（纯文本换行；与模型输出一致）。
  */
+const WECHAT_MEMORY_MOMENT_IMAGES_APPENDIX = `
+【长期记忆配图】
+若 system 之后、对话历史之前收到 user 消息中的朋友圈配图，对应上方【长期记忆】里本轮召回的相关动态；请结合记忆文字自然使用，可轻点 1～2 个细节，勿逐像素长评；看不清则勿编造。
+`.trim()
+
+const WECHAT_SELF_PROFILE_IMAGES_APPENDIX = `
+【你的微信资料配图】
+若 system 之后、对话历史之前出现你的微信头像/朋友圈背景图：那是你**当前**对外展示的形象；换图或恢复历史后客户端会更新配图。
+`.trim()
+
+function buildMemoryMomentImagesUserMessage(imageUrls: string[]): Record<string, unknown> {
+  return {
+    role: 'user',
+    content: [
+      {
+        type: 'text',
+        text: '【长期记忆配图】以下为上方【长期记忆】中本轮召回的朋友圈相关配图。',
+      },
+      ...imageUrls.map((url) => ({ type: 'image_url', image_url: { url } })),
+    ],
+  }
+}
+
+function buildSelfProfileVisionUserMessage(
+  parts: ReturnType<typeof buildCharacterSelfProfileVisionParts>,
+): Record<string, unknown> | null {
+  if (!parts.length) return null
+  const content: Array<Record<string, unknown>> = [
+    {
+      type: 'text',
+      text: '【你的微信资料配图 · 当前】以下为你在微信对外展示的头像与朋友圈主页背景；请据此了解自己的线上形象。若支持识图可简要点出可核对细节；看不清则勿编造。',
+    },
+  ]
+  for (const part of parts) {
+    content.push({ type: 'text', text: part.label })
+    content.push({ type: 'image_url', image_url: { url: part.url } })
+  }
+  return { role: 'user', content }
+}
+
+function injectPreHistoryVisionMessages(
+  messages: OpenAiCompatibleMessage[],
+  blocks: Array<{ message: Record<string, unknown> | null }>,
+): unknown[] {
+  const injections = blocks.map((b) => b.message).filter((m): m is Record<string, unknown> => !!m)
+  if (!injections.length) return messages
+  return [messages[0], ...injections, ...messages.slice(1)]
+}
+
+async function callWeChatPeerReplyChat(
+  cfg: ApiConfig,
+  messages: OpenAiCompatibleMessage[],
+  opts: {
+    memoryMomentImages?: string[]
+    characterSelfProfileVisionParts?: ReturnType<typeof buildCharacterSelfProfileVisionParts>
+    temperature: number
+    max_tokens: number
+  },
+): Promise<string> {
+  const memUrls = (opts.memoryMomentImages ?? []).map((u) => u.trim()).filter(Boolean)
+  const selfParts = opts.characterSelfProfileVisionParts ?? []
+  const visionBlocks: Array<{ message: Record<string, unknown> | null }> = []
+  if (selfParts.length) {
+    visionBlocks.push({ message: buildSelfProfileVisionUserMessage(selfParts) })
+  }
+  if (memUrls.length) {
+    visionBlocks.push({ message: buildMemoryMomentImagesUserMessage(memUrls) })
+  }
+
+  if (!visionBlocks.length) {
+    return openAiCompatibleChat(cfg, messages, {
+      temperature: opts.temperature,
+      max_tokens: opts.max_tokens,
+    })
+  }
+  try {
+    return await openAiCompatibleChatAny(cfg, injectPreHistoryVisionMessages(messages, visionBlocks), {
+      temperature: opts.temperature,
+      max_tokens: opts.max_tokens,
+    })
+  } catch {
+    return openAiCompatibleChat(cfg, messages, {
+      temperature: opts.temperature,
+      max_tokens: opts.max_tokens,
+    })
+  }
+}
+
 export async function requestWeChatPeerReplyBubbles(params: {
   apiConfig: ApiConfig | null
   character: Character | null
@@ -1058,6 +1168,8 @@ export async function requestWeChatPeerReplyBubbles(params: {
   meetWechatContinuityBlock?: string
   altAccountProbeBlock?: string
   longTermMemoryNotes?: string
+  /** 本轮长期记忆中召回的朋友圈配图（vision 模型多模态注入） */
+  longTermMemoryMomentImages?: string[]
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
   meetEncounterMemoriesContext?: string
@@ -1069,6 +1181,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
   busyContext?: BusyRuntimeContext
   includeThinkingChain?: boolean
   currentTimeMs?: number
+  timePerceptionEnabled?: boolean
   danmakuConfig?: WeChatDanmakuInlineConfig
   /** 群聊：历史统一走 user 角色并带发言者前缀，避免多角色 assistant 交错 */
   groupChatTranscript?: boolean
@@ -1084,6 +1197,27 @@ export async function requestWeChatPeerReplyBubbles(params: {
   worldBookUserLineLabel?: string
   stickerRoundTriggerPercent?: number
   voiceRoundTriggerPercent?: number
+  /** 角色 AI 配图每轮触发概率（缺省 0%） */
+  imageRoundTriggerPercent?: number
+  imageRoundCountMin?: number
+  imageRoundCountMax?: number
+  imageRoundCountTarget?: number
+  /** 用户本轮明确要求角色发图时 bypass 概率 */
+  userExplicitCharacterImageRequest?: boolean
+  /** 角色主动消息：历史末尾追加系统 user 占位，确保模型以 assistant（角色）侧输出 */
+  proactiveInitiation?: boolean
+  /** 与 proactiveInitiation 配套；缺省使用内置主动消息占位文案 */
+  proactiveInitiationNudge?: string
+  /** 当前 API 预设已配置生图引擎时注入 `[图片]` 输出协议 */
+  characterImageGenEnabled?: boolean
+  /** 当前生图风格中文名，供协议说明（风格由客户端拼接，模型勿写） */
+  characterImageGenStyleHint?: string
+  /** 角色本人近期朋友圈列表，供置顶指令选用 momentId */
+  characterMomentsPinCatalog?: string
+  /** 该角色可见的用户近期朋友圈目录 */
+  userMomentsViewerCatalog?: string
+  /** 角色当前微信昵称/签名状态块 */
+  characterWechatProfileBlock?: string
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1098,6 +1232,15 @@ export async function requestWeChatPeerReplyBubbles(params: {
   const mediaFreqBlock = buildMediaSendFrequencyPromptBlock({
     stickerRoundTriggerPercent: params.stickerRoundTriggerPercent,
     voiceRoundTriggerPercent: params.voiceRoundTriggerPercent,
+    ...(params.characterImageGenEnabled
+      ? {
+          imageRoundTriggerPercent: params.imageRoundTriggerPercent,
+          imageRoundCountMin: params.imageRoundCountMin,
+          imageRoundCountMax: params.imageRoundCountMax,
+          imageRoundCountTarget: params.imageRoundCountTarget,
+          userExplicitCharacterImageRequest: params.userExplicitCharacterImageRequest,
+        }
+      : {}),
   })
 
   const base = await materializeSystemContent({
@@ -1118,6 +1261,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
     unsummarizedMeetNotes: params.unsummarizedMeetNotes,
     replyBias: params.replyBias,
     currentTimeMs: params.currentTimeMs,
+    timePerceptionEnabled: params.timePerceptionEnabled,
     chatMemberIds: wbMemberIds,
     globalWechatPlate: params.globalWechatPlate,
     worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
@@ -1132,6 +1276,9 @@ export async function requestWeChatPeerReplyBubbles(params: {
     loreInjectForStickerPolicy,
     params.stickerRoundTriggerPercent,
   )
+  const imageGenBlock = params.characterImageGenEnabled
+    ? buildCharacterImageGenPromptBlock(params.characterImageGenStyleHint)
+    : ''
   const danmakuInstruction = buildDanmakuInlineInstruction({
     enabled: !!params.danmakuConfig?.enabled,
     useMemory: !!params.danmakuConfig?.useMemory,
@@ -1152,17 +1299,39 @@ export async function requestWeChatPeerReplyBubbles(params: {
     ? WECHAT_FRIEND_REQUEST_ADJUDICATION_OUTPUT_APPENDIX
     : isLumi
       ? WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX
-      : appendWorldBookAfterPatchOutputRules(
-          params.character,
-          isLumi,
-          `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`,
-        )
-  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}${recallGuide ? `\n\n${recallGuide}` : ''}\n\n${outputAppendix}${mediaFreqBlock ? `\n\n${mediaFreqBlock}` : ''}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
+      : buildPersonaPrivateChatSelfServiceAppendix({
+          character: params.character,
+          characterWechatProfileBlock: params.characterWechatProfileBlock,
+          characterMomentsPinCatalog: params.characterMomentsPinCatalog,
+          userMomentsViewerCatalog: params.userMomentsViewerCatalog,
+        })
+  const memoryMomentImages = (params.longTermMemoryMomentImages ?? [])
+    .map((u) => u.trim())
+    .filter(Boolean)
+  const selfProfileVisionParts =
+    params.promptMode === 'persona' && params.character
+      ? buildCharacterSelfProfileVisionParts(params.character)
+      : []
+  const memoryImagesAppendix = memoryMomentImages.length
+    ? `\n\n---\n${WECHAT_MEMORY_MOMENT_IMAGES_APPENDIX}\n`
+    : ''
+  const selfProfileImagesAppendix = selfProfileVisionParts.length
+    ? `\n\n---\n${WECHAT_SELF_PROFILE_IMAGES_APPENDIX}\n`
+    : ''
+  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}${selfProfileImagesAppendix}${memoryImagesAppendix}${recallGuide ? `\n\n${recallGuide}` : ''}\n\n${outputAppendix}${mediaFreqBlock ? `\n\n${mediaFreqBlock}` : ''}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}${imageGenBlock ? `\n\n${imageGenBlock}` : ''}`
 
   const history = transcriptToMessages(params.transcript, { groupChat: params.groupChatTranscript })
   const messages: OpenAiCompatibleMessage[] = [{ role: 'system', content: system }, ...history]
+  if (params.proactiveInitiation) {
+    messages.push({
+      role: 'user',
+      content: params.proactiveInitiationNudge?.trim() || PROACTIVE_INITIATION_USER_NUDGE,
+    })
+  }
 
-  const text = await openAiCompatibleChat(cfg, messages, {
+  const text = await callWeChatPeerReplyChat(cfg, messages, {
+    memoryMomentImages,
+    characterSelfProfileVisionParts: selfProfileVisionParts,
     temperature: params.friendRequestAdjudication ? 0.38 : isLumi ? 0.62 : 0.82,
     max_tokens: WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS,
   })
@@ -1191,12 +1360,15 @@ export async function requestWeChatVoiceCallReplyText(params: {
   transcript: ChatTranscriptTurn[]
   promptMode: WeChatChatPromptMode
   longTermMemoryNotes?: string
+  /** 本轮长期记忆中召回的朋友圈配图（vision 模型多模态注入） */
+  longTermMemoryMomentImages?: string[]
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
   recentGroupChatsReference?: string
   unsummarizedPrivateNotes?: string
   unsummarizedGroupNotes?: string
   currentTimeMs?: number
+  timePerceptionEnabled?: boolean
   chatMemberIds?: string[]
   globalWechatPlate?: GlobalWechatPlate
   worldBookPlaceholderIdMap?: Readonly<Record<string, string>>
@@ -1217,6 +1389,7 @@ export async function requestWeChatVoiceCallReplyText(params: {
     unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
     currentTimeMs: params.currentTimeMs,
+    timePerceptionEnabled: params.timePerceptionEnabled,
     chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
     globalWechatPlate: params.globalWechatPlate,
     worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
@@ -1285,12 +1458,15 @@ export async function requestWeChatVoiceCallDecision(params: {
   transcript: ChatTranscriptTurn[]
   promptMode: WeChatChatPromptMode
   longTermMemoryNotes?: string
+  /** 本轮长期记忆中召回的朋友圈配图（vision 模型多模态注入） */
+  longTermMemoryMomentImages?: string[]
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
   recentGroupChatsReference?: string
   unsummarizedPrivateNotes?: string
   unsummarizedGroupNotes?: string
   currentTimeMs?: number
+  timePerceptionEnabled?: boolean
   chatMemberIds?: string[]
   globalWechatPlate?: GlobalWechatPlate
 }): Promise<VoiceCallDecision> {
@@ -1310,6 +1486,7 @@ export async function requestWeChatVoiceCallDecision(params: {
     unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
     currentTimeMs: params.currentTimeMs,
+    timePerceptionEnabled: params.timePerceptionEnabled,
     chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
     globalWechatPlate: params.globalWechatPlate,
   })
@@ -1371,6 +1548,8 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   meetWechatContinuityBlock?: string
   altAccountProbeBlock?: string
   longTermMemoryNotes?: string
+  /** 本轮长期记忆中召回的朋友圈配图（vision 模型多模态注入） */
+  longTermMemoryMomentImages?: string[]
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
   meetEncounterMemoriesContext?: string
@@ -1382,6 +1561,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   busyContext?: BusyRuntimeContext
   includeThinkingChain?: boolean
   currentTimeMs?: number
+  timePerceptionEnabled?: boolean
   danmakuConfig?: WeChatDanmakuInlineConfig
   groupChatTranscript?: boolean
   chatMemberIds?: string[]
@@ -1392,6 +1572,16 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   worldBookUserLineLabel?: string
   stickerRoundTriggerPercent?: number
   voiceRoundTriggerPercent?: number
+  imageRoundTriggerPercent?: number
+  imageRoundCountMin?: number
+  imageRoundCountMax?: number
+  imageRoundCountTarget?: number
+  userExplicitCharacterImageRequest?: boolean
+  characterImageGenEnabled?: boolean
+  characterImageGenStyleHint?: string
+  characterMomentsPinCatalog?: string
+  userMomentsViewerCatalog?: string
+  characterWechatProfileBlock?: string
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1405,6 +1595,15 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   const mediaFreqBlock = buildMediaSendFrequencyPromptBlock({
     stickerRoundTriggerPercent: params.stickerRoundTriggerPercent,
     voiceRoundTriggerPercent: params.voiceRoundTriggerPercent,
+    ...(params.characterImageGenEnabled
+      ? {
+          imageRoundTriggerPercent: params.imageRoundTriggerPercent,
+          imageRoundCountMin: params.imageRoundCountMin,
+          imageRoundCountMax: params.imageRoundCountMax,
+          imageRoundCountTarget: params.imageRoundCountTarget,
+          userExplicitCharacterImageRequest: params.userExplicitCharacterImageRequest,
+        }
+      : {}),
   })
 
   const base = await materializeSystemContent({
@@ -1425,6 +1624,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     unsummarizedMeetNotes: params.unsummarizedMeetNotes,
     replyBias: params.replyBias,
     currentTimeMs: params.currentTimeMs,
+    timePerceptionEnabled: params.timePerceptionEnabled,
     chatMemberIds: wbMemberIds,
     globalWechatPlate: params.globalWechatPlate,
     worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
@@ -1434,15 +1634,20 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   })
   const isLumi = params.promptMode === 'lumi-assistant'
   const roleName = params.character?.name?.trim() || (isLumi ? 'Lumi' : '对方')
-  const imgRules = (params.userImageIsSticker ? WECHAT_STICKER_IMAGE_REPLY_APPENDIX : WECHAT_IMAGE_REPLY_APPENDIX).replace(
-    /\[角色姓名\]/g,
-    roleName,
-  )
+  const imgRulesBase = params.userImageIsSticker ? WECHAT_STICKER_IMAGE_REPLY_APPENDIX : WECHAT_IMAGE_REPLY_APPENDIX
+  const imgRules = (
+    isLumi
+      ? imgRulesBase
+      : `${imgRulesBase}\n\n${WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_IMAGE_ROUND_HINT}`
+  ).replace(/\[角色姓名\]/g, roleName)
   const busyPrefix = buildBusyPrefix(params.busyContext)
   const stickerCat = resolveStickerCatalogPromptBlockForLore(
     loreInjectForStickerPolicy,
     params.stickerRoundTriggerPercent,
   )
+  const imageGenBlock = params.characterImageGenEnabled
+    ? buildCharacterImageGenPromptBlock(params.characterImageGenStyleHint)
+    : ''
   const danmakuInstruction = buildDanmakuInlineInstruction({
     enabled: !!params.danmakuConfig?.enabled,
     useMemory: !!params.danmakuConfig?.useMemory,
@@ -1459,12 +1664,19 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     : WECHAT_CHARACTER_RECALL_GUIDE
   const outputAppendix = isLumi
     ? WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX
-    : appendWorldBookAfterPatchOutputRules(
-        params.character,
-        isLumi,
-        `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`,
-      )
-  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${recallGuide}\n\n---\n【图片消息附加要求】\n${imgRules}\n\n${outputAppendix}${mediaFreqBlock ? `\n\n${mediaFreqBlock}` : ''}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
+    : buildPersonaPrivateChatSelfServiceAppendix({
+        character: params.character,
+        characterWechatProfileBlock: params.characterWechatProfileBlock,
+        characterMomentsPinCatalog: params.characterMomentsPinCatalog,
+        userMomentsViewerCatalog: params.userMomentsViewerCatalog,
+      })
+  const memoryMomentImages = (params.longTermMemoryMomentImages ?? [])
+    .map((u) => u.trim())
+    .filter(Boolean)
+  const memoryImagesAppendix = memoryMomentImages.length
+    ? `\n\n---\n${WECHAT_MEMORY_MOMENT_IMAGES_APPENDIX}\n`
+    : ''
+  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}${memoryImagesAppendix}\n\n${recallGuide}\n\n---\n【图片消息附加要求】\n${imgRules}\n\n${outputAppendix}${mediaFreqBlock ? `\n\n${mediaFreqBlock}` : ''}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}${imageGenBlock ? `\n\n${imageGenBlock}` : ''}`
 
   const history = transcriptToMessages(params.transcript, { groupChat: params.groupChatTranscript })
 
@@ -1477,6 +1689,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   )
   const visionMessages: unknown[] = [
     { role: 'system', content: system },
+    ...(memoryMomentImages.length ? [buildMemoryMomentImagesUserMessage(memoryMomentImages)] : []),
     ...history,
     {
       role: 'user',
@@ -1596,6 +1809,8 @@ export async function requestWeChatPeerReply(params: {
   playerDisplayName: string
   transcript: ChatTranscriptTurn[]
   longTermMemoryNotes?: string
+  /** 本轮长期记忆中召回的朋友圈配图（vision 模型多模态注入） */
+  longTermMemoryMomentImages?: string[]
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
   recentGroupChatsReference?: string
@@ -1859,6 +2074,8 @@ export async function requestWeChatGroupPsyche(params: {
   userAliasesToStrip?: string[]
   nowMs?: number
   longTermMemoryNotes?: string
+  /** 本轮长期记忆中召回的朋友圈配图（vision 模型多模态注入） */
+  longTermMemoryMomentImages?: string[]
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
   recentGroupChatsReference?: string
@@ -1887,6 +2104,12 @@ export async function requestWeChatGroupPsyche(params: {
       npc_pronoun: r.npcPronoun === '她' ? '她' : '他',
     })),
   )
+  const memoryMomentImages = (params.longTermMemoryMomentImages ?? [])
+    .map((u) => u.trim())
+    .filter(Boolean)
+  const memoryImagesAppendix = memoryMomentImages.length
+    ? `\n\n---\n${WECHAT_MEMORY_MOMENT_IMAGES_APPENDIX}\n`
+    : ''
   const base = await materializeSystemContent({
     character: null,
     playerIdentity: params.playerIdentity,
@@ -1910,12 +2133,16 @@ export async function requestWeChatGroupPsyche(params: {
   const messages: OpenAiCompatibleMessage[] = [
     {
       role: 'system',
-      content: `${base}\n\n---\n【群聊心语生成规则】\n${WECHAT_GROUP_PSYCHE_SYSTEM_PROMPT}\n\n【NPC 名单 JSON】（npc_pronoun：在 impression_on_user 里用来指代该 NPC 本人，写「你」指用户）\n${rosterJson}${stripHint}`,
+      content: `${base}${memoryImagesAppendix}\n\n---\n【群聊心语生成规则】\n${WECHAT_GROUP_PSYCHE_SYSTEM_PROMPT}\n\n【NPC 名单 JSON】（npc_pronoun：在 impression_on_user 里用来指代该 NPC 本人，写「你」指用户）\n${rosterJson}${stripHint}`,
     },
     ...history,
     { role: 'user', content: '请基于刚刚最后一轮群聊对话，输出群聊心语 JSON（仅 JSON）。' },
   ]
-  const text = await openAiCompatibleChat(cfg, messages, { temperature: 0.76, max_tokens: 4500 })
+  const text = await callWeChatPeerReplyChat(cfg, messages, {
+    memoryMomentImages,
+    temperature: 0.76,
+    max_tokens: 4500,
+  })
   const parsed = parseGroupPsycheFromModel(text)
   return mergeGroupPsycheArchive(roster, parsed, nowMs, params.userAliasesToStrip ?? [])
 }
@@ -1928,7 +2155,10 @@ export async function requestWeChatHeartWhisper(params: {
   transcript: ChatTranscriptTurn[]
   promptMode: WeChatChatPromptMode
   nowMs?: number
+  timePerceptionEnabled?: boolean
   longTermMemoryNotes?: string
+  /** 本轮长期记忆中召回的朋友圈配图（vision 模型多模态注入） */
+  longTermMemoryMomentImages?: string[]
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
   recentGroupChatsReference?: string
@@ -1985,6 +2215,7 @@ export async function requestWeChatHeartWhisper(params: {
     unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
     currentTimeMs: params.nowMs,
+    timePerceptionEnabled: params.timePerceptionEnabled,
     chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
     globalWechatPlate: params.globalWechatPlate ?? 'private_chat',
     worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
@@ -2105,7 +2336,10 @@ export async function requestWeChatCharacterPsyche(params: {
   transcript: ChatTranscriptTurn[]
   promptMode: WeChatChatPromptMode
   nowMs?: number
+  timePerceptionEnabled?: boolean
   longTermMemoryNotes?: string
+  /** 本轮长期记忆中召回的朋友圈配图（vision 模型多模态注入） */
+  longTermMemoryMomentImages?: string[]
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
   recentGroupChatsReference?: string
@@ -2162,6 +2396,7 @@ export async function requestWeChatCharacterPsyche(params: {
     unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
     currentTimeMs: params.nowMs,
+    timePerceptionEnabled: params.timePerceptionEnabled,
     chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
     globalWechatPlate: params.globalWechatPlate ?? 'private_chat',
     worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
@@ -3095,6 +3330,8 @@ export async function requestWeChatDanmakuVarietyShow(params: {
   /** 非空则替代内置 `DANMAKU_VARIETY_SHOW_RULES` */
   customRulesPrompt?: string
   longTermMemoryNotes?: string
+  /** 本轮长期记忆中召回的朋友圈配图（vision 模型多模态注入） */
+  longTermMemoryMomentImages?: string[]
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
   recentGroupChatsReference?: string
@@ -3306,6 +3543,7 @@ export function buildWeChatGroupMultiSpeakerSystem(params: {
   /** 多名 NPC 绑定不同玩家身份时：称呼错位与可追问情节（插在群规则与陌生人规则之间） */
   multiIdentityCoPresenceBlock?: string
   currentTimeMs?: number
+  timePerceptionEnabled?: boolean
   promptMode: WeChatChatPromptMode
   danmakuInstruction?: string
   /** 档案室：当前群场景涉及的角色 / 玩家身份 ID */
@@ -3369,7 +3607,11 @@ export function buildWeChatGroupMultiSpeakerSystem(params: {
     ? `\n\n---\n【线下剧情摘录（多成员合并；与会话相关者自辨）】\n${params.offlinePlotsCombined.trim().slice(0, 12000)}\n`
     : ''
   const bias = params.replyBias?.trim() ? `\n\n---\n【本轮回复偏向】\n${params.replyBias.trim()}\n` : ''
-  const time = formatCurrentTimeBlock(params.currentTimeMs, { forLumiAssistant: isLumi })
+  const time = resolveTimePromptSection({
+    timePerceptionEnabled: params.timePerceptionEnabled,
+    currentTimeMs: params.currentTimeMs,
+    forLumiAssistant: isLumi,
+  })
   const danmakuInstr = params.danmakuInstruction?.trim() ?? ''
   const recallGuide = isLumi
     ? `【撤回】仅在明显误发时可极少使用输出协议中的撤回格式；禁止用于恋爱拉扯或虚构剧情。`
@@ -3654,14 +3896,26 @@ export async function requestWeChatGroupMultiSpeakerReplyBubbles(params: {
   systemContent: string
   allowedCharIds: string[]
   nickToId?: Map<string, string>
+  /** 本轮各成员长期记忆中召回的朋友圈配图 */
+  longTermMemoryMomentImages?: string[]
 }): Promise<WeChatGroupMultiSpeakerResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
   }
+  const memoryMomentImages = (params.longTermMemoryMomentImages ?? [])
+    .map((u) => u.trim())
+    .filter(Boolean)
+  const memoryImagesAppendix = memoryMomentImages.length
+    ? `\n\n---\n${WECHAT_MEMORY_MOMENT_IMAGES_APPENDIX}\n`
+    : ''
   const history = transcriptToMessages(params.transcript, { groupChat: true })
-  const messages: OpenAiCompatibleMessage[] = [{ role: 'system', content: params.systemContent }, ...history]
-  const text = await openAiCompatibleChat(cfg, messages, {
+  const messages: OpenAiCompatibleMessage[] = [
+    { role: 'system', content: `${params.systemContent}${memoryImagesAppendix}` },
+    ...history,
+  ]
+  const text = await callWeChatPeerReplyChat(cfg, messages, {
+    memoryMomentImages,
     temperature: params.promptMode === 'lumi-assistant' ? 0.62 : 0.82,
     max_tokens: WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS,
   })
@@ -3679,16 +3933,24 @@ export async function requestWeChatGroupMultiSpeakerReplyBubblesWithImage(params
   imageBase64: string
   imageMime: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
   userImageIsSticker?: boolean
+  longTermMemoryMomentImages?: string[]
 }): Promise<WeChatGroupMultiSpeakerResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
   }
+  const memoryMomentImages = (params.longTermMemoryMomentImages ?? [])
+    .map((u) => u.trim())
+    .filter(Boolean)
+  const memoryImagesAppendix = memoryMomentImages.length
+    ? `\n\n---\n${WECHAT_MEMORY_MOMENT_IMAGES_APPENDIX}\n`
+    : ''
   const history = transcriptToMessages(params.transcript, { groupChat: true })
   const dataUrl = `data:${params.imageMime};base64,${params.imageBase64}`
   const visionUserText = params.userImageIsSticker ? '（我发来了一张表情包）' : '（我发来了一张图片）'
   const visionMessages: unknown[] = [
-    { role: 'system', content: params.systemContent },
+    { role: 'system', content: `${params.systemContent}${memoryImagesAppendix}` },
+    ...(memoryMomentImages.length ? [buildMemoryMomentImagesUserMessage(memoryMomentImages)] : []),
     ...history,
     {
       role: 'user',
@@ -3712,7 +3974,8 @@ export async function requestWeChatGroupMultiSpeakerReplyBubblesWithImage(params
   }
   try {
     const alt1: unknown[] = [
-      { role: 'system', content: params.systemContent },
+      { role: 'system', content: `${params.systemContent}${memoryImagesAppendix}` },
+      ...(memoryMomentImages.length ? [buildMemoryMomentImagesUserMessage(memoryMomentImages)] : []),
       ...history,
       {
         role: 'user',

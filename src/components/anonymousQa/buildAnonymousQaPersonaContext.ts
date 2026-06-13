@@ -77,6 +77,8 @@ export async function buildAnonymousQaPersonaPromptPack(params: {
   characterId: string
   wechatCtx: AnonymousQaWechatContext
   relevanceHaystack: string
+  /** 朋友圈等场景：跳过向量 embedding，避免无关 503 与延迟 */
+  disableMemoryVectorRecall?: boolean
 }): Promise<AnonymousQaPersonaPromptPack> {
   const cid = params.characterId.trim()
   const empty: AnonymousQaPersonaPromptPack = {
@@ -171,6 +173,7 @@ export async function buildAnonymousQaPersonaPromptPack(params: {
       await formatCharacterMemoriesForPromptInjection(cid, hay, {
         apiConfig: apiOk,
         lineScope: (lineScope ?? scopeForWrap) ?? undefined,
+        disableVector: params.disableMemoryVectorRecall === true,
       })
     ).trim()
   } catch {

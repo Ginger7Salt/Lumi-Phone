@@ -6,8 +6,8 @@ import { WeChatWelcomeRevealProvider } from './weChatWelcomeRevealContext'
 import { useWechatStore } from './useWechatStore'
 import { isWechatProfileComplete } from './wechatProfileTypes'
 import {
-  clearWeChatWelcomeSplashPending,
-  isWeChatWelcomeSplashPending,
+  disarmWeChatWelcomeSplash,
+  isWeChatWelcomeSplashArmed,
 } from './wechatWelcomeSplashGate'
 
 type Props = {
@@ -20,12 +20,12 @@ export function WeChatAuthGuard({ children, onBack }: Props) {
   const hasProfile = isWechatProfileComplete(profile)
   const [welcomeFinished, setWelcomeFinished] = useState(false)
 
-  /** 仅「刚完成注册」且 session 打了 pending 标记时才播欢迎动效；老用户重进不再误播 */
+  /** 仅首次注册完成当次会话内、内存 armed 时播一次；重进微信绝不播 */
   const showWelcomeSplash =
-    hydrated && hasProfile && isWeChatWelcomeSplashPending() && !welcomeFinished
+    hydrated && hasProfile && isWeChatWelcomeSplashArmed() && !welcomeFinished
 
   const handleWelcomeComplete = useCallback(() => {
-    clearWeChatWelcomeSplashPending()
+    disarmWeChatWelcomeSplash()
     setWelcomeFinished(true)
   }, [])
 

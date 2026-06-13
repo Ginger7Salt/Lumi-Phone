@@ -40,8 +40,20 @@ import type {
   WorldBookUserPlaceholderBinding,
 } from './types'
 import type { CrossBindingGraphLayoutRecord } from './personaRoster/crossBindings/crossBindingTypes'
-import { parseStoredRoundTriggerPercent, clampRoundTriggerPercent } from '../wechatMediaSendFrequency'
+import {
+  parseStoredRoundTriggerPercent,
+  clampRoundTriggerPercent,
+  parseStoredImageRoundCountRange,
+  isImageRoundCountRangeCustomized,
+  clampImageRoundCount,
+} from '../wechatMediaSendFrequency'
+import {
+  clampProactiveMessageIntervalSeconds,
+  resolveProactiveMessageIntervalSeconds,
+} from '../proactivePrivateMessageTypes'
+import { clampProactiveVariableIntervalSeconds } from '../proactiveVariableInterval'
 import { buildCharacterFullTrashArchive, type PersonaDbTrashSource } from '../../recycleBin/archiveCharacterDeletion'
+import { suppressMomentMemoryArchiveFromMemory } from '../memory/momentMemoryArchiveSuppression'
 import { INDEXED_TRASH_RETENTION_MS, emitIndexedTrashChanged } from '../../recycleBin/recycleBinEvents'
 import type { IndexedTrashEntry } from '../../recycleBin/indexedTrashTypes'
 import {
@@ -55,6 +67,9 @@ import {
 import { fetchEmbeddingVector, resolveEmbeddingApiCredentials } from '../memory/memoryEmbeddingApi'
 import { migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
 import { repairCharacterAvatarForBundleImport } from '../../../utils/characterAvatarUrl'
+import { parseCharacterProfileImageHistory } from '../wechatCharacterProfileImageHistory'
+import { DEFAULT_GROUP_ROBOT_AVATAR_URL, findGroupMember } from '../groupChatUtils'
+import { pickRandomWechatDefaultAvatar } from '../wechatDefaultAvatars'
 import {
   backfillMemoryEmbeddingsBestEffort,
   isMemoryVectorRecallEnabled,
@@ -93,13 +108,16 @@ import {
   parseGroupIdFromGroupPeerCharacterId,
   parsePrivateWeChatConversationCharacterAndSession,
   parseWechatAccountPrivateConversationKey,
+  parseWechatAccountGroupConversationKey,
   conversationKeyBelongsToWechatAccount,
   wechatConversationKey,
   wechatGroupConversationKey,
   wechatGroupPeerCharacterId,
 } from '../wechatConversationKey'
 import { preserveCharacterBoundPlayerIdentity } from '../wechatCharacterPlayerIdentity'
-import { formatWeChatMessagesTabPreviewFromStoredMessageContent } from '../wechatThreadPreviewText'
+import { formatWeChatNotifyPreviewFromStoredMessage } from '../wechatThreadPreviewText'
+import { resolveOsNotificationIconUrl } from '../../backgroundNotify/notificationIconUrl'
+import { supportsPerNotificationCustomIcon } from '../../../utils/platform'
 import { maybeNotifyWeChatCharacterMessage } from '../wechatSystemNotify'
 import { getWeChatBuiltInNotifySoundMeta, playWeChatNotifySound } from '../wechatNotifySound'
 import { normalizeWeChatTimeConfig } from '../time/wechatTimeUtils'
@@ -424,6 +442,9 @@ function normalizeCharacterTimeSettingsRow(input: unknown): CharacterTimeSetting
   return {
     characterId: r.characterId.trim(),
     config: normalizeWeChatTimeConfig(r.config),
+    ...(typeof (r as { timePerceptionEnabled?: unknown }).timePerceptionEnabled === 'boolean'
+      ? { timePerceptionEnabled: !!(r as { timePerceptionEnabled?: boolean }).timePerceptionEnabled }
+      : {}),
     updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : now,
   }
 }
@@ -691,6 +712,16 @@ function normalizeCharacter(input: unknown): Stored {
       typeof raw.momentsCoverUrl === 'string'
         ? migrateLegacyRootPublicUrl(raw.momentsCoverUrl as string)
         : '',
+    originalAvatarUrl:
+      typeof raw.originalAvatarUrl === 'string'
+        ? migrateLegacyRootPublicUrl(raw.originalAvatarUrl as string)
+        : undefined,
+    avatarHistory: parseCharacterProfileImageHistory(raw.avatarHistory),
+    originalMomentsCoverUrl:
+      typeof raw.originalMomentsCoverUrl === 'string'
+        ? migrateLegacyRootPublicUrl(raw.originalMomentsCoverUrl as string)
+        : undefined,
+    momentsCoverHistory: parseCharacterProfileImageHistory(raw.momentsCoverHistory),
     worldBooks,
     wechatAccountId: typeof raw.wechatAccountId === 'string' ? (raw.wechatAccountId as string).trim() : undefined,
     playerIdentityId: typeof raw.playerIdentityId === 'string' ? (raw.playerIdentityId as string) : undefined,
@@ -1163,13 +1194,70 @@ function normalizeChatConversationSettingsRow(input: unknown): ChatConversationS
       const voiceRaw =
         (r as { voiceRoundTriggerPercent?: unknown }).voiceRoundTriggerPercent ??
         (r as { voiceSendFrequency?: unknown }).voiceSendFrequency
+      const imageRaw = (r as { imageRoundTriggerPercent?: unknown }).imageRoundTriggerPercent
       const sticker = parseStoredRoundTriggerPercent(stickerRaw)
       const voice = parseStoredRoundTriggerPercent(voiceRaw)
+      const image = parseStoredRoundTriggerPercent(imageRaw)
+      const imageCountMinRaw = (r as { imageRoundCountMin?: unknown }).imageRoundCountMin
+      const imageCountMaxRaw = (r as { imageRoundCountMax?: unknown }).imageRoundCountMax
+      const imageCountRange = parseStoredImageRoundCountRange(imageCountMinRaw, imageCountMaxRaw)
       return {
         ...(sticker !== undefined ? { stickerRoundTriggerPercent: sticker } : {}),
         ...(voice !== undefined ? { voiceRoundTriggerPercent: voice } : {}),
+        ...(image !== undefined ? { imageRoundTriggerPercent: image } : {}),
+        ...(isImageRoundCountRangeCustomized(imageCountMinRaw, imageCountMaxRaw)
+          ? {
+              imageRoundCountMin: imageCountRange.min,
+              imageRoundCountMax: imageCountRange.max,
+            }
+          : {}),
       }
     })(),
+    ...(typeof (r as { proactiveMessageEnabled?: unknown }).proactiveMessageEnabled === 'boolean'
+      ? { proactiveMessageEnabled: !!(r as { proactiveMessageEnabled?: boolean }).proactiveMessageEnabled }
+      : {}),
+    ...((): Partial<ChatConversationSettingsRow> => {
+      const resolved = resolveProactiveMessageIntervalSeconds({
+        proactiveMessageIntervalSeconds: (r as { proactiveMessageIntervalSeconds?: unknown })
+          .proactiveMessageIntervalSeconds as number | undefined,
+        proactiveMessageIntervalMinutes: (r as { proactiveMessageIntervalMinutes?: unknown })
+          .proactiveMessageIntervalMinutes as number | undefined,
+      })
+      const hasSec =
+        typeof (r as { proactiveMessageIntervalSeconds?: unknown }).proactiveMessageIntervalSeconds ===
+          'number' &&
+        Number.isFinite((r as { proactiveMessageIntervalSeconds?: number }).proactiveMessageIntervalSeconds)
+      const hasMin =
+        typeof (r as { proactiveMessageIntervalMinutes?: unknown }).proactiveMessageIntervalMinutes ===
+          'number' &&
+        Number.isFinite((r as { proactiveMessageIntervalMinutes?: number }).proactiveMessageIntervalMinutes)
+      if (!hasSec && !hasMin) return {}
+      return { proactiveMessageIntervalSeconds: resolved }
+    })(),
+    ...(typeof (r as { proactiveMessageLastFiredAtMs?: unknown }).proactiveMessageLastFiredAtMs === 'number' &&
+    Number.isFinite((r as { proactiveMessageLastFiredAtMs?: number }).proactiveMessageLastFiredAtMs) &&
+    ((r as { proactiveMessageLastFiredAtMs?: number }).proactiveMessageLastFiredAtMs ?? 0) > 0
+      ? {
+          proactiveMessageLastFiredAtMs: (r as { proactiveMessageLastFiredAtMs: number }).proactiveMessageLastFiredAtMs,
+        }
+      : {}),
+    ...(typeof (r as { proactiveMessageVariableIntervalEnabled?: unknown }).proactiveMessageVariableIntervalEnabled ===
+    'boolean'
+      ? {
+          proactiveMessageVariableIntervalEnabled: !!(r as { proactiveMessageVariableIntervalEnabled?: boolean })
+            .proactiveMessageVariableIntervalEnabled,
+        }
+      : {}),
+    ...(typeof (r as { proactiveMessageNextIntervalSeconds?: unknown }).proactiveMessageNextIntervalSeconds ===
+      'number' &&
+    Number.isFinite((r as { proactiveMessageNextIntervalSeconds?: number }).proactiveMessageNextIntervalSeconds) &&
+    ((r as { proactiveMessageNextIntervalSeconds?: number }).proactiveMessageNextIntervalSeconds ?? 0) > 0
+      ? {
+          proactiveMessageNextIntervalSeconds: clampProactiveVariableIntervalSeconds(
+            (r as { proactiveMessageNextIntervalSeconds: number }).proactiveMessageNextIntervalSeconds,
+          ),
+        }
+      : {}),
     lastMessageTime:
       typeof r.lastMessageTime === 'number' && Number.isFinite(r.lastMessageTime) ? r.lastMessageTime : 0,
     updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : now,
@@ -1406,7 +1494,11 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
   const now = Date.now()
   const scopeRaw = m.memoryScope
   const memoryScope: CharacterMemory['memoryScope'] =
-    scopeRaw === 'group' || scopeRaw === 'private' || scopeRaw === 'linked' || scopeRaw === 'meet'
+    scopeRaw === 'group' ||
+    scopeRaw === 'private' ||
+    scopeRaw === 'linked' ||
+    scopeRaw === 'meet' ||
+    scopeRaw === 'moment'
       ? scopeRaw
       : undefined
   const linkedFromRaw = (m as { linkedFromCharacterId?: unknown }).linkedFromCharacterId
@@ -1486,6 +1578,71 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
         .map(normalizeWorldBookUserPlaceholderBinding)
         .filter((x): x is WorldBookUserPlaceholderBinding => !!x)
     : undefined
+  const momentSourceMomentIdRaw = (m as { momentSourceMomentId?: unknown }).momentSourceMomentId
+  const momentSourceMomentId =
+    typeof momentSourceMomentIdRaw === 'string' && momentSourceMomentIdRaw.trim()
+      ? momentSourceMomentIdRaw.trim().slice(0, 256)
+      : undefined
+  const momentPayloadRaw = (m as { momentPayload?: unknown }).momentPayload
+  let momentPayload: CharacterMemory['momentPayload']
+  if (momentPayloadRaw && typeof momentPayloadRaw === 'object' && !Array.isArray(momentPayloadRaw)) {
+    const mp = momentPayloadRaw as Record<string, unknown>
+    const originalText = typeof mp.originalText === 'string' ? mp.originalText.trim() : ''
+    const interactionsSnapshot =
+      typeof mp.interactionsSnapshot === 'string' ? mp.interactionsSnapshot.trim() : ''
+    const imagesCount =
+      typeof mp.imagesCount === 'number' && Number.isFinite(mp.imagesCount)
+        ? Math.max(0, Math.min(9, Math.floor(mp.imagesCount)))
+        : 0
+    const publishedAtRaw = mp.publishedAt
+    const publishedAt =
+      typeof publishedAtRaw === 'number' && Number.isFinite(publishedAtRaw) && publishedAtRaw > 0
+        ? Math.floor(publishedAtRaw)
+        : undefined
+    if (originalText || interactionsSnapshot) {
+      momentPayload = {
+        originalText: originalText.slice(0, 2000),
+        imagesCount,
+        interactionsSnapshot: interactionsSnapshot.slice(0, 4000),
+        ...(publishedAt ? { publishedAt } : {}),
+        ...(typeof mp.location === 'string' && mp.location.trim()
+          ? { location: mp.location.trim().slice(0, 120) }
+          : {}),
+        ...(typeof mp.socialNarrative === 'string' && mp.socialNarrative.trim()
+          ? { socialNarrative: mp.socialNarrative.trim().slice(0, 2000) }
+          : {}),
+        ...(typeof mp.publisherCharacterId === 'string' && mp.publisherCharacterId.trim()
+          ? { publisherCharacterId: mp.publisherCharacterId.trim().slice(0, 128) }
+          : {}),
+        ...(typeof mp.publisherDisplayName === 'string' && mp.publisherDisplayName.trim()
+          ? { publisherDisplayName: mp.publisherDisplayName.trim().slice(0, 64) }
+          : {}),
+        ...(typeof mp.ownInteractionSummary === 'string' && mp.ownInteractionSummary.trim()
+          ? { ownInteractionSummary: mp.ownInteractionSummary.trim().slice(0, 500) }
+          : {}),
+      }
+    }
+  }
+  const momentMemoryRoleRaw = (m as { momentMemoryRole?: unknown }).momentMemoryRole
+  const momentMemoryRole =
+    momentMemoryRoleRaw === 'publisher' || momentMemoryRoleRaw === 'interactor'
+      ? momentMemoryRoleRaw
+      : undefined
+  const momentPublisherCharacterIdRaw = (m as { momentPublisherCharacterId?: unknown })
+    .momentPublisherCharacterId
+  const momentPublisherCharacterId =
+    typeof momentPublisherCharacterIdRaw === 'string' && momentPublisherCharacterIdRaw.trim()
+      ? momentPublisherCharacterIdRaw.trim().slice(0, 128)
+      : undefined
+  let momentLinkedInteractorCharIds: string[] | undefined
+  const linkedRaw = (m as { momentLinkedInteractorCharIds?: unknown }).momentLinkedInteractorCharIds
+  if (Array.isArray(linkedRaw)) {
+    momentLinkedInteractorCharIds = (linkedRaw as unknown[])
+      .map((x) => String(x ?? '').trim())
+      .filter(Boolean)
+      .slice(0, 32)
+    if (!momentLinkedInteractorCharIds.length) momentLinkedInteractorCharIds = undefined
+  }
   return {
     id: m.id,
     characterId: m.characterId,
@@ -1508,6 +1665,11 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
     ...(userPlaceholderBindings?.length ? { userPlaceholderBindings } : {}),
     memoryEmbedding,
     memoryEmbeddingHash,
+    ...(momentSourceMomentId ? { momentSourceMomentId } : {}),
+    ...(momentPayload ? { momentPayload } : {}),
+    ...(momentMemoryRole ? { momentMemoryRole } : {}),
+    ...(momentPublisherCharacterId ? { momentPublisherCharacterId } : {}),
+    ...(momentLinkedInteractorCharIds?.length ? { momentLinkedInteractorCharIds } : {}),
   }
 }
 
@@ -3664,6 +3826,87 @@ export class PersonaDb {
 
   // -------- 微信私聊消息（chatMessages）与读游标 --------
 
+  private resolveGroupIdFromConversationKey(conversationKey: string): string | null {
+    const scoped = parseWechatAccountGroupConversationKey(conversationKey)
+    if (scoped?.groupId.trim()) return scoped.groupId.trim()
+    return parseGroupIdFromConversationKey(conversationKey)
+  }
+
+  private resolvePrivatePeerCharacterIdFromConversationKey(
+    conversationKey: string,
+    conv: ChatConversationSettingsRow | null,
+    fallbackCharacterId: string,
+  ): string {
+    const fromSettings = conv?.peerCharacterId?.trim()
+    if (fromSettings) return fromSettings
+    const scoped = parseWechatAccountPrivateConversationKey(conversationKey)
+    if (scoped?.characterId.trim()) return scoped.characterId.trim()
+    const parsed = parsePrivateWeChatConversationCharacterAndSession(conversationKey)
+    if (parsed?.characterId.trim()) return parsed.characterId.trim()
+    return fallbackCharacterId.trim()
+  }
+
+  /** 通知用原始头像（含 data URL）；展示解析在 resolveOsNotificationIconUrl 内完成 */
+  private resolveWeChatNotifyAvatarRaw(raw?: string | null): string | undefined {
+    const stored = raw?.trim()
+    if (stored) return stored
+    return pickRandomWechatDefaultAvatar().trim() || undefined
+  }
+
+  private async buildWeChatOsNotifyPayload(params: {
+    conversationKey: string
+    senderCharacterId: string
+    senderDisplayNameHint?: string
+    preview: string
+  }): Promise<{ title: string; body: string; iconUrl?: string } | null> {
+    const preview = params.preview.trim().slice(0, 120) || '新消息'
+    const conversationKey = params.conversationKey.trim()
+    const senderId = params.senderCharacterId.trim()
+    if (!conversationKey || !senderId) return null
+
+    if (isWechatGroupConversationKey(conversationKey)) {
+      const gid = this.resolveGroupIdFromConversationKey(conversationKey)
+      if (!gid) return null
+      const group = await this.getGroupChat(gid)
+      const groupTitle = group?.remark?.trim() || group?.name?.trim() || '群聊'
+      let senderName = params.senderDisplayNameHint?.trim() || ''
+      if (!senderName) {
+        if (senderId === WECHAT_GROUP_BOT_CHARACTER_ID) {
+          senderName = '群管家'
+        } else {
+          senderName = findGroupMember(group, senderId)?.groupNickname?.trim() || ''
+        }
+      }
+      if (!senderName && senderId !== WECHAT_GROUP_BOT_CHARACTER_ID) {
+        const ch = await this.getCharacter(senderId)
+        senderName = ch?.remark?.trim() || ch?.wechatNickname?.trim() || ch?.name?.trim() || ''
+      }
+      if (!senderName) senderName = senderId === WECHAT_GROUP_BOT_CHARACTER_ID ? '群管家' : '群成员'
+      const iconUrl = this.resolveWeChatNotifyAvatarRaw(group?.avatar)
+      return {
+        title: groupTitle,
+        body: `${senderName}: ${preview}`,
+        iconUrl,
+      }
+    }
+
+    const conv = await this.getChatConversationSettings(conversationKey)
+    const peerId = this.resolvePrivatePeerCharacterIdFromConversationKey(conversationKey, conv, senderId)
+    if (peerId === WECHAT_LUMI_PEER_CHARACTER_ID) {
+      const ch = await this.getCharacter(peerId)
+      const title = ch?.remark?.trim() || 'Lumi'
+      const iconUrl = this.resolveWeChatNotifyAvatarRaw(ch?.avatarUrl)
+      return { title, body: preview, iconUrl }
+    }
+    const ch = await this.getCharacter(peerId)
+    const title =
+      ch?.remark?.trim() || ch?.wechatNickname?.trim() || ch?.name?.trim() || '微信'
+    const avatarRaw =
+      senderId === WECHAT_GROUP_BOT_CHARACTER_ID ? DEFAULT_GROUP_ROBOT_AVATAR_URL : ch?.avatarUrl
+    const iconUrl = this.resolveWeChatNotifyAvatarRaw(avatarRaw)
+    return { title, body: preview, iconUrl }
+  }
+
   async appendWeChatChatMessage(
     row: Omit<WeChatChatMessage, 'conversationKey'> & {
       conversationKey?: string
@@ -3700,14 +3943,27 @@ export class PersonaDb {
       playerIdentityId: normalized.playerIdentityId,
       messageTimestamp: normalized.timestamp,
     })
-    if (normalized.type === 'character' && notifyPeerTitle?.trim()) {
+    if (normalized.type === 'character' && !quiet) {
       const st = await this.getChatConversationSettings(conversationKey)
-      maybeNotifyWeChatCharacterMessage({
+      const payload = await this.buildWeChatOsNotifyPayload({
         conversationKey,
-        peerDisplayName: notifyPeerTitle.trim(),
-        preview: formatWeChatMessagesTabPreviewFromStoredMessageContent(normalized.content),
-        isMuted: !!st?.isMuted,
+        senderCharacterId: normalized.characterId,
+        senderDisplayNameHint: notifyPeerTitle,
+        preview: formatWeChatNotifyPreviewFromStoredMessage(normalized),
       })
+      if (payload) {
+        const notifyIcon =
+          payload.iconUrl && supportsPerNotificationCustomIcon()
+            ? await resolveOsNotificationIconUrl(payload.iconUrl)
+            : undefined
+        maybeNotifyWeChatCharacterMessage({
+          conversationKey,
+          peerDisplayName: payload.title,
+          preview: payload.body,
+          iconUrl: notifyIcon,
+          isMuted: !!st?.isMuted,
+        })
+      }
     }
 
     if (normalized.type === 'character' && !quiet) {
@@ -5141,6 +5397,7 @@ export class PersonaDb {
     return raw
       .map((x) => normalizeCharacterMemory(x))
       .filter((x): x is CharacterMemory => !!x)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
   /**
@@ -5279,30 +5536,34 @@ export class PersonaDb {
   async deleteCharacterMemory(id: string): Promise<void> {
     const mid = id.trim()
     if (!mid) return
-    if (!this.isIndexedTrashSuspended()) {
-      const db0 = await openDb()
-      if (db0.objectStoreNames.contains(CHARACTER_MEMORIES_STORE)) {
-        const tx0 = db0.transaction(CHARACTER_MEMORIES_STORE, 'readonly')
-        const req0 = tx0.objectStore(CHARACTER_MEMORIES_STORE).get(mid)
-        const raw0 = await new Promise<unknown>((resolve, reject) => {
-          req0.onsuccess = () => resolve(req0.result)
-          req0.onerror = () => reject(req0.error)
-        })
-        await txDone(tx0)
-        db0.close()
-        const mem = normalizeCharacterMemory(raw0)
-        if (mem) {
-          await this.appendIndexedTrashEntry({
-            kind: 'character-memory',
-            title: `删除记忆`,
-            summary: mem.content?.slice(0, 64) || mem.id,
-            payload: { memory: mem },
-          })
-        }
-      } else {
-        db0.close()
-      }
+
+    let deletedMemory: CharacterMemory | null = null
+    const dbRead = await openDb()
+    if (dbRead.objectStoreNames.contains(CHARACTER_MEMORIES_STORE)) {
+      const txRead = dbRead.transaction(CHARACTER_MEMORIES_STORE, 'readonly')
+      const reqRead = txRead.objectStore(CHARACTER_MEMORIES_STORE).get(mid)
+      const rawRead = await new Promise<unknown>((resolve, reject) => {
+        reqRead.onsuccess = () => resolve(reqRead.result)
+        reqRead.onerror = () => reject(reqRead.error ?? new Error('get characterMemory'))
+      })
+      await txDone(txRead)
+      deletedMemory = normalizeCharacterMemory(rawRead)
     }
+    dbRead.close()
+
+    if (deletedMemory) {
+      await suppressMomentMemoryArchiveFromMemory(deletedMemory)
+    }
+
+    if (!this.isIndexedTrashSuspended() && deletedMemory) {
+      await this.appendIndexedTrashEntry({
+        kind: 'character-memory',
+        title: `删除记忆`,
+        summary: deletedMemory.content?.slice(0, 64) || deletedMemory.id,
+        payload: { memory: deletedMemory },
+      })
+    }
+
     const db = await openDb()
     if (!db.objectStoreNames.contains(CHARACTER_MEMORIES_STORE)) {
       db.close()
@@ -5649,9 +5910,9 @@ export class PersonaDb {
     characterId: string,
     relevanceText: string,
     opts?: MemoryVectorRecallOpts | null,
-  ): Promise<string> {
+  ): Promise<{ text: string; pickedMemories: CharacterMemory[] }> {
     const cid = characterId.trim()
-    if (!cid) return ''
+    if (!cid) return { text: '', pickedMemories: [] }
     const hay = String(relevanceText || '')
       .replace(/\s+/g, ' ')
       .trim()
@@ -5809,15 +6070,19 @@ export class PersonaDb {
           .join('\n')}`,
       )
     }
-    if (!chunks.length) return ''
+    if (!chunks.length) {
+      const pickedMemories = [...privatePick, ...groupPick]
+      return { text: '', pickedMemories }
+    }
+    const pickedMemories = [...privatePick, ...groupPick]
     const body = chunks.join('\n\n')
     if (bucket === 'linked') {
-      return `${body}\n\n（${vectorTail}）`
+      return { text: `${body}\n\n（${vectorTail}）`, pickedMemories }
     }
     if (lineScope?.wechatAccountId?.trim() && privatePick.length) {
-      return body
+      return { text: body, pickedMemories }
     }
-    return `${body}\n\n（${vectorTail}）`
+    return { text: `${body}\n\n（${vectorTail}）`, pickedMemories }
   }
 
   /**
@@ -6640,6 +6905,11 @@ export class PersonaDb {
       ...partial,
       characterId: cid,
       config: normalizeWeChatTimeConfig(partial.config ?? base.config),
+      ...(typeof partial.timePerceptionEnabled === 'boolean'
+        ? { timePerceptionEnabled: partial.timePerceptionEnabled }
+        : base.timePerceptionEnabled !== undefined
+          ? { timePerceptionEnabled: base.timePerceptionEnabled }
+          : {}),
       updatedAt: Date.now(),
     }
     const next = normalizeCharacterTimeSettingsRow(merged)
@@ -6784,6 +7054,9 @@ export class PersonaDb {
       clearFriendRequestAcceptedAt?: boolean
       clearStickerRoundTriggerPercent?: boolean
       clearVoiceRoundTriggerPercent?: boolean
+      clearImageRoundTriggerPercent?: boolean
+      clearImageRoundCountRange?: boolean
+      clearProactiveMessageIntervalSeconds?: boolean
     } & Partial<
       Pick<
         ChatConversationSettingsRow,
@@ -6798,6 +7071,14 @@ export class PersonaDb {
         | 'chatBackground'
         | 'stickerRoundTriggerPercent'
         | 'voiceRoundTriggerPercent'
+        | 'imageRoundTriggerPercent'
+        | 'imageRoundCountMin'
+        | 'imageRoundCountMax'
+        | 'proactiveMessageEnabled'
+        | 'proactiveMessageIntervalSeconds'
+        | 'proactiveMessageLastFiredAtMs'
+        | 'proactiveMessageVariableIntervalEnabled'
+        | 'proactiveMessageNextIntervalSeconds'
         | 'lastMessageTime'
         | 'uiOnlyHiddenBeforeTimestamp'
         | 'friendRequestAcceptedAtMs'
@@ -6859,6 +7140,77 @@ export class PersonaDb {
           : existing?.voiceRoundTriggerPercent !== undefined
             ? { voiceRoundTriggerPercent: existing.voiceRoundTriggerPercent }
             : {}),
+      ...(params.clearImageRoundTriggerPercent
+        ? {}
+        : typeof params.imageRoundTriggerPercent === 'number' && Number.isFinite(params.imageRoundTriggerPercent)
+          ? { imageRoundTriggerPercent: clampRoundTriggerPercent(params.imageRoundTriggerPercent) }
+          : existing?.imageRoundTriggerPercent !== undefined
+            ? { imageRoundTriggerPercent: existing.imageRoundTriggerPercent }
+            : {}),
+      ...(params.clearImageRoundCountRange
+        ? {}
+        : typeof params.imageRoundCountMin === 'number' ||
+            typeof params.imageRoundCountMax === 'number' ||
+            existing?.imageRoundCountMin !== undefined ||
+            existing?.imageRoundCountMax !== undefined
+          ? (() => {
+              const merged = parseStoredImageRoundCountRange(
+                typeof params.imageRoundCountMin === 'number' && Number.isFinite(params.imageRoundCountMin)
+                  ? params.imageRoundCountMin
+                  : existing?.imageRoundCountMin,
+                typeof params.imageRoundCountMax === 'number' && Number.isFinite(params.imageRoundCountMax)
+                  ? params.imageRoundCountMax
+                  : existing?.imageRoundCountMax,
+              )
+              return {
+                imageRoundCountMin: clampImageRoundCount(merged.min),
+                imageRoundCountMax: clampImageRoundCount(merged.max),
+              }
+            })()
+          : {}),
+      ...(typeof params.proactiveMessageEnabled === 'boolean'
+        ? { proactiveMessageEnabled: params.proactiveMessageEnabled }
+        : existing?.proactiveMessageEnabled !== undefined
+          ? { proactiveMessageEnabled: existing.proactiveMessageEnabled }
+          : {}),
+      ...(params.clearProactiveMessageIntervalSeconds
+        ? {}
+        : typeof params.proactiveMessageIntervalSeconds === 'number' &&
+            Number.isFinite(params.proactiveMessageIntervalSeconds)
+          ? {
+              proactiveMessageIntervalSeconds: clampProactiveMessageIntervalSeconds(
+                params.proactiveMessageIntervalSeconds,
+              ),
+            }
+          : existing?.proactiveMessageIntervalSeconds !== undefined ||
+              existing?.proactiveMessageIntervalMinutes !== undefined
+            ? {
+                proactiveMessageIntervalSeconds: resolveProactiveMessageIntervalSeconds(existing),
+              }
+            : {}),
+      ...(typeof params.proactiveMessageLastFiredAtMs === 'number' &&
+      Number.isFinite(params.proactiveMessageLastFiredAtMs) &&
+      params.proactiveMessageLastFiredAtMs > 0
+        ? { proactiveMessageLastFiredAtMs: params.proactiveMessageLastFiredAtMs }
+        : existing?.proactiveMessageLastFiredAtMs !== undefined
+          ? { proactiveMessageLastFiredAtMs: existing.proactiveMessageLastFiredAtMs }
+          : {}),
+      ...(typeof params.proactiveMessageVariableIntervalEnabled === 'boolean'
+        ? { proactiveMessageVariableIntervalEnabled: params.proactiveMessageVariableIntervalEnabled }
+        : existing?.proactiveMessageVariableIntervalEnabled !== undefined
+          ? { proactiveMessageVariableIntervalEnabled: existing.proactiveMessageVariableIntervalEnabled }
+          : {}),
+      ...(typeof params.proactiveMessageNextIntervalSeconds === 'number' &&
+      Number.isFinite(params.proactiveMessageNextIntervalSeconds) &&
+      params.proactiveMessageNextIntervalSeconds > 0
+        ? {
+            proactiveMessageNextIntervalSeconds: clampProactiveVariableIntervalSeconds(
+              params.proactiveMessageNextIntervalSeconds,
+            ),
+          }
+        : existing?.proactiveMessageNextIntervalSeconds !== undefined
+          ? { proactiveMessageNextIntervalSeconds: existing.proactiveMessageNextIntervalSeconds }
+          : {}),
       lastMessageTime: params.lastMessageTime ?? existing?.lastMessageTime ?? 0,
       updatedAt: now,
       ...(typeof uiOnlyHiddenBeforeTimestamp === 'number' &&

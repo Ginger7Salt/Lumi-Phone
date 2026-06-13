@@ -72,8 +72,11 @@ export async function buildFriendRequestPrivatePromptPack(params: {
     currentAccountId: string
     allAccounts: UserAccount[]
   }
+  /** 好友申请栏为 true；普通私聊主动消息等场景传 false */
+  strangerMemoryGuard?: boolean
 }): Promise<{
   memory: string
+  momentImageUrls?: string[]
   unsPrivate: string
   unsGroup: string
   recentGroupChatsReference: string
@@ -98,8 +101,7 @@ export async function buildFriendRequestPrivatePromptPack(params: {
 
   const chRow = await personaDb.getCharacter(cid)
   const fromMeet = isMeetSyncedCharacter(cid, chRow?.worldBooks)
-  /** 好友申请栏：一律按陌生人处理记忆/摘录，不注入它号私聊，避免模型「认出」申请人。 */
-  const strangerMemoryGuard = true
+  const strangerMemoryGuard = params.strangerMemoryGuard !== false
   const apiOk = params.apiConfig?.apiUrl?.trim() && params.apiConfig?.apiKey?.trim() ? params.apiConfig : null
 
   const lineScope = normalizeMemoryPromptLineScope(
@@ -135,20 +137,22 @@ export async function buildFriendRequestPrivatePromptPack(params: {
     fromMeet ? String(unsMeet ?? '').trim().slice(0, 2800) : '',
     unsPrivateMerged.slice(0, 4800),
   ])
-  const { formatCharacterMemoriesForPromptInjection } = await import(
+  const { formatCharacterMemoriesForPromptInjectionPack } = await import(
     './memory/formatCharacterMemoriesForPromptInjection'
   )
-  let memory = await formatCharacterMemoriesForPromptInjection(cid, hayFull, {
+  const memoryPack = await formatCharacterMemoriesForPromptInjectionPack(cid, hayFull, {
     apiConfig: apiOk,
     lineScope: (lineScope ?? scopeForWrap) ?? undefined,
   })
-  memory = memory.trim()
+  let memory = memoryPack.text.trim()
+  const momentImageUrls = memoryPack.momentImageUrls
   if (strangerMemoryGuard && memory && !memory.includes('分线阅读')) {
     memory = wrapStrangerContactLongTermMemoryBlock(memory)
   }
 
   return {
     memory,
+    momentImageUrls,
     unsPrivate: unsPrivateMerged.trim(),
     unsGroup: '',
     recentGroupChatsReference: '',

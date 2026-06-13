@@ -6,6 +6,7 @@ import {
   Maximize2,
   Plus,
   RotateCcw,
+  ScanSearch,
   Sparkles,
   X,
 } from 'lucide-react'
@@ -14,7 +15,7 @@ import { createPortal } from 'react-dom'
 import type { CSSProperties, PointerEvent } from 'react'
 import type { Character, PlayerNetworkLink, Relationship } from './types'
 import { useCustomization } from '../../../CustomizationContext'
-import { personaDb } from './idb'
+import { personaDb, emitWeChatStorageChanged } from './idb'
 import { backfillNpcPlayerIdentityFromRootMain } from '../wechatCharacterPlayerIdentity'
 import { stampWechatAccountOwner } from '../wechatAccountScope'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
@@ -23,6 +24,9 @@ import { generateNpcNetworkWithAi } from './npcNetworkGenerate'
 import { genderLabelZh, uid } from './utils'
 import type { ApiConfig } from '../../api/types'
 import { pruneCharacterVoiceMappings } from '../../voiceprint/characterVoiceMapStorage'
+import { auditCliqueIdentityBinding, type CliqueIdentityBindingAudit } from './personaIdentityBindingAudit'
+import { markCliqueIdentitySyncAck } from './personaIdentitySyncAck'
+import { persistCliqueCharacterUpdates, runIdentityCliqueSyncWithAi } from './personaIdentityCliqueSync'
 import { isCharacterCanonicalPreservedOnOtherWechatAccounts } from '../wechatContactRemoval'
 
 /** 关系偏向：语义去重（职场含同事向、家族含亲属向、宿敌含对立向），避免胶囊列表冗长 */
@@ -324,6 +328,9 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
   const [rels, setRels] = useState<Relationship[]>([])
   const [playerLinks, setPlayerLinks] = useState<PlayerNetworkLink[]>([])
   const [generating, setGenerating] = useState(false)
+  const [bindingAudit, setBindingAudit] = useState<CliqueIdentityBindingAudit | null>(null)
+  const [bindingAuditLoading, setBindingAuditLoading] = useState(false)
+  const [bindingSyncGenerating, setBindingSyncGenerating] = useState(false)
   const [graphEditorOpen, setGraphEditorOpen] = useState(false)
   const [draftRels, setDraftRels] = useState<Relationship[]>([])
   const [draftPlayerLinks, setDraftPlayerLinks] = useState<PlayerNetworkLink[]>([])
@@ -674,9 +681,167 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
   const focalDisplayName =
     [main, ...npcs, ...linkedRoots].find((n) => n.id === graphFocalId)?.name?.trim() || '—'
 
+  const runBindingAudit = useCallback(async () => {
+    setBindingAuditLoading(true)
+    try {
+      const audit = await auditCliqueIdentityBinding({
+        rootId: main.id,
+        main,
+        npcs,
+        playerLinks,
+        wechatAccountId: main.wechatAccountId,
+      })
+      setBindingAudit(audit)
+      if (!audit.needsAttention) {
+        window.alert(`绑定数据与当前身份「${audit.currentIdentityName}」一致，未发现问题。`)
+      }
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : '绑定检测失败')
+    } finally {
+      setBindingAuditLoading(false)
+    }
+  }, [main, npcs, playerLinks])
+
+  const runBindingSyncAll = useCallback(async () => {
+    if (!bindingAudit?.needsAttention) return
+    if (!apiConfig?.apiUrl?.trim() || !apiConfig?.apiKey?.trim() || !apiConfig?.modelId?.trim()) {
+      onApiMissing()
+      return
+    }
+    setBindingSyncGenerating(true)
+    try {
+      const identityId = main.playerIdentityId?.trim() || (await personaDb.getCurrentIdentityId()).trim()
+      const playerIdentity = identityId ? await personaDb.getPlayerIdentity(identityId) : null
+      const { updatedLinks, updatedCharacters } = await runIdentityCliqueSyncWithAi(apiConfig, 'all', {
+        rootCharacter: main,
+        npcs,
+        playerLinks,
+        playerIdentity,
+        previousIdentityNames: bindingAudit.foreignIdentityNames.length
+          ? bindingAudit.foreignIdentityNames
+          : bindingAudit.previousIdentityNames,
+        currentIdentityName: bindingAudit.currentIdentityName,
+      })
+      let nextLinks = updatedLinks
+      if (updatedLinks !== playerLinks) {
+        await personaDb.putPlayerNetworkLinks(main.id, nextLinks)
+        setPlayerLinks(nextLinks)
+      }
+      let nextMain = main
+      let nextNpcs = npcs
+      if (updatedCharacters.length) {
+        await persistCliqueCharacterUpdates(updatedCharacters)
+        await reload()
+        nextMain = (await personaDb.getCharacter(main.id)) ?? main
+        nextNpcs = await personaDb.listNpcsFor(main.id)
+      } else if (updatedLinks !== playerLinks) {
+        emitWeChatStorageChanged()
+      }
+      await markCliqueIdentitySyncAck(main.id, identityId, bindingAudit.currentIdentityName)
+      const freshAudit = await auditCliqueIdentityBinding({
+        rootId: main.id,
+        main: nextMain,
+        npcs: nextNpcs,
+        playerLinks: nextLinks,
+        wechatAccountId: main.wechatAccountId,
+      })
+      setBindingAudit(freshAudit)
+      window.alert(
+        freshAudit.needsAttention
+          ? '已更新部分数据，但检测仍有问题项，请查看下方详情或手动修改。'
+          : '已一键 AI 更新并完成复检，绑定数据与当前身份一致。',
+      )
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'AI 同步失败')
+    } finally {
+      setBindingSyncGenerating(false)
+    }
+  }, [apiConfig, bindingAudit, main, npcs, onApiMissing, playerLinks, reload])
+
   return (
     <>
     <div className="space-y-8">
+      <section className="overflow-hidden rounded-2xl border border-neutral-200/80 bg-white">
+        <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-4">
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-2 text-[13px] font-medium text-[#1C1C1E]">
+              <ScanSearch className="size-4 shrink-0 text-neutral-500" strokeWidth={1.5} />
+              绑定检测
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+              对照主角当前绑定身份（含性别），检测人脉称呼、看法、世界书 user 绑定与尾声延展是否一致。
+            </p>
+            {bindingAudit?.needsAttention ? (
+              <div className="mt-2 rounded-xl border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-[12px] leading-relaxed text-amber-950">
+                <p>
+                  当前绑定身份：「{bindingAudit.currentIdentityName}」
+                  {bindingAudit.currentIdentityGender
+                    ? `（${bindingAudit.currentIdentityGender === 'male' ? '男' : bindingAudit.currentIdentityGender === 'female' ? '女' : '其他'}）`
+                    : ''}
+                  {bindingAudit.foreignIdentityNames.length
+                    ? `；旧/外来身份名：${bindingAudit.foreignIdentityNames.join('、')}`
+                    : ''}
+                </p>
+                {bindingAudit.hasStalePlayerAddressing ? (
+                  <p className="mt-1">
+                    {bindingAudit.stalePlayerAddressingCount} 条称呼不一致
+                    {bindingAudit.staleAddressingSamples.length
+                      ? `（如 ${bindingAudit.staleAddressingSamples.slice(0, 3).join('；')}）`
+                      : ''}
+                  </p>
+                ) : null}
+                {bindingAudit.hasStalePlayerView ? (
+                  <p className="mt-1">
+                    {bindingAudit.stalePlayerViewCount} 条「对你看法」需更新
+                    {bindingAudit.staleViewSamples.length
+                      ? `（${bindingAudit.staleViewSamples.slice(0, 3).join('；')}）`
+                      : ''}
+                  </p>
+                ) : null}
+                {bindingAudit.hasAfterAttitudeEntries ? (
+                  <p className="mt-1">
+                    共 {bindingAudit.afterAttitudeEntryCount} 条尾声延展建议核对
+                    {bindingAudit.afterContentMentionsForeignNames ? '（正文含旧身份名）' : ''}。
+                  </p>
+                ) : null}
+                {bindingAudit.issues.length ? (
+                  <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px]">
+                    {bindingAudit.issues.slice(0, 6).map((issue, i) => (
+                      <li key={`${issue.kind}-${issue.characterId ?? ''}-${i}`}>{issue.detail}</li>
+                    ))}
+                    {bindingAudit.issues.length > 6 ? (
+                      <li>另有 {bindingAudit.issues.length - 6} 项…</li>
+                    ) : null}
+                  </ul>
+                ) : null}
+              </div>
+            ) : bindingAudit && !bindingAudit.needsAttention ? (
+              <p className="mt-2 text-[12px] text-emerald-700">绑定数据与当前身份一致，无需再次同步。</p>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              disabled={bindingAuditLoading || bindingSyncGenerating}
+              onClick={() => void runBindingAudit()}
+              className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-[12px] font-medium text-[#1C1C1E] transition-colors hover:bg-neutral-50 disabled:opacity-50"
+            >
+              {bindingAuditLoading ? '检测中…' : '检测绑定'}
+            </button>
+            {bindingAudit?.needsAttention ? (
+              <button
+                type="button"
+                disabled={bindingSyncGenerating || bindingAuditLoading}
+                onClick={() => void runBindingSyncAll()}
+                className="rounded-xl bg-[#1C1C1E] px-4 py-2 text-[12px] font-semibold text-white transition-opacity disabled:opacity-50"
+              >
+                {bindingSyncGenerating ? '生成中…' : '一键 AI 生成并替换'}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </section>
+
       <section className="relative">
         <div className="relative overflow-hidden rounded-2xl border border-neutral-100/90 bg-gray-50/50">
           {!graphFullscreenOpen ? (
@@ -1086,8 +1251,8 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                   <p className="text-center text-[15px] font-semibold" style={{ color: '#262626' }}>
                     「你」与「{charNameForYou}」
                   </p>
-                  <p className="mt-2 text-center text-[11px]" style={{ color: '#8e8e8e' }}>
-                    默认仅浏览；点「编辑」后可改文案，保存后写回人脉。
+                  <p className="mt-2 text-center text-[11px] leading-relaxed" style={{ color: '#8e8e8e' }}>
+                    连线详情：关系词、双方看法与称呼。点「编辑」后可修改并保存。
                   </p>
                   <div className="mt-3 flex justify-center">
                     <button
@@ -1175,65 +1340,77 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                       const d = (s: string) => (String(s || '').trim() ? String(s).trim() : '—')
                       return (
                         <div
-                          className="mt-4 space-y-2 rounded-xl border px-3 py-3 text-[13px] leading-relaxed"
+                          className="mt-4 space-y-3 rounded-xl border px-3 py-3 text-[13px] leading-relaxed"
                           style={{ borderColor: '#e5e5e5', background: '#fafafa', color: '#262626' }}
                         >
-                          <p>
-                            <span className="text-[11px] font-medium text-[#737373]">对方→你</span> {d(draftThemRel)}
-                          </p>
-                          <p>
-                            <span className="text-[11px] font-medium text-[#737373]">对方称你</span> {d(draftTheyCallYou)}
-                          </p>
-                          <p className="text-[12px]">
-                            <span className="text-[11px] font-medium text-[#737373]">【{charNameForYou}看你】</span>
-                            <span className="mt-0.5 block whitespace-pre-wrap">{d(draftTheySeeYou)}</span>
-                          </p>
-                          <p>
-                            <span className="text-[11px] font-medium text-[#737373]">你→对方</span> {d(draftYouRel)}
-                          </p>
-                          <p>
-                            <span className="text-[11px] font-medium text-[#737373]">你称对方</span> {d(draftYouCallThem)}
-                          </p>
-                          <p className="text-[12px]">
-                            <span className="text-[11px] font-medium text-[#737373]">【你看{charNameForYou}】</span>
-                            <span className="mt-0.5 block whitespace-pre-wrap">{d(draftYouSee)}</span>
-                          </p>
+                          <div>
+                            <p className="text-[12px] font-semibold" style={{ color: '#262626' }}>
+                              【{charNameForYou} → 你】
+                            </p>
+                            <p className="mt-1">
+                              <span className="text-[11px] font-medium text-[#737373]">关系词</span> {d(draftThemRel)}
+                            </p>
+                            <p className="mt-1">
+                              <span className="text-[11px] font-medium text-[#737373]">称呼你</span> {d(draftTheyCallYou)}
+                            </p>
+                            <p className="mt-1 text-[12px]">
+                              <span className="text-[11px] font-medium text-[#737373]">【{charNameForYou}看你】</span>
+                              <span className="mt-0.5 block whitespace-pre-wrap">{d(draftTheySeeYou)}</span>
+                            </p>
+                          </div>
+                          <div className="border-t pt-3" style={{ borderColor: '#e5e5e5' }}>
+                            <p className="text-[12px] font-semibold" style={{ color: '#262626' }}>
+                              【你 → {charNameForYou}】
+                            </p>
+                            <p className="mt-1">
+                              <span className="text-[11px] font-medium text-[#737373]">关系词</span> {d(draftYouRel)}
+                            </p>
+                            <p className="mt-1">
+                              <span className="text-[11px] font-medium text-[#737373]">称呼对方</span> {d(draftYouCallThem)}
+                            </p>
+                            <p className="mt-1 text-[12px]">
+                              <span className="text-[11px] font-medium text-[#737373]">【你看{charNameForYou}】</span>
+                              <span className="mt-0.5 block whitespace-pre-wrap">{d(draftYouSee)}</span>
+                            </p>
+                          </div>
                         </div>
                       )
                     })()
                   )}
-                  <button
-                    type="button"
-                    disabled={savingPlayerView}
-                    className="mt-4 w-full rounded-xl py-2.5 text-[13px] font-medium text-white disabled:opacity-50"
-                    style={{ background: '#000000' }}
-                    onClick={() => {
-                      void (async () => {
-                        setSavingPlayerView(true)
-                        try {
-                          const next = playerLinks.map((l) =>
-                            l.characterId === playerLinkCharIdForModal
-                              ? {
-                                  ...l,
-                                  relationYouToThem: draftYouRel.trim(),
-                                  youSeeThem: draftYouSee.trim(),
-                                  youCallThem: draftYouCallThem.trim(),
-                                  theyCallYou: draftTheyCallYou.trim(),
-                                  theySeeYou: draftTheySeeYou.trim(),
-                                  relationThemToYou: draftThemRel.trim(),
-                                }
-                              : l,
-                          )
-                          await personaDb.putPlayerNetworkLinks(main.id, next)
-                          setPlayerLinks(next)
-                        } finally {
-                          setSavingPlayerView(false)
-                        }
-                      })()
-                    }}
-                  >
-                    {savingPlayerView ? '保存中…' : '保存本条连线'}
-                  </button>
+                  {edgePlayerFormUnlocked ? (
+                    <button
+                      type="button"
+                      disabled={savingPlayerView}
+                      className="mt-4 w-full rounded-xl py-2.5 text-[13px] font-medium text-white disabled:opacity-50"
+                      style={{ background: '#000000' }}
+                      onClick={() => {
+                        void (async () => {
+                          setSavingPlayerView(true)
+                          try {
+                            const next = playerLinks.map((l) =>
+                              l.characterId === playerLinkCharIdForModal
+                                ? {
+                                    ...l,
+                                    relationYouToThem: draftYouRel.trim(),
+                                    youSeeThem: draftYouSee.trim(),
+                                    youCallThem: draftYouCallThem.trim(),
+                                    theyCallYou: draftTheyCallYou.trim(),
+                                    theySeeYou: draftTheySeeYou.trim(),
+                                    relationThemToYou: draftThemRel.trim(),
+                                  }
+                                : l,
+                            )
+                            await personaDb.putPlayerNetworkLinks(main.id, next)
+                            setPlayerLinks(next)
+                          } finally {
+                            setSavingPlayerView(false)
+                          }
+                        })()
+                      }}
+                    >
+                      {savingPlayerView ? '保存中…' : '保存本条连线'}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="mt-2 w-full rounded-xl border py-2 text-[13px]"
@@ -1285,10 +1462,10 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                 onClick={(e) => e.stopPropagation()}
               >
                 <p className="text-center text-[15px] font-semibold" style={{ color: '#262626' }}>
-                  编辑关系与看法
+                  {fromName} ↔ {toName}
                 </p>
                 <p className="mt-2 text-center text-[11px] leading-relaxed" style={{ color: '#8e8e8e' }}>
-                  默认仅浏览；点「编辑」后可改文案。若某方向无记录，请在「手动编辑关系图」→「角色与 NPC」补充有向边。
+                  连线详情：各方向关系词、称呼与看法。点「编辑」后可修改并保存。
                 </p>
                 <div className="mt-3 flex justify-center">
                   <button
@@ -1457,8 +1634,10 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
                 })()}
                 <button
                   type="button"
-                  disabled={savingCharEdge || (!draftCharAb && !draftCharBa)}
-                  className="mt-4 w-full rounded-xl py-2.5 text-[13px] font-medium text-white disabled:opacity-50"
+                  disabled={edgeCharFormUnlocked && (savingCharEdge || (!draftCharAb && !draftCharBa))}
+                  className={`mt-4 w-full rounded-xl py-2.5 text-[13px] font-medium text-white disabled:opacity-50 ${
+                    edgeCharFormUnlocked ? '' : 'hidden'
+                  }`}
                   style={{ background: '#000000' }}
                   onClick={() => {
                     void (async () => {

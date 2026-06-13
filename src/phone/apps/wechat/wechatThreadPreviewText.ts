@@ -20,3 +20,37 @@ export function formatWeChatMessagesTabPreviewFromStoredMessageContent(content: 
   if (firstLine.startsWith('[表情包]') || firstLine.startsWith('[表情]')) return '[动画表情]'
   return pc
 }
+
+type NotifyPreviewMessage = {
+  content: string
+  voice?: { durationSec?: number } | null
+  images?: unknown[] | null
+  redPacket?: unknown | null
+  transfer?: unknown | null
+  musicSync?: unknown | null
+}
+
+/** 微信「信息」会话列表末条预览（与通知摘要规则一致） */
+export function formatWeChatMessagesTabPreviewFromStoredMessage(msg: NotifyPreviewMessage): string {
+  return formatWeChatNotifyPreviewFromStoredMessage(msg)
+}
+
+/** 系统通知栏摘要：语音显示为 `[语音]X"`（X=秒数） */
+export function formatWeChatNotifyPreviewFromStoredMessage(msg: NotifyPreviewMessage): string {
+  if (msg.voice) {
+    const sec = Math.max(1, Math.round(msg.voice.durationSec || 1))
+    return `[语音]${sec}"`
+  }
+  const pc = stripGroupEventNoticePrefixLocal(String(msg.content ?? '').trim()).trim()
+  const firstLine = (pc.split(/\r?\n/)[0] ?? '').trim()
+  if (firstLine.startsWith('[语音]')) {
+    const voiceDurationMatch = /\[语音\](\d+)/.exec(firstLine)
+    const sec = voiceDurationMatch ? Number(voiceDurationMatch[1]) : 1
+    return `[语音]${Math.max(1, Math.round(sec))}"`
+  }
+  if (msg.transfer) return '[转账]'
+  if (msg.musicSync) return '[音乐]'
+  if (msg.redPacket) return '[红包]'
+  if (msg.images?.length) return '[图片]'
+  return formatWeChatMessagesTabPreviewFromStoredMessageContent(msg.content)
+}

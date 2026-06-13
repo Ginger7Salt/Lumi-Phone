@@ -15,6 +15,7 @@ import {
   DEFAULT_CUSTOMIZATION,
   DEFAULT_PERSONAL_CARD_BG_PATH,
   DEFAULT_PERSONAL_CARD_PROFILE,
+  PHONE_NUM_FONT_FAMILY,
   DEFAULT_PUBLIC_AVATAR_PATH,
   DEFAULT_WECHAT_MIRROR_PROFILE,
   DEFAULT_APP_PAGE_STYLE,
@@ -432,6 +433,7 @@ function normalizeAppPageStyles(parsed: unknown): CustomizationState['appPageSty
     dataArchive: migrateAppPage({ ...def.dataArchive, ...record.dataArchive }),
     loreArchive: migrateAppPage({ ...def.loreArchive, ...record.loreArchive }),
     recycleBin: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...def.recycleBin, ...record.recycleBin }),
+    backgroundNotify: migrateAppPage({ ...def.backgroundNotify, ...record.backgroundNotify }),
     appearance: migrateAppPage(appearanceMerged),
     lumiMeet: migrateAppPage({ ...def.lumiMeet, ...record.lumiMeet }),
   }
@@ -587,6 +589,7 @@ function themeToStyle(theme: PhoneTheme): React.CSSProperties {
     '--phone-radius-md': theme.radiusMd,
     '--phone-radius-sm': theme.radiusSm,
     '--phone-font': theme.fontFamily,
+    '--phone-num-font': PHONE_NUM_FONT_FAMILY,
   } as React.CSSProperties
 }
 
@@ -594,7 +597,7 @@ function wechatThemeToStyle(theme: WeChatTheme, globalFontFamily: string): React
   const resolvedFont = theme.fontFamily?.trim() ? theme.fontFamily : globalFontFamily
   const resolvedNumFont = theme.numberFontFamily?.trim()
     ? theme.numberFontFamily
-    : '"Inter", system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif'
+    : PHONE_NUM_FONT_FAMILY
   return {
     '--wx-primary': theme.primary,
     '--wx-bg': theme.background,
@@ -710,6 +713,7 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.documentElement.style.setProperty('--phone-bg', state.theme.background)
     document.documentElement.style.setProperty('--phone-font', state.theme.fontFamily)
+    document.documentElement.style.setProperty('--phone-num-font', PHONE_NUM_FONT_FAMILY)
     const meta = document.querySelector('meta[name="theme-color"]')
     if (meta) meta.setAttribute('content', state.theme.background)
   }, [state.theme.background, state.theme.fontFamily])

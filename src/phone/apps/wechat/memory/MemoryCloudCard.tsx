@@ -3,8 +3,8 @@ import { ChevronDown, MoreHorizontal, Pencil, Sparkles, Trash2, User, UserRound 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MemoryEntry, MemorySourceIdentity } from './memoryArchiveTypes'
 import { ARCHIVE_INK, ARCHIVE_SERIF } from './memoryArchiveTheme'
+import { isMomentMemoryEntry, MomentMemoryArchiveCard } from './MomentMemoryArchiveCard'
 
-const LONG_PRESS_MS = 480
 const EXPAND_EASE = [0.22, 1, 0.36, 1] as const
 
 function stopPointerBubble(e: React.PointerEvent | React.MouseEvent) {
@@ -79,19 +79,11 @@ export function MemoryCloudCard({
   const [expanded, setExpanded] = useState(false)
   const [actionsOpen, setActionsOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const longPressFired = useRef(false)
   const menuWrapRef = useRef<HTMLDivElement | null>(null)
 
   const bodyText = entry.content.trim() || '—'
   const displayText = (entry.contentExpanded?.trim() || bodyText) || '—'
-
-  const clearLongPress = useCallback(() => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current)
-      longPressTimer.current = null
-    }
-  }, [])
+  const momentMemory = isMomentMemoryEntry(entry)
 
   const closeActions = useCallback(() => {
     setActionsOpen(false)
@@ -105,20 +97,7 @@ export function MemoryCloudCard({
     })
   }, [])
 
-  const startLongPress = useCallback(() => {
-    longPressFired.current = false
-    clearLongPress()
-    longPressTimer.current = setTimeout(() => {
-      longPressFired.current = true
-      setActionsOpen(true)
-    }, LONG_PRESS_MS)
-  }, [clearLongPress])
-
   const toggleExpanded = useCallback(() => {
-    if (longPressFired.current) {
-      longPressFired.current = false
-      return
-    }
     setExpanded((v) => !v)
   }, [])
 
@@ -173,7 +152,11 @@ export function MemoryCloudCard({
             {primaryTags.map((tag) => (
               <span
                 key={tag}
-                className="rounded-full bg-gray-50 px-3 py-1 text-[10px] font-medium tracking-wider text-gray-500"
+                className={`rounded-full px-3 py-1 text-[10px] font-medium tracking-wider ${
+                  tag === '朋友圈'
+                    ? 'bg-gray-50 text-gray-500'
+                    : 'bg-gray-50 text-gray-500'
+                }`}
               >
                 {tag}
               </span>
@@ -252,22 +235,6 @@ export function MemoryCloudCard({
           type="button"
           className="mt-3 w-full touch-manipulation text-left"
           onClick={toggleExpanded}
-          onPointerDown={(e) => {
-            stopPointerBubble(e)
-            startLongPress()
-          }}
-          onPointerUp={(e) => {
-            stopPointerBubble(e)
-            clearLongPress()
-          }}
-          onPointerLeave={(e) => {
-            stopPointerBubble(e)
-            clearLongPress()
-          }}
-          onPointerCancel={(e) => {
-            stopPointerBubble(e)
-            clearLongPress()
-          }}
           aria-expanded={expanded}
         >
           <p className="text-[10px] tracking-[0.14em] text-gray-400">
@@ -275,6 +242,10 @@ export function MemoryCloudCard({
             {entry.groupDisplayName ? ` · ${entry.groupDisplayName}` : ''}
           </p>
 
+          {momentMemory ? (
+            <MomentMemoryArchiveCard entry={entry} expanded={expanded} />
+          ) : (
+            <>
           <AnimatePresence mode="wait" initial={false}>
             {expanded ? (
               <motion.p
@@ -302,6 +273,8 @@ export function MemoryCloudCard({
               </motion.p>
             )}
           </AnimatePresence>
+            </>
+          )}
 
           <div className="mt-3 flex items-center justify-between gap-2">
             <span className="text-[10px] tracking-wider text-gray-300">

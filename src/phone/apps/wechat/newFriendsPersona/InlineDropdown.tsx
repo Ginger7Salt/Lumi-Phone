@@ -1,6 +1,6 @@
 import { ChevronDown } from 'lucide-react'
 import { createPortal } from 'react-dom'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { useMemo } from 'react'
 
 /**
@@ -15,6 +15,7 @@ export function InlineDropdown({
   disabled = false,
   /** 为 true 时在触发按钮上 mousedown 调用 preventDefault，避免抢走邻近 textarea 焦点导致选区错乱（占位符插入等场景） */
   suppressTriggerFocusSteal = false,
+  valueTextStyle,
   children,
 }: {
   label: string
@@ -24,6 +25,8 @@ export function InlineDropdown({
   /** 为 true 时不展开，样式与禁用一致（如无数据时） */
   disabled?: boolean
   suppressTriggerFocusSteal?: boolean
+  /** 触发按钮与面板副标题上的 valueText 字体（如全局数字字体） */
+  valueTextStyle?: CSSProperties
   children: ReactNode
 }) {
   const modal = useMemo(() => {
@@ -50,7 +53,7 @@ export function InlineDropdown({
               <p className="truncate text-[14px] font-semibold" style={{ color: '#000000' }}>
                 {label}
               </p>
-              <p className="mt-0.5 truncate text-[12px]" style={{ color: '#666666' }}>
+              <p className="mt-0.5 truncate text-[12px]" style={{ color: '#666666', ...valueTextStyle }}>
                 {valueText}
               </p>
             </div>
@@ -70,7 +73,7 @@ export function InlineDropdown({
       </div>,
       document.body,
     )
-  }, [open, disabled, children, label, valueText, onToggle])
+  }, [open, disabled, children, label, valueText, valueTextStyle, onToggle])
 
   return (
     <div className="relative min-w-0 flex-1">
@@ -90,7 +93,9 @@ export function InlineDropdown({
         aria-label={label}
         aria-expanded={open}
       >
-        <span className="pointer-events-none select-none text-center">{valueText}</span>
+        <span className="pointer-events-none select-none text-center" style={valueTextStyle}>
+          {valueText}
+        </span>
         <ChevronDown
           className={`pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 transition-transform duration-200 ${
             open && !disabled ? 'rotate-180' : 'rotate-0'

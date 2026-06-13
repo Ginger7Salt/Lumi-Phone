@@ -193,12 +193,7 @@ export function RedPacketPage({
             onFocus={(e) => e.target.blur()}
           >
             <span className="text-[22px] font-medium text-black">¥</span>
-            <span
-              className="text-[40px] font-semibold tabular-nums tracking-tight text-black"
-              style={{
-                fontFamily: 'ui-rounded, system-ui, "SF Pro Display", "DIN Alternate", sans-serif',
-              }}
-            >
+            <span className="text-[40px] tabular-nums tracking-tight text-black">
               {displayAmount}
             </span>
           </div>

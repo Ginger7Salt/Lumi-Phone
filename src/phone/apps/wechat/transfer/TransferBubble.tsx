@@ -59,10 +59,9 @@ export function TransferBubbleFace({
         }`}
       >
         <p
-          className={`text-[17px] font-semibold tabular-nums tracking-tight transition-colors duration-300 ${
+          className={`text-[17px] tabular-nums tracking-tight transition-colors duration-300 ${
             returned ? 'text-[#CBD5E1]' : 'text-[#0f172a]'
           }`}
-          style={{ fontFamily: 'ui-monospace, "DIN Alternate", "Helvetica Neue", sans-serif' }}
         >
           {formatAmountLine(amountYuan)}
         </p>

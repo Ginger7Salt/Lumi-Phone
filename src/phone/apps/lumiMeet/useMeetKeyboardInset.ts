@@ -6,5 +6,5 @@ import { useKeyboardInset } from '../../hooks/useKeyboardInset'
 export function useMeetKeyboardInset(
   composerRef?: RefObject<HTMLElement | null>,
 ): number {
-  return useKeyboardInset(composerRef)
+  return useKeyboardInset(composerRef).padPx
 }

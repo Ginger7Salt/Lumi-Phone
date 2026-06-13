@@ -87,11 +87,8 @@ export function TransferPasswordSheet({
             <div className="mb-1 text-center text-[11px] font-medium tracking-[0.22em] text-[#a8a299]">SECURE PAY</div>
             <div className="text-center text-[13px] text-[#6b6b6b]">支付金额</div>
             <div
-              className="mt-2 text-center text-[32px] font-semibold tabular-nums"
-              style={{
-                fontFamily: 'ui-rounded, system-ui, "SF Pro Display", "DIN Alternate", sans-serif',
-                color: GOLD,
-              }}
+              className="mt-2 text-center text-[32px] tabular-nums"
+              style={{ color: GOLD }}
             >
               ¥{fmt}
             </div>

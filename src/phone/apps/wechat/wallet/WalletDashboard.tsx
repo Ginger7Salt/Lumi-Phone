@@ -172,10 +172,7 @@ export function WalletDashboard({
           </div>
 
           <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} className="mt-8 text-center">
-            <p
-              className="text-[42px] font-semibold tracking-tight text-black tabular-nums sm:text-[54px]"
-              style={{ fontFamily: 'ui-rounded, system-ui, "DIN Alternate", "SF Pro Display", sans-serif' }}
-            >
+            <p className="text-[42px] tracking-tight text-black tabular-nums sm:text-[54px]">
               {formatCurrency(displayBalance)}
             </p>
             <p className="mt-2 text-[12px] text-gray-400">{balanceText}</p>

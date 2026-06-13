@@ -135,16 +135,13 @@ export function AffectionCard({
           <div className="flex items-end justify-between gap-4">
             <div className="min-w-0">
               <p className="text-[10px] tracking-widest text-gray-500">REMAINING BALANCE</p>
-              <p
-                className="mt-2 truncate text-[22px] font-semibold tabular-nums text-white"
-                style={{ fontFamily: 'ui-rounded, system-ui, "DIN Alternate", "SF Pro Display", sans-serif' }}
-              >
+              <p className="mt-2 truncate text-[22px] tabular-nums text-white">
                 {money(safeBalance)}
               </p>
             </div>
             <div className="shrink-0 text-right">
               <p className="text-[10px] tracking-widest text-gray-500">MONTHLY LIMIT</p>
-              <p className="mt-2 text-[16px] font-medium tabular-nums text-white/70" style={{ fontFamily: 'ui-rounded, system-ui, "DIN Alternate", "SF Pro Display", sans-serif' }}>
+              <p className="mt-2 text-[16px] tabular-nums text-white/70">
                 / {money(safeLimit)}
               </p>
             </div>

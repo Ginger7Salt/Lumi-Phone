@@ -106,10 +106,7 @@ export function InvestmentSheet({
 
               <div className="mt-5 rounded-[22px] border border-white/65 bg-white/45 px-4 py-5 text-center backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)]">
                 <p className="text-[11px] tracking-[0.22em] text-gray-400">AMOUNT</p>
-                <p
-                  className="mt-2 text-[40px] font-semibold tabular-nums text-black"
-                  style={{ fontFamily: '"DIN Alternate", "SF Pro Display", ui-sans-serif, system-ui, sans-serif' }}
-                >
+                <p className="mt-2 text-[40px] tabular-nums text-black">
                   {parsed ? `¥ ${parsed.toFixed(2)}` : '¥ 0.00'}
                 </p>
               </div>

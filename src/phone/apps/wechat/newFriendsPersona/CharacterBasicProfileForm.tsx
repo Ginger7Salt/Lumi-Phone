@@ -16,6 +16,7 @@ import {
   normalizeBirthdayMD,
 } from './characterProfilePhysioUtils'
 import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
+import { PHONE_NUM_FONT_FAMILY } from '../../../types'
 import { MbtiPersonalityPickerGrid } from './MbtiPersonalityPickerGrid'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
@@ -27,6 +28,8 @@ const MUTED = '#737373'
 
 const inputUnderline =
   'w-full border-0 border-b border-neutral-200 bg-transparent py-2.5 text-[15px] text-neutral-950 outline-none ring-0 transition-colors duration-200 placeholder:text-neutral-300 focus:border-neutral-950 focus:ring-0'
+
+const numStyle = { fontFamily: PHONE_NUM_FONT_FAMILY } as const
 
 const gridLabel = 'text-[10px] font-medium uppercase tracking-[0.16em] text-neutral-400'
 
@@ -352,6 +355,7 @@ export function CharacterBasicProfileForm({
               inputMode="numeric"
               placeholder="—"
               className={`${inputUnderline} mt-1`}
+              style={numStyle}
               onChange={(e) => pushField({ age: e.target.value })}
             />
           </div>
@@ -432,6 +436,7 @@ export function CharacterBasicProfileForm({
               <select
                 value={birthdayParts.month}
                 className={`${inputUnderline} mt-1 block w-full bg-transparent`}
+                style={numStyle}
                 onChange={(e) => {
                   const month = Number(e.target.value)
                   const maxD = daysInMonth(month)
@@ -451,6 +456,7 @@ export function CharacterBasicProfileForm({
               <select
                 value={birthdayParts.day}
                 className={`${inputUnderline} mt-1 block w-full bg-transparent`}
+                style={numStyle}
                 onChange={(e) => {
                   const day = Number(e.target.value)
                   pushField({ birthdayMD: formatMD(birthdayParts.month, day) })

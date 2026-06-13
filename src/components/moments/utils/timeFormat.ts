@@ -19,3 +19,23 @@ export function formatMomentTime(timestamp: number, nowMs = Date.now()): string 
   if (year === now.getFullYear()) return `${month}月${day}日`
   return `${year}年${month}月${day}日`
 }
+
+/** 记忆刻录用：绝对发布时间（含时分） */
+export function formatMomentPublishedAtAbsolute(timestamp: number): string {
+  const ts = Number(timestamp)
+  if (!Number.isFinite(ts) || ts <= 0) return ''
+  const date = new Date(ts)
+  const year = date.getFullYear()
+  const month = date.getMonth() + 1
+  const day = date.getDate()
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  const now = new Date()
+  if (year === now.getFullYear()) return `${month}月${day}日 ${hour}:${minute}`
+  return `${year}年${month}月${day}日 ${hour}:${minute}`
+}
+
+/** 评论区：月日 + 时分（如 3月9日 00:01） */
+export function formatMomentCommentTime(timestamp: number): string {
+  return formatMomentPublishedAtAbsolute(timestamp)
+}

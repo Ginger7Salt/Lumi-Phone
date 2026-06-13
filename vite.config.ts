@@ -62,6 +62,28 @@ function pwaManifestPlugin(): Plugin {
   }
 }
 
+/** 在 HTML 解析最早阶段注册 SW，提高刷新后被接管概率（安卓 dev 尤其需要） */
+function injectEarlyServiceWorkerPlugin(): Plugin {
+  let resolvedBase = '/'
+
+  const buildRegisterSnippet = (base: string) => {
+    const scope = base === '/' ? '/' : base.endsWith('/') ? base : `${base}/`
+    const swUrl = `${base}sw.js`.replace(/([^:]\/)\/+/g, '$1')
+    return `<script>(function(){if(!('serviceWorker'in navigator))return;var u=${JSON.stringify(swUrl)},s=${JSON.stringify(scope)},go=function(){navigator.serviceWorker.register(u,{scope:s,updateViaCache:'none'}).catch(function(){});};var ios=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);if(ios){window.addEventListener('load',function(){setTimeout(go,2000);},{once:true});}else{go();}})();</script>`
+  }
+
+  return {
+    name: 'inject-early-service-worker',
+    configResolved(config: ResolvedConfig) {
+      resolvedBase = config.base
+    },
+    transformIndexHtml(html) {
+      const snippet = buildRegisterSnippet(resolvedBase)
+      return html.replace('</head>', `${snippet}\n</head>`)
+    },
+  }
+}
+
 /** 将仓库根目录 `image/` 同步到 `dist/image/`；开发期在中间件中提供同源路径（与 `resolveMeetDefaultEncounterChatBgUrl` 一致） */
 function copyRootImageDirToDist(): Plugin {
   const rootImage = path.resolve(__dirname, 'image')
@@ -114,6 +136,73 @@ function copyRootImageDirToDist(): Plugin {
   }
 }
 
+/** dev：浏览器 PUT 头像 blob，供 iOS 通知栏直接拉取（绕过自签证书下 /assets 拉取失败） */
+function notifyIconDevServerPlugin(): Plugin {
+  const marker = '/__lumi_notify_icon__/'
+  const store = new Map<string, { body: Buffer; mime: string }>()
+
+  return {
+    name: 'notify-icon-dev-server',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const full = req.url ?? ''
+        let urlPath = ''
+        try {
+          const u = new URL(full, 'http://localhost')
+          urlPath = u.pathname
+        } catch {
+          urlPath = full.split('?')[0] ?? ''
+        }
+        if (!urlPath.includes(marker)) return next()
+
+        const iconId = urlPath.slice(urlPath.indexOf(marker) + marker.length).split('/')[0]?.trim()
+        if (!iconId || iconId.includes('..')) return next()
+
+        if (req.method === 'OPTIONS') {
+          res.statusCode = 204
+          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, OPTIONS')
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+          res.end()
+          return
+        }
+
+        if (req.method === 'PUT' || req.method === 'POST') {
+          const chunks: Buffer[] = []
+          req.on('data', (chunk: Buffer) => chunks.push(chunk))
+          req.on('end', () => {
+            const body = Buffer.concat(chunks)
+            const mime = (req.headers['content-type'] as string | undefined)?.trim() || 'image/png'
+            store.set(iconId, { body, mime })
+            res.statusCode = 204
+            res.end()
+          })
+          return
+        }
+
+        if (req.method === 'GET' || req.method === 'HEAD') {
+          const hit = store.get(iconId)
+          if (!hit) {
+            res.statusCode = 404
+            res.end()
+            return
+          }
+          res.statusCode = 200
+          res.setHeader('Content-Type', hit.mime)
+          res.setHeader('Cache-Control', 'max-age=31536000, immutable')
+          if (req.method === 'HEAD') {
+            res.end()
+            return
+          }
+          res.end(hit.body)
+          return
+        }
+
+        next()
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 // 与 GitHub 仓库名一致，生产构建 base 为 /Lumi-Phone/（GitHub Pages）
 // 本地 dev/preview 用 /，便于局域网 IP 直接访问并正确安装 PWA
@@ -128,7 +217,7 @@ export default defineConfig(({ command }) => {
   const base = resolveAppBase(command)
   return {
   base,
-  plugins: [react(), tailwindcss(), basicSsl(), copyRootImageDirToDist(), pwaManifestPlugin()],
+  plugins: [react(), tailwindcss(), basicSsl(), injectEarlyServiceWorkerPlugin(), notifyIconDevServerPlugin(), copyRootImageDirToDist(), pwaManifestPlugin()],
   /** 监听 0.0.0.0，同一局域网（同一 WiFi）内设备可通过本机 IP 访问 */
   server: {
     host: true,
@@ -155,6 +244,15 @@ export default defineConfig(({ command }) => {
         changeOrigin: true,
         secure: true,
         rewrite: (p) => p.replace(/^\/minimaxi/, ''),
+      },
+      /**
+       * 听一听 · 本机 NeteaseCloudMusicApi（npm run ncm:local 或 Docker :3000）
+       * 开发页为 HTTPS 时，浏览器会拦截直连 http://127.0.0.1:3000（Mixed Content），走同源代理。
+       */
+      '/ncm-api': {
+        target: 'http://127.0.0.1:3000',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/ncm-api/, ''),
       },
     },
   },

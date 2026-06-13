@@ -1,4 +1,47 @@
-import type { WeChatTimeConfig } from '../newFriendsPersona/types'
+import type { CharacterTimeSettingsRow, WeChatTimeConfig } from '../newFriendsPersona/types'
+
+/** 角色是否启用系统时间感知（缺省 true）。 */
+export function isCharacterTimePerceptionEnabled(
+  row: CharacterTimeSettingsRow | null | undefined,
+): boolean {
+  return row?.timePerceptionEnabled !== false
+}
+
+/** 关闭时间感知时注入模型：仅依据聊天内容推断时段。 */
+export function formatChatInferredTimePerceptionBlock(): string {
+  return [
+    '\n\n---',
+    '【当前时间】',
+    '本角色未启用系统时间感知。请勿使用系统注入的「当前时间点」或自定义时间流速。',
+    '请仅根据聊天记录中的消息先后顺序、时间戳间隔、用户措辞（如「昨晚」「刚才」「明天见」）与对话语境，自行推断现在大概是什么时段，并自然体现在回复里。',
+    '若上下文无法判断，表述保持模糊即可，勿凭空编造具体钟点。',
+  ].join('\n')
+}
+
+export function resolveTimePromptSection(params: {
+  timePerceptionEnabled?: boolean
+  currentTimeMs?: number
+  forLumiAssistant?: boolean
+}): string {
+  if (params.timePerceptionEnabled === false) {
+    return formatChatInferredTimePerceptionBlock()
+  }
+  return formatCurrentTimeBlock(params.currentTimeMs, { forLumiAssistant: params.forLumiAssistant })
+}
+
+export function formatCurrentTimeBlock(currentTimeMs?: number, opts?: { forLumiAssistant?: boolean }): string {
+  const ts = Number(currentTimeMs)
+  const safeTs = Number.isFinite(ts) && ts > 0 ? ts : Date.now()
+  const d = new Date(safeTs)
+  const week = WEEKDAY_LABELS[d.getDay()] ?? ''
+  const stamp = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${week} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(
+    d.getSeconds(),
+  )}`
+  const tail = opts?.forLumiAssistant
+    ? `可将时段体现在问候或语气里（如早晚安），但不要编造与用户私密剧情。\n`
+    : `请将时间感（早/午/晚、是否深夜、是否工作时段）自然体现在角色回复里；若无自定义时间配置，默认按系统当前时间理解。\n`
+  return `\n\n---\n【当前时间】\n当前时间点：${stamp}\n${tail}`
+}
 
 export const WECHAT_TIMESTAMP_GAP_MS = 5 * 60 * 1000
 

@@ -22,7 +22,7 @@ export function StatusBar() {
         paddingTop: 0,
       }}
     >
-      <span className="font-medium tabular-nums">{time}</span>
+      <span className="tabular-nums">{time}</span>
       <div
         className="flex items-center gap-1.5 opacity-80"
         aria-hidden

@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ChevronDown } from 'lucide-react'
+import type { MomentsImageGenSettings } from '../../../../components/moments/useMomentsSettingsStore'
 import { useApiSettings } from '../ApiSettingsContext'
 import { apiTheme } from '../theme'
 import { ApiConfigBlock } from '../components/ApiConfigBlock'
+import { ApiPresetImageGenSection } from '../components/ApiPresetImageGenSection'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { ToggleSwitch } from '../components/ToggleSwitch'
 import { TopNav } from '../components/TopNav'
@@ -16,13 +18,83 @@ const SUB_META: Record<SubApiType, { title: string; desc: string }> = {
   voiceAsr: { title: '语音识别', desc: '用于语音通话长按麦克风转文字' },
 }
 
+type EditTab = 'main' | 'sub' | 'imageGen'
+
+const EDIT_TABS: { id: EditTab; label: string }[] = [
+  { id: 'main', label: '主接口' },
+  { id: 'sub', label: '副接口' },
+  { id: 'imageGen', label: '生图 API' },
+]
+
+function isEditTab(value: string | null): value is EditTab {
+  return value === 'main' || value === 'sub' || value === 'imageGen'
+}
+
 function clonePreset(p: ApiPreset): ApiPreset {
   return JSON.parse(JSON.stringify(p)) as ApiPreset
+}
+
+function PresetNameBlock({
+  name,
+  onChange,
+}: {
+  name: string
+  onChange: (name: string) => void
+}) {
+  return (
+    <div className="mx-4 mt-4 rounded-2xl bg-white p-5" style={{ boxShadow: apiTheme.shadow }}>
+      <p className="text-[14px]" style={{ color: apiTheme.subText }}>
+        预设名称
+      </p>
+      <input
+        value={name}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="给预设起个名字（如：我的GPT-4o）"
+        className="mt-3 w-full rounded-xl bg-white px-4 py-3 text-[16px] outline-none transition-all duration-200 ease-out"
+        style={{ border: `1px solid ${apiTheme.border}`, color: apiTheme.text }}
+        onFocus={(e) => (e.currentTarget.style.borderColor = apiTheme.accent)}
+        onBlur={(e) => (e.currentTarget.style.borderColor = apiTheme.border)}
+      />
+    </div>
+  )
+}
+
+function EditTabBar({ activeTab, onChange }: { activeTab: EditTab; onChange: (tab: EditTab) => void }) {
+  return (
+    <div className="mx-4 mt-3 shrink-0 rounded-2xl bg-white p-1" style={{ boxShadow: apiTheme.shadow }}>
+      <div className="flex">
+        {EDIT_TABS.map((tab) => {
+          const active = activeTab === tab.id
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => onChange(tab.id)}
+              className="relative min-w-0 flex-1 rounded-xl px-2 py-2.5 text-center text-[14px] font-medium transition-colors"
+              style={{
+                color: active ? apiTheme.text : apiTheme.subText,
+                background: active ? apiTheme.bg : 'transparent',
+              }}
+            >
+              {tab.label}
+              {active ? (
+                <span
+                  className="absolute bottom-1 left-1/2 h-0.5 w-8 -translate-x-1/2 rounded-full"
+                  style={{ background: apiTheme.accent }}
+                />
+              ) : null}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 export function ApiPresetEditPage() {
   const nav = useNavigate()
   const { id } = useParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { presets, upsertPreset, createPreset } = useApiSettings()
 
   const initialPreset = useMemo(() => {
@@ -30,6 +102,11 @@ export function ApiPresetEditPage() {
     if (!id) return null
     return presets.find((p) => p.id === id) ?? null
   }, [id, presets])
+
+  const tabFromUrl = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState<EditTab>(() =>
+    isEditTab(tabFromUrl) ? tabFromUrl : 'main',
+  )
 
   const [draft, setDraft] = useState<ApiPreset>(() => {
     if (initialPreset) return clonePreset(initialPreset)
@@ -47,12 +124,35 @@ export function ApiPresetEditPage() {
     if (initialPreset) setDraft(clonePreset(initialPreset))
   }, [initialPreset])
 
+  useEffect(() => {
+    if (isEditTab(tabFromUrl) && tabFromUrl !== activeTab) {
+      setActiveTab(tabFromUrl)
+    }
+  }, [tabFromUrl, activeTab])
+
   const title = initialPreset ? '编辑预设' : '新建预设'
 
   const setField = <K extends keyof ApiPreset>(k: K, v: ApiPreset[K]) => {
     setDirty(true)
     setDraft((s) => ({ ...s, [k]: v, updatedAt: Date.now() }))
   }
+
+  const patchImageGen = useCallback((patch: Partial<MomentsImageGenSettings>) => {
+    setDirty(true)
+    setDraft((s) => ({
+      ...s,
+      imageGen: { ...s.imageGen, ...patch },
+      updatedAt: Date.now(),
+    }))
+  }, [])
+
+  const changeTab = useCallback(
+    (tab: EditTab) => {
+      setActiveTab(tab)
+      setSearchParams(tab === 'main' ? {} : { tab }, { replace: true })
+    },
+    [setSearchParams],
+  )
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -84,7 +184,10 @@ export function ApiPresetEditPage() {
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col overflow-hidden" style={{ background: apiTheme.bg, fontFamily: apiTheme.font }}>
+    <div
+      className="relative flex h-full min-h-0 flex-col overflow-hidden"
+      style={{ background: apiTheme.bg, fontFamily: apiTheme.font }}
+    >
       <TopNav
         title={title}
         onBack={askBack}
@@ -100,143 +203,148 @@ export function ApiPresetEditPage() {
         }
       />
 
+      <EditTabBar activeTab={activeTab} onChange={changeTab} />
+
       <div className="min-h-0 flex-1 overflow-y-auto pb-[calc(20px+env(safe-area-inset-bottom,0px))] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-        <div className="mx-4 mt-4 rounded-2xl bg-white p-5" style={{ boxShadow: apiTheme.shadow }}>
-          <p className="text-[14px]" style={{ color: apiTheme.subText }}>
-            预设名称
-          </p>
-          <input
-            value={draft.name}
-            onChange={(e) => setField('name', e.target.value)}
-            placeholder="给预设起个名字（如：我的GPT-4o）"
-            className="mt-3 w-full rounded-xl bg-white px-4 py-3 text-[16px] outline-none transition-all duration-200 ease-out"
-            style={{ border: `1px solid ${apiTheme.border}`, color: apiTheme.text }}
-            onFocus={(e) => (e.currentTarget.style.borderColor = apiTheme.accent)}
-            onBlur={(e) => (e.currentTarget.style.borderColor = apiTheme.border)}
+        <PresetNameBlock name={draft.name} onChange={(name) => setField('name', name)} />
+
+        {activeTab === 'main' ? (
+          <ApiConfigBlock
+            title="主接口（全局默认）"
+            config={draft.main}
+            onChange={(next) => setField('main', next)}
+            showTest
           />
-        </div>
+        ) : null}
 
-        <ApiConfigBlock
-          title="主接口（全局默认）"
-          config={draft.main}
-          onChange={(next) => setField('main', next)}
-          showTest
-        />
-
-        <p className="mx-4 mt-6 text-[16px] font-semibold" style={{ color: apiTheme.text }}>
-          副接口（可选，优先使用）
-        </p>
-
-        {(Object.keys(SUB_META) as SubApiType[]).map((k) => {
-          const meta = SUB_META[k]
-          const sub = draft.sub[k]
-          return (
-            <div key={k} className="mx-4 mt-3 rounded-2xl bg-white p-5" style={{ boxShadow: apiTheme.shadow }}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-[16px] font-semibold" style={{ color: apiTheme.text }}>
-                    {meta.title}
-                  </p>
-                  <p className="mt-1 text-[14px]" style={{ color: apiTheme.subText, fontWeight: 300 }}>
-                    {meta.desc}
-                  </p>
-                </div>
-                {k !== 'voiceAsr' ? (
-                  <div className="flex items-center gap-2">
-                    <p className="text-[12px]" style={{ color: apiTheme.subText }}>
-                      使用主接口
-                    </p>
-                    <ToggleSwitch
-                      checked={sub.useMainApi}
-                      onChange={(v) => {
-                        setDirty(true)
-                        setDraft((s) => ({
-                          ...s,
-                          updatedAt: Date.now(),
-                          sub: { ...s.sub, [k]: { ...s.sub[k], useMainApi: v, apiConfig: v ? s.sub[k].apiConfig : s.sub[k].apiConfig } },
-                        }))
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <p className="text-[12px]" style={{ color: apiTheme.subText }}>
-                      {sub.enabled ? '开启' : '关闭'}
-                    </p>
-                    <ToggleSwitch
-                      checked={!!sub.enabled}
-                      onChange={(v) => {
-                        setDirty(true)
-                        setDraft((s) => ({
-                          ...s,
-                          updatedAt: Date.now(),
-                          sub: { ...s.sub, [k]: { ...s.sub[k], enabled: v, useMainApi: false } },
-                        }))
-                      }}
-                    />
-                    <button
-                      type="button"
-                      aria-label={voiceAsrCollapsed ? '展开语音识别配置' : '收起语音识别配置'}
-                      className="ml-1 inline-flex h-6 w-6 items-center justify-center rounded-md"
-                      onClick={() => setVoiceAsrCollapsed((v) => !v)}
-                      style={{ color: apiTheme.subText }}
-                    >
-                      <ChevronDown
-                        className={`size-4 transition-transform duration-200 ${voiceAsrCollapsed ? 'rotate-0' : 'rotate-180'}`}
-                        strokeWidth={1.8}
-                      />
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {(k === 'voiceAsr' ? !voiceAsrCollapsed : true) && (k === 'voiceAsr' || !sub.useMainApi) ? (
-                <div className="mt-4">
-                  <ApiConfigBlock
-                    title="独立配置"
-                    config={sub.apiConfig}
-                    onChange={(next) => {
-                      setDirty(true)
-                      setDraft((s) => ({
-                        ...s,
-                        updatedAt: Date.now(),
-                        sub: {
-                          ...s.sub,
-                          [k]: {
-                            ...s.sub[k],
-                            enabled: typeof s.sub[k].enabled === 'boolean' ? s.sub[k].enabled : true,
-                            useMainApi: k === 'voiceAsr' ? false : s.sub[k].useMainApi,
-                            apiConfig: next,
-                          },
-                        },
-                      }))
-                    }}
-                    showTest={k !== 'voiceAsr'}
-                    mode={k === 'voiceAsr' ? 'asr' : 'full'}
-                    footer={
-                      k === 'voiceAsr' ? (
-                        <div
-                          className="rounded-xl px-4 py-3 text-[12px]"
-                          style={{ border: `1px solid ${apiTheme.border}`, background: '#fff', color: apiTheme.subText }}
+        {activeTab === 'sub' ? (
+          <>
+            <p className="mx-4 mt-2 text-[14px]" style={{ color: apiTheme.subText, fontWeight: 300 }}>
+              副接口可选，启用后将优先于主接口用于对应场景。
+            </p>
+            {(Object.keys(SUB_META) as SubApiType[]).map((k) => {
+              const meta = SUB_META[k]
+              const sub = draft.sub[k]
+              return (
+                <div key={k} className="mx-4 mt-3 rounded-2xl bg-white p-5" style={{ boxShadow: apiTheme.shadow }}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[16px] font-semibold" style={{ color: apiTheme.text }}>
+                        {meta.title}
+                      </p>
+                      <p className="mt-1 text-[14px]" style={{ color: apiTheme.subText, fontWeight: 300 }}>
+                        {meta.desc}
+                      </p>
+                    </div>
+                    {k !== 'voiceAsr' ? (
+                      <div className="flex items-center gap-2">
+                        <p className="text-[12px]" style={{ color: apiTheme.subText }}>
+                          使用主接口
+                        </p>
+                        <ToggleSwitch
+                          checked={sub.useMainApi}
+                          onChange={(v) => {
+                            setDirty(true)
+                            setDraft((s) => ({
+                              ...s,
+                              updatedAt: Date.now(),
+                              sub: {
+                                ...s.sub,
+                                [k]: { ...s.sub[k], useMainApi: v, apiConfig: v ? s.sub[k].apiConfig : s.sub[k].apiConfig },
+                              },
+                            }))
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <p className="text-[12px]" style={{ color: apiTheme.subText }}>
+                          {sub.enabled ? '开启' : '关闭'}
+                        </p>
+                        <ToggleSwitch
+                          checked={!!sub.enabled}
+                          onChange={(v) => {
+                            setDirty(true)
+                            setDraft((s) => ({
+                              ...s,
+                              updatedAt: Date.now(),
+                              sub: { ...s.sub, [k]: { ...s.sub[k], enabled: v, useMainApi: false } },
+                            }))
+                          }}
+                        />
+                        <button
+                          type="button"
+                          aria-label={voiceAsrCollapsed ? '展开语音识别配置' : '收起语音识别配置'}
+                          className="ml-1 inline-flex h-6 w-6 items-center justify-center rounded-md"
+                          onClick={() => setVoiceAsrCollapsed((v) => !v)}
+                          style={{ color: apiTheme.subText }}
                         >
-                          语音识别 Key 获取：{' '}
-                          <a
-                            href="https://account.siliconflow.cn/zh/login?redirect=https%3A%2F%2Fcloud.siliconflow.cn%2Fme%2Fmodels%3F"
-                            target="_blank"
-                            rel="noreferrer"
-                            style={{ color: apiTheme.accent, textDecoration: 'underline' }}
-                          >
-                            硅基流动控制台
-                          </a>
-                        </div>
-                      ) : null
-                    }
-                  />
+                          <ChevronDown
+                            className={`size-4 transition-transform duration-200 ${voiceAsrCollapsed ? 'rotate-0' : 'rotate-180'}`}
+                            strokeWidth={1.8}
+                          />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {(k === 'voiceAsr' ? !voiceAsrCollapsed : true) && (k === 'voiceAsr' || !sub.useMainApi) ? (
+                    <div className="mt-4">
+                      <ApiConfigBlock
+                        title="独立配置"
+                        config={sub.apiConfig}
+                        onChange={(next) => {
+                          setDirty(true)
+                          setDraft((s) => ({
+                            ...s,
+                            updatedAt: Date.now(),
+                            sub: {
+                              ...s.sub,
+                              [k]: {
+                                ...s.sub[k],
+                                enabled: typeof s.sub[k].enabled === 'boolean' ? s.sub[k].enabled : true,
+                                useMainApi: k === 'voiceAsr' ? false : s.sub[k].useMainApi,
+                                apiConfig: next,
+                              },
+                            },
+                          }))
+                        }}
+                        showTest={k !== 'voiceAsr'}
+                        mode={k === 'voiceAsr' ? 'asr' : 'full'}
+                        footer={
+                          k === 'voiceAsr' ? (
+                            <div
+                              className="rounded-xl px-4 py-3 text-[12px]"
+                              style={{
+                                border: `1px solid ${apiTheme.border}`,
+                                background: '#fff',
+                                color: apiTheme.subText,
+                              }}
+                            >
+                              语音识别 Key 获取：{' '}
+                              <a
+                                href="https://account.siliconflow.cn/zh/login?redirect=https%3A%2F%2Fcloud.siliconflow.cn%2Fme%2Fmodels%3F"
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ color: apiTheme.accent, textDecoration: 'underline' }}
+                              >
+                                硅基流动控制台
+                              </a>
+                            </div>
+                          ) : null
+                        }
+                      />
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-          )
-        })}
+              )
+            })}
+          </>
+        ) : null}
+
+        {activeTab === 'imageGen' ? (
+          <ApiPresetImageGenSection imageGen={draft.imageGen} onPatch={patchImageGen} />
+        ) : null}
       </div>
 
       <ConfirmDialog
@@ -265,11 +373,13 @@ export function ApiPresetEditPage() {
       />
 
       {toast ? (
-        <div className="pointer-events-none absolute left-1/2 top-16 z-50 -translate-x-1/2 rounded-xl bg-white px-4 py-2 text-[13px]" style={{ boxShadow: apiTheme.shadow, color: apiTheme.text }}>
+        <div
+          className="pointer-events-none absolute left-1/2 top-16 z-50 -translate-x-1/2 rounded-xl bg-white px-4 py-2 text-[13px]"
+          style={{ boxShadow: apiTheme.shadow, color: apiTheme.text }}
+        >
           {toast}
         </div>
       ) : null}
     </div>
   )
 }
-

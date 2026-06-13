@@ -26,7 +26,10 @@ jobs:
           cache: npm
       # 不用 npm ci：锁文件在 Windows 与 Linux 可选依赖（Tailwind oxide / @emnapi）上易不同步导致 EUSAGE
       - run: npm install --no-audit --no-fund
+      # 云端 Web Push 离线兜底（见 .env.example；国内订阅/收推送常需梯子）
       - run: npm run build
+        env:
+          VITE_WEB_PUSH_API_BASE: https://lumi-push.lyx815934990.workers.dev
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

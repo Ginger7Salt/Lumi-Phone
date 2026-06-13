@@ -9,11 +9,19 @@ import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { useCustomization } from '../../../CustomizationContext'
 import type { WeChatPersonaContact } from '../../../types'
 import { ImageCropperModal } from '../../../components/ImageCropperModal'
+import { MOMENTS_COVER_ASPECT } from '../../../../components/moments/momentsCoverDefaults'
 import { PersonaNetworkSection } from './PersonaNetworkSection'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import type { ScheduleTable } from './types'
 import { ScheduleEditorScreen } from '../schedule/ScheduleEditorScreen'
-import { buildCharacterExportBundle, importCharacterBundle, parseCharacterImportFile } from './characterBundleIo'
+import { buildCharacterExportBundle, importCharacterBundle, parseCharacterImportFile, buildAddressingHintFromAudit, shouldPromptImportIdentitySync, type CharacterBundleIdentityAddressingHint } from './characterBundleIo'
+import { auditCliqueIdentityBinding } from './personaIdentityBindingAudit'
+import { markCliqueIdentitySyncAck } from './personaIdentitySyncAck'
+import {
+  persistCliqueCharacterUpdates,
+  runIdentityCliqueSyncWithAi,
+  type IdentityCliqueSyncScope,
+} from './personaIdentityCliqueSync'
 import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
 import { WorldBackgroundEditPage, WorldBackgroundPickerPage } from './WorldBackgroundScreens'
 import type { FriendRequest } from './friendRequestTypes'
@@ -28,6 +36,10 @@ import {
 } from '../mbtiPersonalityWorldBook'
 import { isLargeMbtiAvatar, resolvePlayerIdentityPreviewAvatar } from './mbtiProfileUi'
 import { useWechatStore } from '../useWechatStore'
+import { isIOSWebKit } from '../../../utils/platform'
+import { useEditableKeyboardLift } from '../../../hooks/useEditableKeyboardLift'
+import { isAndroidWeb, keyboardScrollPaddingBottom } from '../../../hooks/keyboardInset'
+import { KeyboardBottomWhitePad } from '../../../components/KeyboardBottomWhitePad'
 import { deleteCharacterPersonaForWechatAccount } from '../wechatCharacterPersonaDelete'
 import {
   collectCanonicalIdsPreservedAcrossAccounts,
@@ -156,6 +168,125 @@ function CenterDialog({
             style={{ background: '#000000' }}
           >
             {confirmText}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ImportAddressingDialog({
+  open,
+  hint,
+  generating,
+  onSyncAll,
+  onSyncAddressing,
+  onSyncAfterEntries,
+  onSkip,
+}: {
+  open: boolean
+  hint: CharacterBundleIdentityAddressingHint | null
+  generating: boolean
+  onSyncAll: () => void
+  onSyncAddressing: () => void
+  onSyncAfterEntries: () => void
+  onSkip: () => void
+}) {
+  if (!open || !hint) return null
+  const prevLabel = hint.previousIdentityNames.join('、') || '原身份'
+  const clearedNote =
+    hint.clearedAddressingCount > 0
+      ? `已有 ${hint.clearedAddressingCount} 条称呼因与旧身份名冲突被清空。`
+      : ''
+  return (
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/35 px-4">
+      <div
+        className="w-full max-w-[540px] rounded-2xl border bg-white p-5"
+        style={{ borderColor: border, boxShadow: '0 10px 30px rgba(0,0,0,0.18)' }}
+      >
+        <p className="text-center text-[16px] font-semibold" style={{ color: text }}>
+          身份不一致 · 是否同步称呼、看法与尾声延展？
+        </p>
+        <div className="mt-3 space-y-2 text-[13px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
+          <p>
+            此人设包原绑定身份为「{prevLabel}」，当前导入身份为「{hint.currentIdentityName}」。
+          </p>
+          {hint.hasPlayerAddressing ? (
+            <p>包内 NPC 对你的称呼与看法仍可能沿用旧身份；若不更改，对话中可能会叫错名字或性别不符。</p>
+          ) : null}
+          {hint.hasAfterAttitudeEntries ? (
+            <p>
+              各角色世界书「当前对你的态度」（尾声延展）仍按旧身份撰写，共约 {hint.afterAttitudeEntryCount}{' '}
+              条，建议一并 AI 重写。
+            </p>
+          ) : null}
+          {clearedNote ? <p>{clearedNote}</p> : null}
+          <p className="font-medium" style={{ color: text }}>
+            推荐选择「一键全部更新」。若关闭本窗口，可稍后在主角「人脉关系」页点击「绑定检测」再次生成。
+          </p>
+        </div>
+        <div className="mt-4 flex flex-col gap-2">
+          {hint.hasPlayerAddressing && hint.hasAfterAttitudeEntries ? (
+            <button
+              type="button"
+              disabled={generating}
+              onClick={onSyncAll}
+              className="rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white transition-all duration-200 ease-out disabled:opacity-50"
+              style={{ background: '#000000' }}
+            >
+              {generating ? 'AI 生成中…' : '一键全部更新（推荐）'}
+            </button>
+          ) : hint.hasPlayerAddressing ? (
+            <button
+              type="button"
+              disabled={generating}
+              onClick={onSyncAddressing}
+              className="rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white transition-all duration-200 ease-out disabled:opacity-50"
+              style={{ background: '#000000' }}
+            >
+              {generating ? 'AI 生成中…' : 'AI 更新称呼与看法（推荐）'}
+            </button>
+          ) : hint.hasAfterAttitudeEntries ? (
+            <button
+              type="button"
+              disabled={generating}
+              onClick={onSyncAfterEntries}
+              className="rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white transition-all duration-200 ease-out disabled:opacity-50"
+              style={{ background: '#000000' }}
+            >
+              {generating ? 'AI 生成中…' : 'AI 更新尾声延展（推荐）'}
+            </button>
+          ) : null}
+          {hint.hasPlayerAddressing && hint.hasAfterAttitudeEntries ? (
+            <button
+              type="button"
+              disabled={generating}
+              onClick={onSyncAddressing}
+              className="rounded-xl border px-4 py-2.5 text-[13px] font-medium transition-all duration-200 ease-out hover:bg-[#fafafa] disabled:opacity-50"
+              style={{ borderColor: border, color: text }}
+            >
+              {generating ? 'AI 生成中…' : '仅 AI 更新称呼与看法'}
+            </button>
+          ) : null}
+          {hint.hasPlayerAddressing && hint.hasAfterAttitudeEntries ? (
+            <button
+              type="button"
+              disabled={generating}
+              onClick={onSyncAfterEntries}
+              className="rounded-xl border px-4 py-2.5 text-[13px] font-medium transition-all duration-200 ease-out hover:bg-[#fafafa] disabled:opacity-50"
+              style={{ borderColor: border, color: text }}
+            >
+              {generating ? 'AI 生成中…' : '仅 AI 更新尾声延展条目'}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={generating}
+            onClick={onSkip}
+            className="rounded-xl py-2 text-[12px] transition-all duration-200 ease-out disabled:opacity-50"
+            style={{ color: sub }}
+          >
+            暂不更改
           </button>
         </div>
       </div>
@@ -896,6 +1027,11 @@ export function NewFriendsPersonaApp({
   const [aiGeneratingWechat, setAiGeneratingWechat] = useState(false)
   const [aiRemarkCandidates, setAiRemarkCandidates] = useState<Character[] | null>(null)
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null)
+  const [importAddressingPrompt, setImportAddressingPrompt] = useState<{
+    rootId: string
+    hint: CharacterBundleIdentityAddressingHint
+  } | null>(null)
+  const [importAddressingGenerating, setImportAddressingGenerating] = useState(false)
   const requestRows = entrySource === 'contacts' ? (pendingRequests ?? []) : []
   const activeRequest = useMemo(() => requestRows.find((r) => r.id === activeRequestId) ?? null, [activeRequestId, requestRows])
 
@@ -915,6 +1051,75 @@ export function NewFriendsPersonaApp({
   )
   const linkedCharacterIdSet = useMemo(() => new Set(linkedCharacterIds), [linkedCharacterIds])
   const apiConfigList = useCurrentApiConfig('chatCard')
+
+  const runImportIdentitySync = useCallback(
+    async (scope: IdentityCliqueSyncScope) => {
+      const prompt = importAddressingPrompt
+      if (!prompt) return
+      if (!apiConfigList?.apiUrl?.trim() || !apiConfigList?.apiKey?.trim() || !apiConfigList?.modelId?.trim()) {
+        window.alert('请先在 API 设置中配置聊天接口后再使用 AI 同步。')
+        return
+      }
+      setImportAddressingGenerating(true)
+      try {
+        const root = await personaDb.getCharacter(prompt.rootId)
+        if (!root) throw new Error('未找到导入后的主角档案')
+        const npcs = await personaDb.listNpcsFor(prompt.rootId)
+        const playerLinks = await personaDb.getPlayerNetworkLinks(prompt.rootId)
+        const identityId =
+          root.playerIdentityId?.trim() || (await personaDb.getCurrentIdentityId()).trim()
+        const playerIdentity = identityId ? await personaDb.getPlayerIdentity(identityId) : null
+        const { updatedLinks, updatedCharacters } = await runIdentityCliqueSyncWithAi(apiConfigList, scope, {
+          rootCharacter: root,
+          npcs,
+          playerLinks,
+          playerIdentity,
+          previousIdentityNames: prompt.hint.previousIdentityNames,
+          currentIdentityName: prompt.hint.currentIdentityName,
+        })
+        if (updatedLinks !== playerLinks) {
+          await personaDb.putPlayerNetworkLinks(prompt.rootId, updatedLinks)
+        }
+        if (updatedCharacters.length) {
+          await persistCliqueCharacterUpdates(updatedCharacters)
+        } else if (updatedLinks !== playerLinks) {
+          emitWeChatStorageChanged()
+        }
+        const parts: string[] = []
+        if (scope === 'all' || scope === 'addressing') parts.push('称呼与看法')
+        if (scope === 'all' || scope === 'afterEntries') parts.push('尾声延展条目')
+        await markCliqueIdentitySyncAck(prompt.rootId, identityId, prompt.hint.currentIdentityName)
+        window.alert(`已 AI 更新${parts.join('与')}。可在人脉关系页「绑定检测」或关系图中核对。`)
+        setImportAddressingPrompt(null)
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : 'AI 同步失败')
+      } finally {
+        setImportAddressingGenerating(false)
+      }
+    },
+    [apiConfigList, importAddressingPrompt],
+  )
+
+  const importIdentitySyncDialogs = (
+    <>
+      <AiGeneratingOverlay open={importAddressingGenerating} message="正在 AI 同步称呼、看法与尾声延展…" />
+      <ImportAddressingDialog
+        open={!!importAddressingPrompt}
+        hint={importAddressingPrompt?.hint ?? null}
+        generating={importAddressingGenerating}
+        onSyncAll={() => {
+          void runImportIdentitySync('all')
+        }}
+        onSyncAddressing={() => {
+          void runImportIdentitySync('addressing')
+        }}
+        onSyncAfterEntries={() => {
+          void runImportIdentitySync('afterEntries')
+        }}
+        onSkip={() => setImportAddressingPrompt(null)}
+      />
+    </>
+  )
 
   const {
     mainCharacters,
@@ -1085,6 +1290,7 @@ export function NewFriendsPersonaApp({
       )
     }
     return (
+      <>
       <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
         <WeChatThemePageBackdrop />
         <div
@@ -1346,10 +1552,13 @@ export function NewFriendsPersonaApp({
         />
         </div>
       </div>
+      {importIdentitySyncDialogs}
+      </>
     )
   }
 
   return (
+    <>
     <PersonaEditPage
       key={page.id}
       id={page.id}
@@ -1369,7 +1578,12 @@ export function NewFriendsPersonaApp({
         await refresh()
         if (replacePage) setPage({ name: 'edit', id: rootId, isNew: false })
       }}
+      onImportBundleAudited={(payload) => {
+        setImportAddressingPrompt(payload)
+      }}
     />
+    {importIdentitySyncDialogs}
+    </>
   )
 }
 
@@ -1382,6 +1596,7 @@ function PersonaEditPage({
   onSaved,
   onNavigateToCharacter,
   onBundleImported,
+  onImportBundleAudited,
 }: {
   id: string
   isNew: boolean
@@ -1392,6 +1607,7 @@ function PersonaEditPage({
   onSaved: () => void
   onNavigateToCharacter: (characterId: string, draftNpc?: Character) => void
   onBundleImported?: (opts: { rootId: string; replacePage: boolean }) => void | Promise<void>
+  onImportBundleAudited?: (payload: { rootId: string; hint: CharacterBundleIdentityAddressingHint }) => void
 }) {
   const [data, setData] = useState<Character | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -1428,7 +1644,10 @@ function PersonaEditPage({
   const [exportAddTimestamp, setExportAddTimestamp] = useState(false)
   const pendingExportJsonRef = useRef<string | null>(null)
   const [scheduleOpen, setScheduleOpen] = useState(false)
-  const [keyboardInset, setKeyboardInset] = useState(0)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const [iosKeyboardInset, setIosKeyboardInset] = useState(0)
+  const androidKeyboardInsetPx = useEditableKeyboardLift(scrollRef)
+  const keyboardInsetPx = isIOSWebKit() ? iosKeyboardInset : androidKeyboardInsetPx.padPx
   /** 主角在剧情/人脉中对用户的称呼（PlayerNetworkLink.theyCallYou，characterId = 根主角 id） */
   const [protagonistCallsUser, setProtagonistCallsUser] = useState('')
   const protagonistCallsTouchedRef = useRef(false)
@@ -1573,12 +1792,15 @@ function PersonaEditPage({
   }, [data?.id, data?.generatedForCharacterId, editTab])
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
+    if (!isIOSWebKit() || typeof window === 'undefined') {
+      setIosKeyboardInset(0)
+      return
+    }
     const vv = window.visualViewport
     if (!vv) return
     const updateInset = () => {
       const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-      setKeyboardInset((prev) => (Math.abs(prev - inset) < 1 ? prev : inset))
+      setIosKeyboardInset((prev) => (Math.abs(prev - inset) < 1 ? prev : inset))
     }
     updateInset()
     vv.addEventListener('resize', updateInset)
@@ -1880,7 +2102,11 @@ function PersonaEditPage({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col overflow-hidden" style={{ background: bg }}>
+    <div
+      ref={scrollRef}
+      className="relative flex h-full min-h-0 flex-col overflow-hidden"
+      style={{ background: bg }}
+    >
       {/*
         iOS PWA 全屏：safe-area-inset-top 只能加一次。原先 TopBar + ArchiveIndexTabs 各加一遍，
         会在标题与 Tab 之间叠出「第二道刘海高度」的空白；合并为单层 sticky 后只保留一处顶距。
@@ -1922,7 +2148,11 @@ function PersonaEditPage({
       <div
         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none px-3 pt-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         style={{
-          paddingBottom: `calc(96px + env(safe-area-inset-bottom,0px) + ${Math.round(keyboardInset)}px + ${editTab === 'worldbook' ? 88 : 0}px)`,
+          paddingBottom: isIOSWebKit()
+            ? `calc(96px + env(safe-area-inset-bottom,0px) + ${Math.round(keyboardInsetPx)}px + ${editTab === 'worldbook' ? 88 : 0}px)`
+            : keyboardScrollPaddingBottom(keyboardInsetPx, {
+                basePx: 96 + (editTab === 'worldbook' ? 88 : 0),
+              }),
         }}
       >
         {isNew && data.generatedForCharacterId ? (
@@ -2109,9 +2339,45 @@ function PersonaEditPage({
                       }
                       const result = await importCharacterBundle(bundles[0], 'new', { wechatAccountId: acc })
                       const importedRoot = result.rootId
+                      const importedMain = await personaDb.getCharacter(importedRoot)
+                      let showSyncDialog = false
+                      if (importedMain) {
+                        const importedNpcs = await personaDb.listNpcsFor(importedRoot)
+                        const importedLinks = await personaDb.getPlayerNetworkLinks(importedRoot)
+                        const importAudit = await auditCliqueIdentityBinding({
+                          rootId: importedRoot,
+                          main: importedMain,
+                          npcs: importedNpcs,
+                          playerLinks: importedLinks,
+                          wechatAccountId: acc,
+                          knownPreviousIdentityNames: result.addressingHint?.previousIdentityNames,
+                        })
+                        if (
+                          shouldPromptImportIdentitySync(
+                            importAudit,
+                            result.addressingHint,
+                            importedLinks,
+                          )
+                        ) {
+                          onImportBundleAudited?.({
+                            rootId: importedRoot,
+                            hint: buildAddressingHintFromAudit(
+                              importAudit,
+                              result.addressingHint,
+                              importedLinks,
+                            ),
+                          })
+                          showSyncDialog = true
+                        }
+                      } else if (result.addressingHint) {
+                        onImportBundleAudited?.({ rootId: importedRoot, hint: result.addressingHint })
+                        showSyncDialog = true
+                      }
                       onNavigateToCharacter(importedRoot)
                       await onBundleImported?.({ rootId: importedRoot, replacePage: false })
-                      window.alert('导入成功：已写入当前微信账号，并已后台存档人设包与绑定身份。')
+                      if (!showSyncDialog) {
+                        window.alert('导入成功：已写入当前微信账号，并已后台存档人设包与绑定身份。')
+                      }
                     } catch (err) {
                       window.alert(err instanceof Error ? err.message : '导入失败')
                     } finally {
@@ -2124,6 +2390,7 @@ function PersonaEditPage({
           </motion.div>
         </AnimatePresence>
       </div>
+      {isAndroidWeb() ? <KeyboardBottomWhitePad insetPx={keyboardInsetPx} zIndex={45} /> : null}
 
       <PersonaExportSaveDialog
         open={!!exportSaveDialog}
@@ -2217,10 +2484,10 @@ function PersonaEditPage({
       <ImageCropperModal
         open={!!momentsCoverCropSrc}
         imageSrc={momentsCoverCropSrc ?? ''}
-        title="裁剪朋友圈背景（1:1）"
-        aspect={1}
+        title={`裁剪朋友圈背景（${MOMENTS_COVER_ASPECT}:1）`}
+        aspect={MOMENTS_COVER_ASPECT}
         maxSide={1200}
-        objectFit="contain"
+        objectFit="horizontal-cover"
         onCancel={() => setMomentsCoverCropSrc(null)}
         onConfirm={(dataUrl) => {
           setField('momentsCoverUrl', dataUrl)

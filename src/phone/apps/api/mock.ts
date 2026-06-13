@@ -1,3 +1,4 @@
+import { DEFAULT_MOMENTS_SETTINGS } from '../../../components/moments/useMomentsSettingsStore'
 import type { ApiConfig, ApiPreset, SubApiConfig, SubApiType } from './types'
 import { SILICONFLOW_ASR_DEFAULT_BASE_URL } from '../wechat/voiceCall/siliconflowAsr'
 
@@ -34,6 +35,7 @@ export function createEmptyPreset(): ApiPreset {
     description: '',
     main: createEmptyApiConfig(),
     sub,
+    imageGen: { ...DEFAULT_MOMENTS_SETTINGS.imageGen },
     createdAt: now,
     updatedAt: now,
   }

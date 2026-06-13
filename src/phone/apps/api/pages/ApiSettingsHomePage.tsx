@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApiSettings } from '../ApiSettingsContext'
+import { useImageGenSettings } from '../useImageGenSettings'
 import { apiTheme } from '../theme'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { PresetCard } from '../components/PresetCard'
@@ -9,6 +10,7 @@ import { TopNav } from '../components/TopNav'
 export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
   const nav = useNavigate()
   const { presets, currentPresetId, currentPreset, setCurrentPresetId, deletePreset, duplicatePreset } = useApiSettings()
+  const { configured: imageGenConfigured, imageGen } = useImageGenSettings()
   const [deleteId, setDeleteId] = useState<string | null>(null)
 
   const mainConfigured = useMemo(() => {
@@ -22,6 +24,22 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
     if (!t) return { text: '未测试', bg: apiTheme.subText }
     return t.ok ? { text: '连接成功', bg: apiTheme.accent } : { text: '连接失败', bg: apiTheme.subText }
   }, [currentPreset?.main.lastTest])
+
+  const imageGenTag = useMemo(() => {
+    if (!currentPreset) return { text: '未配置', bg: apiTheme.subText }
+    if (!imageGen.enabled) return { text: '已关闭', bg: apiTheme.subText }
+    return imageGenConfigured
+      ? { text: '已就绪', bg: apiTheme.accent }
+      : { text: '待填 Key', bg: apiTheme.subText }
+  }, [currentPreset, imageGen.enabled, imageGenConfigured])
+
+  const openEdit = () => {
+    if (!currentPresetId) {
+      nav('/new')
+      return
+    }
+    nav(`/edit/${currentPresetId}`)
+  }
 
   return (
     <div
@@ -37,7 +55,7 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
           </p>
           <div className="mt-3 flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <p className="truncate text-[18px] font-semibold" style={{ color: apiTheme.text }}>
                   {currentPreset ? currentPreset.name || '未命名预设' : '暂无预设'}
                 </p>
@@ -45,7 +63,7 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
                   className="shrink-0 rounded-lg px-3 py-1 text-[12px] font-medium text-white"
                   style={{ background: mainConfigured ? apiTheme.accent : apiTheme.subText }}
                 >
-                  {currentPreset ? (mainConfigured ? '已配置' : '未配置') : '未配置'}
+                  {currentPreset ? (mainConfigured ? '主接口已配置' : '主接口未配置') : '未配置'}
                 </span>
                 <span
                   className="shrink-0 rounded-lg px-3 py-1 text-[12px] font-medium text-white"
@@ -53,12 +71,24 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
                 >
                   {mainTestTag.text}
                 </span>
+                {currentPreset ? (
+                  <span
+                    className="shrink-0 rounded-lg px-3 py-1 text-[12px] font-medium text-white"
+                    style={{ background: imageGenTag.bg }}
+                  >
+                    生图 {imageGenTag.text}
+                  </span>
+                ) : null}
               </div>
               {!currentPreset ? (
                 <p className="mt-2 text-[14px]" style={{ color: apiTheme.subText, fontWeight: 300 }}>
-                  先新建一个 API 预设，再进行主/副接口配置。
+                  先新建一个 API 预设，在编辑页配置主接口、副接口与生图 API。
                 </p>
-              ) : null}
+              ) : (
+                <p className="mt-2 text-[13px]" style={{ color: apiTheme.subText, fontWeight: 300 }}>
+                  编辑预设时可切换「主接口 / 副接口 / 生图 API」三个 Tab。
+                </p>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-3">
               {currentPreset ? (
@@ -76,7 +106,7 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
               ) : null}
               <button
                 type="button"
-                onClick={() => (currentPreset ? nav(`/edit/${currentPresetId}`) : nav('/new'))}
+                onClick={() => openEdit()}
                 className="text-[14px] font-medium transition-all duration-200 ease-out hover:opacity-80"
                 style={{ color: apiTheme.accent }}
               >
@@ -147,4 +177,3 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
     </div>
   )
 }
-

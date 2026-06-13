@@ -15,9 +15,34 @@ export function isWorkerOnlyMode(): boolean {
 }
 const FETCH_TIMEOUT_MS = 60_000
 
+const LOCAL_NCM_HOST_RE =
+  /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?/i
+
+/** 开发环境下本机 HTTP API 走 Vite 同源代理，避免 HTTPS 页面 Mixed Content 拦截 */
+export const NCM_DEV_PROXY_PREFIX = '/ncm-api'
+
 export function getNeteaseApiBase(): string {
   const fromEnv = (import.meta.env.VITE_NETEASE_API_BASE as string | undefined)?.trim()
-  return (fromEnv || DEFAULT_BASE).replace(/\/+$/, '')
+  const base = (fromEnv || DEFAULT_BASE).replace(/\/+$/, '')
+  if (
+    import.meta.env.DEV &&
+    (base === NCM_DEV_PROXY_PREFIX || LOCAL_NCM_HOST_RE.test(base))
+  ) {
+    return NCM_DEV_PROXY_PREFIX
+  }
+  return base
+}
+
+function buildNeteaseRequestUrl(path: string): URL {
+  const base = getNeteaseApiBase()
+  if (base.startsWith('/')) {
+    const origin =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : 'http://127.0.0.1:5173'
+    return new URL(`${base}${path}`, origin)
+  }
+  return new URL(`${base}${path}`)
 }
 
 /** 直连本机 / 局域网 NeteaseCloudMusicApi（国内开发推荐） */
@@ -26,9 +51,8 @@ export function isLocalNcmMode(): boolean {
   if (mode === 'ncm') return true
   if (mode === 'worker') return false
   const base = getNeteaseApiBase()
-  return /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?/i.test(
-    base,
-  )
+  if (base === NCM_DEV_PROXY_PREFIX) return true
+  return LOCAL_NCM_HOST_RE.test(base)
 }
 
 type ApiEnvelope<T> = {
@@ -85,7 +109,7 @@ function pickQrFromNcmCreate(body: Record<string, unknown>) {
 }
 
 async function ncmGet(path: string, params?: Record<string, string>) {
-  const url = new URL(`${getNeteaseApiBase()}${path}`)
+  const url = buildNeteaseRequestUrl(path)
   url.searchParams.set('timestamp', String(Date.now()))
   if (params) {
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
@@ -121,7 +145,7 @@ export async function ncmApiGet(path: string, cookie: string, params?: Record<st
 }
 
 async function apiGet<T>(path: string, params?: Record<string, string>) {
-  const url = new URL(`${getNeteaseApiBase()}${path}`)
+  const url = buildNeteaseRequestUrl(path)
   url.searchParams.set('timestamp', String(Date.now()))
   if (params) {
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
@@ -135,7 +159,7 @@ async function apiGet<T>(path: string, params?: Record<string, string>) {
 }
 
 async function apiPost<T>(path: string, body?: unknown) {
-  const url = new URL(`${getNeteaseApiBase()}${path}`)
+  const url = buildNeteaseRequestUrl(path)
   url.searchParams.set('timestamp', String(Date.now()))
   const res = await fetchWithTimeout(url.toString(), {
     method: 'POST',

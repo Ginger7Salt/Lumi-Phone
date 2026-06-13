@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { flushSync } from 'react-dom'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../wechat/newFriendsPersona/idb'
 import { createEmptyApiConfig, createEmptyPreset, newPresetId } from './mock'
+import { migrateLegacyImageGenIntoStore, normalizeImageGenSettings } from './imageGenPresetUtils'
 import { SILICONFLOW_ASR_DEFAULT_BASE_URL } from '../wechat/voiceCall/siliconflowAsr'
 import type { ApiConfig, ApiPreset, ApiStore, SubApiType } from './types'
 
@@ -57,6 +58,7 @@ function normalizePreset(raw: unknown): ApiPreset | null {
       danmaku: normalizeSub('danmaku'),
       voiceAsr: normalizeSub('voiceAsr'),
     },
+    imageGen: normalizeImageGenSettings(r.imageGen),
     createdAt: typeof r.createdAt === 'number' ? r.createdAt : base.createdAt,
     updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : base.updatedAt,
   }
@@ -73,7 +75,7 @@ function parseApiStore(raw: unknown): ApiStore {
       typeof parsed.currentPresetId === 'string' && presets.some((p) => p.id === parsed.currentPresetId)
         ? parsed.currentPresetId
         : presets[0]?.id ?? ''
-    return { presets, currentPresetId }
+    return migrateLegacyImageGenIntoStore({ presets, currentPresetId })
   } catch {
     return { presets: [], currentPresetId: '' }
   }

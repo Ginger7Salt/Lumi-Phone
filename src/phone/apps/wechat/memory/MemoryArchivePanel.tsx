@@ -11,8 +11,12 @@ import {
   resolveMemoryEntrySourceLineLabel,
   resolveMemoryUserBindingLabels,
 } from './memoryArchiveSourceLabel'
-import { buildCharacterFocusRoster, filterMemoryEntries } from './memoryArchiveFilter'
+import {
+  buildCharacterFocusRoster,
+  filterAndSortMemoryEntries,
+} from './memoryArchiveFilter'
 import type { MemoryArchiveKind, MemoryEntry, MemorySourceIdentity } from './memoryArchiveTypes'
+import { MemoryArchiveBackToTop } from './MemoryArchiveBackToTop'
 import { MemoryArchiveHeader } from './MemoryArchiveHeader'
 import { MemoryList } from './MemoryList'
 import { MemoryEditorSheet } from './MemoryEditorSheet'
@@ -32,6 +36,7 @@ import {
   readMemoryCoachSeen,
   writeMemoryCoachSeen,
 } from './memoryCoachTypes'
+import { isUserMomentViewerMemory } from '../../../../components/moments/userMomentDistributionArchiveService'
 
 const MEMORY_ARCHIVE_START_COACH_EVENT = 'memory-archive-start-coach'
 
@@ -68,6 +73,8 @@ export function MemoryArchivePanel({
   const [coachStepIndex, setCoachStepIndex] = useState(0)
   /** 仅首次进入当前微信账号时按主/副号设默认身份源；刷新列表勿覆盖用户已选 Tab */
   const sourceBootstrappedForAccountRef = useRef<string | null>(null)
+  const scrollerRef = useRef<HTMLDivElement | null>(null)
+  const [showBackToTop, setShowBackToTop] = useState(false)
 
   const reload = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true)
@@ -102,6 +109,7 @@ export function MemoryArchivePanel({
       const rawMap = new Map<string, CharacterMemory>()
       const entries: MemoryEntry[] = []
       for (const m of memories) {
+        if (isUserMomentViewerMemory(m)) continue
         rawMap.set(m.id, m)
         const base = characterMemoryToMemoryEntry(m, lookup)
         const [sourceLineLabel, userBindingLabels, contentExpanded] = await Promise.all([
@@ -269,7 +277,7 @@ export function MemoryArchivePanel({
 
   const filtered = useMemo(
     () =>
-      filterMemoryEntries({
+      filterAndSortMemoryEntries({
         entries: allEntries,
         rawById,
         source,
@@ -279,6 +287,19 @@ export function MemoryArchivePanel({
       }),
     [allEntries, rawById, source, memoryKind, focusCharId, debouncedSearch],
   )
+
+  useEffect(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    const onScroll = () => setShowBackToTop(el.scrollTop > 240)
+    el.addEventListener('scroll', onScroll, { passive: true })
+    onScroll()
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [loading, filtered.length])
+
+  const scrollArchiveToTop = useCallback(() => {
+    scrollerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
 
   const openCreate = () => {
     setEditorMode('create')
@@ -311,37 +332,41 @@ export function MemoryArchivePanel({
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
       style={{ background: ARCHIVE_BG }}
     >
-      <MemoryArchiveHeader
-        search={search}
-        onSearchChange={setSearch}
-        source={source}
-        onSourceChange={(s) => {
-          setSource(s)
-          setFocusCharId('all')
-        }}
-        memoryKind={memoryKind}
-        onMemoryKindChange={(k) => {
-          setMemoryKind(k)
-          setFocusCharId('all')
-        }}
-        characters={characterRoster}
-        focusCharId={focusCharId}
-        onFocusCharChange={setFocusCharId}
-        onCreate={openCreate}
-        alignUserBusy={alignUserBusy}
-        alignUserDisabled={userPlaceholderSummary.slotCount === 0}
-        alignUserTitle={
-          userPlaceholderSummary.slotCount === 0
-            ? '当前记忆库中没有 {{user}} 表达式'
-            : userInsertCtx
-              ? `先按各条来源线对齐；未绑定的 {{user}} 将绑到当前账号「${userInsertCtx.displayName || userInsertCtx.lineLabel}」；已有绑定不变`
-              : '请先在当前微信账号下选择扮演身份'
-        }
-        onAlignUser={runAlignUserPlaceholders}
-        alignUserToast={alignUserToast}
-        onOpenTutorial={() => setTutorialOpen(true)}
-      />
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch]">
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollerRef}
+          className="h-full overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch]"
+        >
+        <MemoryArchiveHeader
+          search={search}
+          onSearchChange={setSearch}
+          source={source}
+          onSourceChange={(s) => {
+            setSource(s)
+            setFocusCharId('all')
+          }}
+          memoryKind={memoryKind}
+          onMemoryKindChange={(k) => {
+            setMemoryKind(k)
+            setFocusCharId('all')
+          }}
+          characters={characterRoster}
+          focusCharId={focusCharId}
+          onFocusCharChange={setFocusCharId}
+          onCreate={openCreate}
+          alignUserBusy={alignUserBusy}
+          alignUserDisabled={userPlaceholderSummary.slotCount === 0}
+          alignUserTitle={
+            userPlaceholderSummary.slotCount === 0
+              ? '当前记忆库中没有 {{user}} 表达式'
+              : userInsertCtx
+                ? `先按各条来源线对齐；未绑定的 {{user}} 将绑到当前账号「${userInsertCtx.displayName || userInsertCtx.lineLabel}」；已有绑定不变`
+                : '请先在当前微信账号下选择扮演身份'
+          }
+          onAlignUser={runAlignUserPlaceholders}
+          alignUserToast={alignUserToast}
+          onOpenTutorial={() => setTutorialOpen(true)}
+        />
         <MemoryList
           entries={filtered}
           loading={loading}
@@ -353,6 +378,8 @@ export function MemoryArchivePanel({
           onEdit={openEdit}
           onDelete={(e) => void handleDelete(e)}
         />
+        </div>
+        <MemoryArchiveBackToTop visible={showBackToTop} onClick={scrollArchiveToTop} />
       </div>
 
       <MemoryTutorialModal

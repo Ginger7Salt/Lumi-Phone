@@ -352,6 +352,22 @@ export function resolveStickerOutputRef(rawInput: string): string | null {
   return null
 }
 
+/** 角色侧：单行 `[表情包]引用名` 或兼容旧版 `[表情包]URL/路径`（须能解析到表情包资源库） */
+export function parseCharacterStickerLine(line: string): { url: string } | null {
+  const t = String(line ?? '')
+    .trim()
+    .replace(/^\uFEFF+/, '')
+    .replace(/^[\u200B-\u200D\uFEFF]+/, '')
+    .trim()
+  const m = /^\[表情包\]\s*(.+)$/.exec(t)
+  if (!m) return null
+  const raw = m[1]!.trim().replace(/^['"`「」]+|['"`」]+$/g, '').trim()
+  if (!raw) return null
+  const url = resolveStickerOutputRef(raw)
+  if (!url) return null
+  return { url }
+}
+
 /**
  * 拼入微信单聊 system，供模型选用合法表情包（用「引用名」输出，避免长路径/URL 被截断或抄错）。
  * 行数与总长封顶，避免撑爆上下文。

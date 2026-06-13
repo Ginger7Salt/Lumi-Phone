@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { disarmWeChatWelcomeSplash } from './wechatWelcomeSplashGate'
 import { useWeChatWelcomeReveal } from './weChatWelcomeRevealContext'
 
 const SERIF =
@@ -47,6 +48,8 @@ export function WeChatWelcomeSplash({ onComplete }: Props) {
   const [phase, setPhase] = useState<SplashPhase>('reveal')
   const timersRef = useRef<number[]>([])
   const completedRef = useRef(false)
+  const onCompleteRef = useRef(onComplete)
+  onCompleteRef.current = onComplete
 
   useEffect(() => {
     completedRef.current = false
@@ -68,14 +71,19 @@ export function WeChatWelcomeSplash({ onComplete }: Props) {
       if (completedRef.current) return
       completedRef.current = true
       finish()
-      onComplete()
+      onCompleteRef.current()
     }, MS.complete)
 
     return () => {
       timersRef.current.forEach((id) => window.clearTimeout(id))
       timersRef.current = []
+      if (!completedRef.current) {
+        disarmWeChatWelcomeSplash()
+      }
     }
-  }, [beginReveal, beginUnderMask, finish, onComplete])
+    // 仅挂载时跑一轮；勿把 reveal 上下文回调放进 deps，否则 integrate 阶段会重播
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const textVisible = phase === 'reveal' || phase === 'hold'
   const textDissolving = phase === 'dissolve'

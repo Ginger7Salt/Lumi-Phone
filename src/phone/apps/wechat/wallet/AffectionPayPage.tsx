@@ -148,7 +148,7 @@ export function AffectionPayPage({
               onFocus={(e) => e.target.blur()}
             >
               <span className="text-[22px] font-medium text-black">¥</span>
-              <span className="text-[44px] font-semibold tabular-nums tracking-tight text-black" style={{ fontFamily: 'ui-rounded, system-ui, "DIN Alternate", "SF Pro Display", sans-serif' }}>
+              <span className="text-[44px] tabular-nums tracking-tight text-black">
                 {displayAmount}
               </span>
             </div>

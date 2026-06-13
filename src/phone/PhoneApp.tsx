@@ -14,6 +14,7 @@ import { DataArchiveApp } from './apps/dataArchive/DataArchiveApp'
 import { LUMI_SYS_FIRST_BOOT_KEY } from './apps/dataArchive/constants'
 import { LoreArchiveApp } from './apps/loreArchive/LoreArchiveApp'
 import { RecycleBinApp } from './apps/recycleBin/RecycleBinApp'
+import { BackgroundNotifyApp } from './apps/backgroundNotify/BackgroundNotifyApp'
 import { personaDb } from './apps/wechat/newFriendsPersona/idb'
 import { WeChatApp } from './apps/wechat/WeChatApp'
 import { LumiMeetApp } from './apps/lumiMeet/LumiMeetApp'
@@ -72,6 +73,7 @@ export function PhoneApp() {
   const pageProps = buildPageProps(disableTransitions)
   const [route, setRoute] = useState<Route>({ name: 'home' })
   const [showSplash, setShowSplash] = useState(true)
+  const [wechatKeepAlive, setWechatKeepAlive] = useState(false)
   const [showEntryNotice, setShowEntryNotice] = useState(false)
   const [ageConfirmed, setAgeConfirmed] = useState(false)
   const [riskConfirmed, setRiskConfirmed] = useState(false)
@@ -79,12 +81,15 @@ export function PhoneApp() {
   const goHome = useCallback(() => setRoute({ name: 'home' }), [])
 
   const openApp = useCallback((id: AppSlot['id']) => {
+    if (id === 'wechat') setWechatKeepAlive(true)
     if (id === 'appearance') {
       setRoute({ name: 'customize' })
       return
     }
     setRoute({ name: 'app', id })
   }, [])
+
+  const wechatVisible = route.name === 'app' && route.id === 'wechat'
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -115,6 +120,7 @@ export function PhoneApp() {
       const ce = e as CustomEvent<{ id: AppSlot['id'] }>
       const id = ce.detail?.id
       if (!id) return
+      if (id === 'wechat') setWechatKeepAlive(true)
       openApp(id)
     }
     window.addEventListener('phone:open-app', onOpen as EventListener)
@@ -139,6 +145,16 @@ export function PhoneApp() {
         <WorldbookLoreProvider>
         <ListenTogetherPlayerBootstrap />
         <PhoneShell>
+          {wechatKeepAlive ? (
+            <div
+              className={`route-page-layer flex h-full min-h-0 flex-col bg-white ${
+                wechatVisible ? 'absolute inset-0 z-[20]' : 'hidden'
+              }`}
+              aria-hidden={!wechatVisible}
+            >
+              <WeChatApp onBack={goHome} />
+            </div>
+          ) : null}
           <AnimatePresence mode="wait" initial={false}>
             {route.name === 'home' && (
               <motion.div
@@ -158,15 +174,13 @@ export function PhoneApp() {
                 <CustomizeScreen onBack={goHome} />
               </motion.div>
             )}
-            {route.name === 'app' && (
+            {route.name === 'app' && route.id !== 'wechat' && (
               <motion.div
                 key={`app-${route.id}`}
                 className={`route-page-layer flex h-full min-h-0 flex-col ${disableTransitions ? '' : 'transform-gpu'}`}
                 {...pageProps}
               >
-                {route.id === 'wechat' ? (
-                  <WeChatApp onBack={goHome} />
-                ) : route.id === 'lumiMeet' ? (
+                {route.id === 'lumiMeet' ? (
                   <LumiMeetAppRoute onBack={goHome} />
                 ) : route.id === 'api' ? (
                   <ApiSettingsApp onBack={goHome} />
@@ -178,6 +192,8 @@ export function PhoneApp() {
                   <LoreArchiveApp onBack={goHome} />
                 ) : route.id === 'recycleBin' ? (
                   <RecycleBinApp onBack={goHome} />
+                ) : route.id === 'backgroundNotify' ? (
+                  <BackgroundNotifyApp onBack={goHome} />
                 ) : (
                   <AppPlaceholderScreen appId={route.id} onBack={goHome} />
                 )}

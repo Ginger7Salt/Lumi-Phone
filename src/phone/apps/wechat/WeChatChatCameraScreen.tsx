@@ -1,82 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Camera, Image as ImageIcon } from 'lucide-react'
 
 import { Pressable } from '../../components/Pressable'
 import { logConsole } from './consoleLogger'
+import { compressChatImageToJpeg, loadImageFromFile } from './wechatChatImageCompress'
 
-// 微信聊天里图片一般会更小一些：这里压到 1MB 以内，提升加载速度与存储效率
-const MAX_BYTES = 1 * 1024 * 1024
-
-async function blobToBase64DataUrl(blob: Blob): Promise<string> {
-  return await new Promise<string>((resolve, reject) => {
-    const fr = new FileReader()
-    fr.onload = () => resolve(String(fr.result || ''))
-    fr.onerror = () => reject(fr.error ?? new Error('FileReader'))
-    fr.readAsDataURL(blob)
-  })
-}
-
-async function compressToJpegUnder2MB(params: { source: CanvasImageSource; width: number; height: number }): Promise<string> {
-  const { source } = params
-
-  // 先做一次尺寸约束，避免大图爆内存
-  const clampTo = (maxSide: number) => {
-    const w0 = params.width
-    const h0 = params.height
-    const max = Math.max(w0, h0)
-    if (max <= maxSide) return { w: w0, h: h0 }
-    const scale = maxSide / max
-    return { w: Math.round(w0 * scale), h: Math.round(h0 * scale) }
-  }
-
-  const tryEncode = async (w: number, h: number, quality: number) => {
-    const c = document.createElement('canvas')
-    c.width = w
-    c.height = h
-    const ctx = c.getContext('2d')
-    if (!ctx) throw new Error('无法处理图片')
-    ctx.drawImage(source, 0, 0, w, h)
-    const blob = await new Promise<Blob | null>((resolve) => c.toBlob((b) => resolve(b), 'image/jpeg', quality))
-    if (!blob) throw new Error('图片编码失败')
-    return blob
-  }
-
-  // 第一轮：1280 边长 + 0.82 质量，逐步降质
-  let { w, h } = clampTo(1280)
-  let q = 0.82
-  for (let i = 0; i < 6; i += 1) {
-    const blob = await tryEncode(w, h, q)
-    if (blob.size <= MAX_BYTES) {
-      logConsole('frontend', `图片压缩OK：${w}x${h} q=${q.toFixed(2)} bytes=${blob.size}`)
-      const dataUrl = await blobToBase64DataUrl(blob)
-      return dataUrl
-        .replace(/^data:image\/jpeg;base64,/i, '')
-        .trim()
-    }
-    q = Math.max(0.5, q - 0.08)
-  }
-
-  // 第二轮：再降尺寸到 960
-  ;({ w, h } = clampTo(960))
-  q = 0.78
-  for (let i = 0; i < 8; i += 1) {
-    const blob = await tryEncode(w, h, q)
-    if (blob.size <= MAX_BYTES) {
-      logConsole('frontend', `图片压缩OK(降尺寸)：${w}x${h} q=${q.toFixed(2)} bytes=${blob.size}`)
-      const dataUrl = await blobToBase64DataUrl(blob)
-      return dataUrl
-        .replace(/^data:image\/jpeg;base64,/i, '')
-        .trim()
-    }
-    q = Math.max(0.45, q - 0.06)
-  }
-
-  // 仍超过：返回最后一次结果（仍是 jpeg）
-  const last = await tryEncode(w, h, q)
-  logConsole('frontend', `图片压缩超2MB仍返回：${w}x${h} q=${q.toFixed(2)} bytes=${last.size}`)
-  const dataUrl = await blobToBase64DataUrl(last)
-  return dataUrl.replace(/^data:image\/jpeg;base64,/i, '').trim()
+function defaultCameraFacing(): 'user' | 'environment' {
+  if (typeof navigator === 'undefined') return 'environment'
+  const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+  return mobile ? 'environment' : 'user'
 }
 
 type Stage = 'camera' | 'preview'
@@ -95,9 +28,11 @@ export function WeChatChatCameraScreen({
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const openRef = useRef(open)
+  const onCloseRef = useRef(onClose)
+  const onToastRef = useRef(onToast)
   const startSeqRef = useRef(0)
   const startStreamRef = useRef<() => void>(() => {})
-  const [facing, setFacing] = useState<'user' | 'environment'>('environment')
+  const [facing, setFacing] = useState<'user' | 'environment'>(defaultCameraFacing)
   const [stage, setStage] = useState<Stage>('camera')
   const stageRef = useRef<Stage>(stage)
   const [previewBase64, setPreviewBase64] = useState<string>('')
@@ -109,8 +44,23 @@ export function WeChatChatCameraScreen({
   }, [open])
 
   useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
+  useEffect(() => {
+    onToastRef.current = onToast
+  }, [onToast])
+
+  useEffect(() => {
     stageRef.current = stage
   }, [stage])
+
+  useEffect(() => {
+    if (open) return
+    setStage('camera')
+    setPreviewBase64('')
+    setFacing(defaultCameraFacing())
+  }, [open])
 
   const stopStream = useCallback(() => {
     const s = streamRef.current
@@ -118,11 +68,48 @@ export function WeChatChatCameraScreen({
       s.getTracks().forEach((t) => t.stop())
       streamRef.current = null
     }
+    const v = videoRef.current
+    if (v) v.srcObject = null
+  }, [])
+
+  const bindStreamToVideo = useCallback(async (stream: MediaStream) => {
+    const v = videoRef.current
+    if (!v) return false
+    if (v.srcObject !== stream) {
+      v.srcObject = stream
+    }
+    v.muted = true
+    v.playsInline = true
+    v.autoplay = true
+    v.setAttribute('playsinline', 'true')
+    v.setAttribute('webkit-playsinline', 'true')
+
+    for (let i = 0; i < 4; i += 1) {
+      try {
+        await v.play()
+        if (v.videoWidth > 0 && v.videoHeight > 0) {
+          logConsole('frontend', `相机预览就绪：${v.videoWidth}x${v.videoHeight}`)
+          return true
+        }
+      } catch (pe) {
+        const perr = pe as { name?: string; message?: string }
+        logConsole(
+          'frontend',
+          `video.play retry ${i + 1}/4 failed: ${perr?.name || 'Error'} ${perr?.message || ''}`.trim(),
+        )
+      }
+      await new Promise<void>((r) => window.setTimeout(r, 120))
+    }
+    return v.videoWidth > 0 && v.videoHeight > 0
   }, [])
 
   const startStream = useCallback(async () => {
     const seq = (startSeqRef.current += 1)
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('NotSupportedError 当前环境不支持相机')
+      }
+
       logConsole(
         'frontend',
         `getUserMedia: secure=${String(window.isSecureContext)} origin=${window.location.origin} facing=${facing}`,
@@ -139,70 +126,62 @@ export function WeChatChatCameraScreen({
           audio: false,
         })
       } catch (e) {
-        // iOS / 某些机型会对 facingMode 更挑剔：失败时回退为任意 video
         const err = e as { name?: string; message?: string }
         logConsole('error', `getUserMedia(primary) failed: ${err?.name || 'Error'} ${err?.message || ''}`.trim())
         s = await tryStart({ video: true, audio: false })
-        logConsole('frontend', `getUserMedia: fallback video=true ok`)
+        logConsole('frontend', 'getUserMedia: fallback video=true ok')
       }
 
-      // 如果这次请求已经过期（或用户已离开/不在相机页），直接停止新流并退出，避免触发 AbortError 噪声
       if (seq !== startSeqRef.current || !openRef.current || stageRef.current !== 'camera') {
         s.getTracks().forEach((t) => t.stop())
         return
       }
 
-      // 替换流：先拿到新流再停旧流，减少 iOS 上“中途被打断”的 AbortError
       const prev = streamRef.current
       streamRef.current = s
       if (prev) prev.getTracks().forEach((t) => t.stop())
 
-      streamRef.current = s
-      const v = videoRef.current
-      if (v) {
-        v.srcObject = s
-        // iOS 上 play() 偶发 AbortError：做轻量重试，不重拉 getUserMedia
-        v.muted = true
-        v.playsInline = true
-        v.autoplay = true
-        for (let i = 0; i < 3; i += 1) {
-          try {
-            await v.play()
-            break
-          } catch (pe) {
-            const perr = pe as { name?: string; message?: string }
-            const nm = perr?.name || 'Error'
-            const ms = perr?.message || ''
-            logConsole('frontend', `video.play retry ${i + 1}/3 failed: ${nm} ${ms}`.trim())
-            await new Promise<void>((r) => window.setTimeout(r, 180))
+      const bound = await bindStreamToVideo(s)
+      if (!bound) {
+        await new Promise<void>((resolve) => {
+          const v = videoRef.current
+          if (!v) {
+            resolve()
+            return
           }
-        }
+          const onMeta = () => {
+            v.removeEventListener('loadedmetadata', onMeta)
+            void bindStreamToVideo(s).finally(resolve)
+          }
+          v.addEventListener('loadedmetadata', onMeta)
+          window.setTimeout(() => {
+            v.removeEventListener('loadedmetadata', onMeta)
+            resolve()
+          }, 1200)
+        })
       }
     } catch (e) {
       const err = e as { name?: string; message?: string }
       const name = err?.name || (e instanceof Error ? e.name : 'Error')
       const msg = err?.message || (e instanceof Error ? e.message : String(e ?? 'unknown'))
-      // 如果这次调用在生命周期内已被新请求替换/页面关闭，AbortError 属正常噪声
       if (name === 'AbortError' && (seq !== startSeqRef.current || !openRef.current || stageRef.current !== 'camera')) {
         logConsole('frontend', `getUserMedia aborted (stale): ${name} ${msg}`.trim())
         return
       }
       logConsole('error', `getUserMedia failed: ${name} ${msg}`.trim())
 
-       // AbortError 在 iOS / 开发模式（StrictMode effect 反复执行）里很常见：
-       // 可能是上一次请求被打断，并不代表真的“无法访问相机”。这里做一次短延迟重试，不立刻关闭页面。
       if (name === 'AbortError' && openRef.current && stageRef.current === 'camera') {
-         const n = retryAbortRef.current + 1
-         retryAbortRef.current = n
-         if (n <= 2) {
-           logConsole('frontend', `AbortError: 将在 220ms 后重试（第 ${n} 次）`)
-           window.setTimeout(() => {
-             if (!openRef.current) return
+        const n = retryAbortRef.current + 1
+        retryAbortRef.current = n
+        if (n <= 2) {
+          logConsole('frontend', `AbortError: 将在 220ms 后重试（第 ${n} 次）`)
+          window.setTimeout(() => {
+            if (!openRef.current) return
             startStreamRef.current()
-           }, 220)
-           return
-         }
-       }
+          }, 220)
+          return
+        }
+      }
 
       const lower = `${name} ${msg}`.toLowerCase()
       const tip =
@@ -217,10 +196,10 @@ export function WeChatChatCameraScreen({
                 : !window.isSecureContext
                   ? '无法访问相机：需要 HTTPS 或 localhost 才能使用相机'
                   : '无法访问相机，请检查设备'
-      onToast(tip)
-      onClose()
+      onToastRef.current(tip)
+      onCloseRef.current()
     }
-  }, [facing, onClose, onToast, stopStream])
+  }, [bindStreamToVideo, facing])
 
   useEffect(() => {
     startStreamRef.current = () => {
@@ -234,18 +213,62 @@ export function WeChatChatCameraScreen({
     logConsole('frontend', '相机页打开：开始请求 getUserMedia')
     void startStream()
     return () => stopStream()
-  }, [open, startStream, stopStream])
+  }, [open, facing, startStream, stopStream])
+
+  // video 节点晚于 getUserMedia 完成时，补绑一次预览流
+  useLayoutEffect(() => {
+    if (!open || stage !== 'camera') return
+    const stream = streamRef.current
+    if (!stream) return
+    void bindStreamToVideo(stream)
+  }, [bindStreamToVideo, open, stage])
+
+  // 权限已开但 preview 仍黑屏：短周期重试绑定，避免 StrictMode / 重渲染竞态
+  useEffect(() => {
+    if (!open || stage !== 'camera') return
+    let cancelled = false
+    let attempts = 0
+
+    const retryBind = async () => {
+      if (cancelled || attempts >= 20) return
+      attempts += 1
+      const stream = streamRef.current
+      const v = videoRef.current
+      if (!stream || !v) {
+        window.setTimeout(() => void retryBind(), 120)
+        return
+      }
+      if (v.videoWidth > 0 && v.videoHeight > 0) return
+      await bindStreamToVideo(stream)
+      if (cancelled) return
+      if (videoRef.current && videoRef.current.videoWidth > 0) return
+      window.setTimeout(() => void retryBind(), 150)
+    }
+
+    void retryBind()
+    return () => {
+      cancelled = true
+    }
+  }, [bindStreamToVideo, facing, open, stage])
 
   const capture = useCallback(async () => {
     const v = videoRef.current
     if (!v) return
-    const w = v.videoWidth
-    const h = v.videoHeight
+    let w = v.videoWidth
+    let h = v.videoHeight
     if (!w || !h) {
-      onToast('无法访问相机，请检查设备')
+      for (let i = 0; i < 8; i += 1) {
+        await new Promise<void>((r) => window.setTimeout(r, 120))
+        w = v.videoWidth
+        h = v.videoHeight
+        if (w && h) break
+        if (streamRef.current) await bindStreamToVideo(streamRef.current)
+      }
+    }
+    if (!w || !h) {
+      onToastRef.current('无法访问相机，请检查设备')
       return
     }
-    // 快门闪一下（无彩色）
     const root = v.closest('[data-wx-camera-root]') as HTMLElement | null
     if (root) {
       root.dataset.flash = '1'
@@ -254,15 +277,15 @@ export function WeChatChatCameraScreen({
       }, 90)
     }
     try {
-      const base64 = await compressToJpegUnder2MB({ source: v, width: w, height: h })
+      const base64 = await compressChatImageToJpeg({ source: v, width: w, height: h })
       logConsole('frontend', `拍摄得到 base64 长度=${base64.length}`)
       setPreviewBase64(base64)
       setStage('preview')
       stopStream()
     } catch {
-      onToast('图片处理失败，请重试')
+      onToastRef.current('图片处理失败，请重试')
     }
-  }, [onToast, stopStream])
+  }, [bindStreamToVideo, stopStream])
 
   const pickFromAlbum = useCallback(() => {
     fileInputRef.current?.click()
@@ -273,29 +296,17 @@ export function WeChatChatCameraScreen({
       if (!f) return
       try {
         logConsole('frontend', `相册选择：name=${f.name} type=${f.type} bytes=${f.size}`)
-        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-          const url = URL.createObjectURL(f)
-          const el = new window.Image()
-          el.onload = () => {
-            URL.revokeObjectURL(url)
-            resolve(el)
-          }
-          el.onerror = () => {
-            URL.revokeObjectURL(url)
-            reject(new Error('图片读取失败'))
-          }
-          el.src = url
-        })
-        const base64 = await compressToJpegUnder2MB({ source: img, width: img.naturalWidth, height: img.naturalHeight })
+        const img = await loadImageFromFile(f)
+        const base64 = await compressChatImageToJpeg({ source: img, width: img.naturalWidth, height: img.naturalHeight })
         logConsole('frontend', `相册得到 base64 长度=${base64.length}`)
         setPreviewBase64(base64)
         setStage('preview')
         stopStream()
       } catch {
-        onToast('图片处理失败，请重试')
+        onToastRef.current('图片处理失败，请重试')
       }
     },
-    [onToast, stopStream],
+    [stopStream],
   )
 
   const previewUrl = useMemo(() => (previewBase64 ? `data:image/jpeg;base64,${previewBase64}` : ''), [previewBase64])
@@ -305,10 +316,7 @@ export function WeChatChatCameraScreen({
   return (
     <motion.div
       className="absolute inset-0 z-[260] flex min-h-0 min-w-0 flex-col bg-black"
-      initial={{ y: '100%' }}
-      animate={{ y: 0 }}
-      exit={{ y: '100%' }}
-      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      initial={false}
       data-wx-camera-root
     >
       <style>{`
@@ -322,8 +330,7 @@ export function WeChatChatCameraScreen({
         }
       `}</style>
 
-      {/* 顶部栏 */}
-      <div className="flex shrink-0 items-center justify-between px-4" style={{ paddingTop: 'max(14px, env(safe-area-inset-top, 0px))', height: 56 }}>
+      <div className="relative z-20 flex shrink-0 items-center justify-between bg-black px-4 py-3">
         {stage === 'camera' ? (
           <button type="button" className="text-[16px] text-white" onClick={onClose}>
             取消
@@ -366,16 +373,23 @@ export function WeChatChatCameraScreen({
         )}
       </div>
 
-      {/* 预览区 */}
-      <div className="relative min-h-0 flex-1">
+      <div className="relative z-0 min-h-0 flex-1 overflow-hidden bg-black">
         {stage === 'camera' ? (
-          <video ref={videoRef} className="h-full w-full object-cover" playsInline muted />
+          <video
+            ref={videoRef}
+            className="absolute inset-0 h-full w-full object-cover"
+            playsInline
+            muted
+            autoPlay
+            onLoadedMetadata={() => {
+              if (streamRef.current) void bindStreamToVideo(streamRef.current)
+            }}
+          />
         ) : previewUrl ? (
           <img src={previewUrl} alt="" className="h-full w-full object-contain" />
         ) : null}
       </div>
 
-      {/* 底部栏 */}
       {stage === 'camera' ? (
         <div
           className="flex shrink-0 items-center justify-center bg-black"
@@ -420,4 +434,3 @@ export function WeChatChatCameraScreen({
     </motion.div>
   )
 }
-

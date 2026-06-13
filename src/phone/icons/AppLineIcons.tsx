@@ -128,6 +128,17 @@ export function IconRecycleBin(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+/** 后台通知：铃铛 */
+export function IconBackgroundNotify(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M12 4.5a3.2 3.2 0 0 0-3.2 3.2v2.1c0 .8-.3 1.6-.8 2.2L7 13.2h10l-.9-1.2c-.5-.6-.8-1.4-.8-2.2V7.7A3.2 3.2 0 0 0 12 4.5z" />
+      <path d="M10 15.8h4" />
+      <path d="M10.8 17.8a1.2 1.2 0 0 0 2.4 0" />
+    </svg>
+  )
+}
+
 const map = {
   wechat: IconWeChat,
   takeout: IconTakeout,
@@ -138,6 +149,7 @@ const map = {
   dataArchive: IconDataArchive,
   loreArchive: IconLoreArchive,
   recycleBin: IconRecycleBin,
+  backgroundNotify: IconBackgroundNotify,
   appearance: IconAppearance,
 } as const
 

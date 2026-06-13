@@ -1,9 +1,10 @@
 import type { CharacterMemory } from '../newFriendsPersona/types'
+import type { MomentMemoryPayload } from '../newFriendsPersona/types'
 
 /** 三大身份来源：主号微信 / 副号微信 / 遇见 */
 export type MemorySourceIdentity = 'main_wechat' | 'sub_wechat' | 'lumi_meet'
 
-export type MemorySceneTag = '私聊' | '群聊' | '线下' | '关联线下' | '遇见'
+export type MemorySceneTag = '私聊' | '群聊' | '线下' | '关联线下' | '遇见' | '朋友圈'
 
 export type MemoryTriggerType = 'always' | 'keyword'
 
@@ -33,6 +34,15 @@ export interface MemoryEntry {
   userBindingLabels?: string[]
   /** 列表展示用：占位符已展开为昵称/角色名（与编辑页预览一致） */
   contentExpanded?: string
+  /** 朋友圈记忆专属元数据 */
+  momentPayload?: MomentMemoryPayload
+  /** 发布者朋友圈记忆：曾互动过的关联角色（仅 publisher 卡片展示） */
+  momentLinkedInteractors?: Array<{
+    charId: string
+    displayName: string
+    avatarUrl?: string
+  }>
+  momentMemoryRole?: CharacterMemory['momentMemoryRole']
 }
 
 export type MemoryCharacterFocus = {

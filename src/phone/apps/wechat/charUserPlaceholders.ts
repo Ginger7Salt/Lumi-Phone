@@ -47,7 +47,10 @@ export function contentHasScopedWorldBookUserPlaceholder(content: string): boole
 }
 
 /** 将正文里已绑定的 `{{user:账号:身份}}` 展开为对应显示名（顺序在 {{char}}/裸 {{user}} 之前）。 */
-export async function expandScopedWorldBookUserPlaceholdersInText(text: string): Promise<string> {
+export async function expandScopedWorldBookUserPlaceholdersInText(
+  text: string,
+  character?: Character | null,
+): Promise<string> {
   let s = String(text ?? '')
   const tokens = new Set<string>()
   SCOPED_WORLD_BOOK_USER_PLACEHOLDER_RE.lastIndex = 0
@@ -57,16 +60,40 @@ export async function expandScopedWorldBookUserPlaceholdersInText(text: string):
   }
   if (!tokens.size) return s
 
+  const boundPid = character ? getCharacterBoundPlayerIdentityId(character) : null
   const nameByToken = new Map<string, string>()
   for (const token of tokens) {
     const parts = token.match(/^\{\{user:([^:}]+):([^}]+)\}\}$/)
     if (!parts) continue
-    const pid = parts[2].trim()
+    const acc = parts[1].trim()
+    const scopedPid = parts[2].trim()
+    let pid = scopedPid
     let row: PlayerIdentity | null = null
-    try {
-      row = await personaDb.getPlayerIdentity(pid)
-    } catch {
-      row = null
+
+    if (boundPid && boundPid !== scopedPid) {
+      pid = boundPid
+      try {
+        row = await personaDb.getPlayerIdentity(pid)
+      } catch {
+        row = null
+      }
+    } else {
+      try {
+        row = await personaDb.getPlayerIdentity(pid)
+      } catch {
+        row = null
+      }
+      if (!isNamedPlayerIdentity(row, pid)) {
+        const resolved = await resolveWorldBookPlayerIdentityCandidate({
+          character,
+          wechatAccountId: acc,
+          playerIdentityId: scopedPid,
+        })
+        if (resolved?.playerIdentityId) {
+          pid = resolved.playerIdentityId
+          row = resolved.row
+        }
+      }
     }
     nameByToken.set(token, formatPlayerIdentityDisplayName(row, pid))
   }
@@ -212,7 +239,7 @@ export async function expandSystemPromptPlaceholders(
     idToDisplayName?: Readonly<Record<string, string>>
   },
 ): Promise<string> {
-  let s = await expandScopedWorldBookUserPlaceholdersInText(raw)
+  let s = await expandScopedWorldBookUserPlaceholdersInText(raw, params.character)
   const expandNames = resolveCharUserNamesForPrompt({
     character: params.character,
     playerIdentity: params.worldBookPlayerIdentity,
