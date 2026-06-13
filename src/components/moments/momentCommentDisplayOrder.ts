@@ -27,6 +27,69 @@ export type MomentCommentDisplayRow = {
   replyTo?: string
   replyToName?: string
   charId?: string
+  replyToCharId?: string
+  replyToInteractionId?: string
+  replyToCommentId?: string
+}
+
+const THREAD_DISPLAY_MIN_GAP_MS = 800
+
+function findReplyParentRow(
+  row: MomentCommentDisplayRow,
+  rows: MomentCommentDisplayRow[],
+): MomentCommentDisplayRow | undefined {
+  if (row.replyToInteractionId?.trim()) {
+    return rows.find((r) => r.id === row.replyToInteractionId?.trim())
+  }
+  if (row.replyToCommentId?.trim()) {
+    return rows.find((r) => r.id === row.replyToCommentId?.trim())
+  }
+  if (row.replyToCharId?.trim()) {
+    const targetId = row.replyToCharId.trim()
+    const candidates = rows.filter(
+      (r) => r.id !== row.id && r.charId?.trim() === targetId,
+    )
+    if (candidates.length) {
+      return candidates.sort(
+        (a, b) => a.sortAt - b.sortAt || a.id.localeCompare(b.id),
+      )[0]
+    }
+  }
+  if (row.replyTo?.trim()) {
+    const target = row.replyTo.trim()
+    const candidates = rows.filter(
+      (r) => r.id !== row.id && r.author.trim() === target,
+    )
+    if (candidates.length) {
+      return candidates.sort(
+        (a, b) => a.sortAt - b.sortAt || a.id.localeCompare(b.id),
+      )[0]
+    }
+  }
+  return undefined
+}
+
+/** 展示层：保证回复出现在被回复评论之后（兼容历史错序数据） */
+function enforceCommentThreadOrder(rows: MomentCommentDisplayRow[]): MomentCommentDisplayRow[] {
+  const adjusted = rows.map((r) => ({ ...r }))
+  let changed = true
+  let guard = 0
+
+  while (changed && guard <= adjusted.length + 2) {
+    changed = false
+    guard++
+    for (const row of adjusted) {
+      const parent = findReplyParentRow(row, adjusted)
+      if (!parent) continue
+      const minSortAt = parent.sortAt + THREAD_DISPLAY_MIN_GAP_MS
+      if (row.sortAt < minSortAt) {
+        row.sortAt = minSortAt
+        changed = true
+      }
+    }
+  }
+
+  return adjusted.sort((a, b) => a.sortAt - b.sortAt || a.id.localeCompare(b.id))
 }
 
 function resolveCommentCreatedAt(
@@ -127,6 +190,7 @@ export function buildFlatCommentTimeline(params: {
         author: c.author,
         content: c.content,
         replyToName,
+        replyToCommentId: c.replyToCommentId,
       })
       return
     }
@@ -161,18 +225,21 @@ export function buildFlatCommentTimeline(params: {
       content: ix.content,
       replyTo: replyToName,
       charId: ix.charId,
+      replyToCharId: ix.replyToCharId,
+      replyToInteractionId: ix.replyToInteractionId,
     })
   }
 
   const sorted = rows.sort((a, b) => a.sortAt - b.sortAt || a.id.localeCompare(b.id))
+  const ordered = enforceCommentThreadOrder(sorted)
   const publisherId = publisherCharacterId?.trim()
-  if (!publisherId) return sorted
+  if (!publisherId) return ordered
 
-  return sorted.map((row, index) => {
+  return ordered.map((row, index) => {
     if (row.kind !== 'ai' || row.replyTo?.trim()) return row
     const inferred = inferReplyToPublisherFromPriorRows(
       row,
-      sorted.slice(0, index),
+      ordered.slice(0, index),
       publisherId,
       resolveAuthorName,
     )

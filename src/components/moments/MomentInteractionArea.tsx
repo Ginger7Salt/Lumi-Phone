@@ -27,7 +27,7 @@ import { profilePayloadFromParticipantMeta } from './momentProfileNavigation'
 import type { OnOpenMomentParticipantProfile } from './momentProfileNavigation'
 import { ReplyingIndicator } from './ReplyingIndicator'
 import { sanitizeMomentText } from './momentTextSanitize'
-import { MomentCommentTimeLabel, MomentsSerifNumericText } from './ArchiveTimelineDateColumn'
+import { MomentCommentTimeLabel } from './ArchiveTimelineDateColumn'
 
 type DisplayComment =
   | { kind: 'user'; id: string; sortAt: number; author: string; content: string; replyTo?: string }
@@ -66,7 +66,6 @@ type MomentInteractionAreaProps = {
   momentRelationships?: Relationship[]
   playerIdentityId?: string | null
   publisherCharacterId?: string
-  enableVisitorFootprints?: boolean
   replyingAuthorName?: string | null
   replyingTargetName?: string | null
   highlightCommentId?: string | null
@@ -96,7 +95,6 @@ function MomentInteractionAreaInner({
   momentRelationships = [],
   playerIdentityId,
   publisherCharacterId,
-  enableVisitorFootprints = false,
   replyingAuthorName,
   replyingTargetName,
   highlightCommentId,
@@ -273,18 +271,12 @@ function MomentInteractionAreaInner({
     for (const id of newlyUnlockedIds) seenUnlockIdsRef.current.add(id)
   }, [momentId, newlyUnlockedIds, onInteractionsUnlocked])
 
-  const visitors = useMemo(() => {
-    if (!enableVisitorFootprints) return []
-    return unlocked.filter((ix) => ix.type === 'viewed')
-  }, [enableVisitorFootprints, unlocked])
-
   const showReplying =
     !!replyingAuthorName?.trim() && !!replyingTargetName?.trim() && !!lastUserCommentId
 
   const hasLikes = likeEntries.length > 0
   const hasComments = flatDisplayComments.length > 0 || showReplying
-  const hasVisitors = visitors.length > 0
-  if (!hasLikes && !hasComments && !hasVisitors) return null
+  if (!hasLikes && !hasComments) return null
 
   const resolveCommentParticipant = (comment: DisplayComment): InteractionParticipantMeta => {
     if (comment.kind === 'ai') {
@@ -304,6 +296,17 @@ function MomentInteractionAreaInner({
           <span className="font-semibold text-[#111827]">{comment.author}</span>
           <span className="mx-1 text-[#9CA3AF]">回复</span>
           <span className="font-semibold text-[#111827]">{comment.replyToName}</span>
+          <span className="mx-1">:</span>
+          <span>{body}</span>
+        </>
+      )
+    }
+    if (comment.kind === 'ai' && comment.replyTo && !comment.isAuthorReply) {
+      return (
+        <>
+          <span className="font-semibold text-[#111827]">{comment.author}</span>
+          <span className="mx-1 text-[#9CA3AF]">回复</span>
+          <span className="font-semibold text-[#111827]">{comment.replyTo}</span>
           <span className="mx-1">:</span>
           <span>{body}</span>
         </>
@@ -350,6 +353,15 @@ function MomentInteractionAreaInner({
         <>
           <span className="text-[#9CA3AF]">回复 </span>
           <span className="font-semibold text-[#111827]">{comment.replyToName}</span>
+          <span className="text-[#111827]">：{body}</span>
+        </>
+      )
+    }
+    if (comment.kind === 'ai' && comment.replyTo && !comment.isAuthorReply) {
+      return (
+        <>
+          <span className="text-[#9CA3AF]">回复 </span>
+          <span className="font-semibold text-[#111827]">{comment.replyTo}</span>
           <span className="text-[#111827]">：{body}</span>
         </>
       )
@@ -512,31 +524,6 @@ function MomentInteractionAreaInner({
                 targetName={replyingTargetName!}
               />
             ) : null}
-          </AnimatePresence>
-        </div>
-      ) : null}
-
-      {hasVisitors ? (
-        <div className={hasLikes || hasComments ? 'mt-3 space-y-1' : 'space-y-1'}>
-          <AnimatePresence initial={false}>
-            {visitors.map((ix) => {
-              const name = contactDirectory.getDisplayName(ix.charId)
-              const dwell = ix.dwellSeconds ?? 12
-              const animateIn = newlyUnlockedIds.has(ix.id)
-              return (
-                <motion.p
-                  key={ix.id}
-                  initial={animateIn ? { height: 0, opacity: 0 } : false}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  transition={SPRING_IN}
-                  className="overflow-hidden text-[11px] leading-relaxed text-[#9CA3AF]"
-                >
-                  <MomentsSerifNumericText
-                    text={`「${name}」看了这条动态，停留了 ${dwell} 秒，但什么也没留下。`}
-                  />
-                </motion.p>
-              )
-            })}
           </AnimatePresence>
         </div>
       ) : null}

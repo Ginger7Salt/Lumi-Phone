@@ -163,19 +163,7 @@ export function MomentsSettingsPage({ onBack, accountId, onMomentsCleared }: Pro
             accordion={{
               trigger: '点击阅读底层原理 (View Mechanism)',
               body:
-                '开启后，通讯录中的角色将脱离瞬时响应。点赞与评论会依据角色的作息时间与性格设定，在未来的数分钟乃至数小时内被随机触发，以此拟真现实中不经意间的社交触达。',
-            }}
-          />
-
-          <SettingsBlock
-            titleEn="VISITOR FOOTPRINTS"
-            titleZh="隐秘访客记录"
-            checked={settings.enableVisitorFootprints}
-            onToggle={(v) => patchSettings({ enableVisitorFootprints: v })}
-            accordion={{
-              trigger: '点击阅读底层原理 (View Mechanism)',
-              body:
-                '记录那些刷到了你的动态，却因疏远、克制或未满的好感度而选择沉默的人。开启后，你将在朋友圈底部看到他们停留的足迹。',
+                '开启后，通讯录中的角色将脱离瞬时响应。点赞与评论会依据角色性格错开解锁，单条最晚约 10 分钟内出现，相邻角色之间也会留出刷圈间隔，以此拟真现实中不经意间的社交触达。',
             }}
           />
 

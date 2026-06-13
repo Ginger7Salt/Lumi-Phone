@@ -42,6 +42,9 @@ export function resolveMomentsContentBackgroundUrl(): string {
   return DEFAULT_MOMENTS_CONTENT_BG_DISPLAY
 }
 
+/** 个人相册封面下～置顶栏：微信式浅灰底，不用内容区壁纸 */
+export const MOMENTS_ARCHIVE_SURFACE_COLOR = '#EDEDED'
+
 export function normalizeMomentsCoverForSave(raw: string): string {
   const t = raw.trim()
   if (!t || isDefaultMomentsCoverUrl(t)) return ''

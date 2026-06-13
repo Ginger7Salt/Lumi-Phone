@@ -138,7 +138,6 @@ export function filterMentionedCharactersByAudience(
 export function ensureMentionedCharacterAwarenessDrafts(
   drafts: AiMomentInteractionDraft[],
   _mentionedCharIds: readonly string[],
-  _enableVisitorFootprints: boolean,
 ): AiMomentInteractionDraft[] {
   return drafts
 }

@@ -1,6 +1,10 @@
 import type { MomentItemModel } from './mockMoments'
 import type { AiMomentInteractionDraft, MomentInteraction } from './momentInteractionTypes'
-import { materializeInteractions } from './momentInteractionTypes'
+import {
+  collectEngagedCharacterIds,
+  materializeInteractions,
+  stripViewedForEngagedCharacters,
+} from './momentInteractionTypes'
 import type { AllowedMomentCharacter } from './momentPrivacyAudience'
 import type { MomentPrivacyMeta, NewMomentPrivacy } from './newMomentTypes'
 
@@ -20,11 +24,7 @@ export function momentHasVisitorFootprints(moment: MomentItemModel): boolean {
   return (moment.interactions ?? []).some((ix) => ix.type === 'viewed')
 }
 
-export function momentNeedsVisitorFootprintBackfill(
-  moment: MomentItemModel,
-  enableVisitorFootprints: boolean,
-): boolean {
-  if (!enableVisitorFootprints) return false
+export function momentNeedsVisitorFootprintBackfill(moment: MomentItemModel): boolean {
   if (!moment.isUserAuthored) return false
   if (moment.privacy?.mode === 'private') return false
   return !momentHasVisitorFootprints(moment)
@@ -34,10 +34,18 @@ function ensureAtLeastOneViewedDraft(
   drafts: AiMomentInteractionDraft[],
   allowed: AllowedMomentCharacter[],
 ): AiMomentInteractionDraft[] {
-  if (!allowed.length || drafts.some((d) => d.type === 'viewed')) return drafts
+  if (!allowed.length) return drafts
+
+  const engaged = collectEngagedCharacterIds(drafts)
+  const hasSilentViewed = drafts.some(
+    (d) => d.type === 'viewed' && !engaged.has(d.charId.trim()),
+  )
+  if (hasSilentViewed) return drafts
+
+  const pick = allowed.find((c) => !engaged.has(c.charId.trim()))
+  if (!pick) return drafts
 
   const out = [...drafts]
-  const pick = allowed[0]!
   out.push({
     charId: pick.charId,
     type: 'viewed',
@@ -66,13 +74,12 @@ export function supplementVisitorFootprintDrafts(
     (c) => !engaged.has(c.charId) && !viewedCharIds.has(c.charId),
   )
 
-  const targetCount = Math.min(2, silentCandidates.length)
-  for (let i = 0; i < targetCount; i++) {
+  for (let i = 0; i < silentCandidates.length; i++) {
     const c = silentCandidates[i]!
     out.push({
       charId: c.charId,
       type: 'viewed',
-      delaySeconds: 70 + i * 48,
+      delaySeconds: 90 + i * 65,
       dwellSeconds: 10 + ((c.charId.length + i * 7) % 35),
     })
     viewedCharIds.add(c.charId)
@@ -81,12 +88,13 @@ export function supplementVisitorFootprintDrafts(
   return ensureAtLeastOneViewedDraft(out, allowed)
 }
 
+/** 发布链路收尾：为未互动角色补充静默浏览（viewed），与展示开关无关 */
 export function finalizeMomentInteractionDrafts(
   drafts: AiMomentInteractionDraft[],
-  _allowed: AllowedMomentCharacter[],
-  _enableVisitorFootprints: boolean,
+  allowed: AllowedMomentCharacter[],
 ): AiMomentInteractionDraft[] {
-  return drafts
+  if (!allowed.length) return stripViewedForEngagedCharacters(drafts)
+  return stripViewedForEngagedCharacters(supplementVisitorFootprintDrafts(drafts, allowed))
 }
 
 /** 为已有动态追加 viewed 互动（补录历史数据） */

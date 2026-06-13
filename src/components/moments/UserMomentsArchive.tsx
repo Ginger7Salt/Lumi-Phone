@@ -12,7 +12,7 @@ import { personaDb } from '../../phone/apps/wechat/newFriendsPersona/idb'
 import { ArchiveTimelineDateColumn, momentsSerifNumericStyle } from './ArchiveTimelineDateColumn'
 import { ArchiveMomentsHeader } from './ArchiveMomentsHeader'
 import { FloatingInput } from './FloatingInput'
-import { MomentArchiveThumbnail, MOMENT_ARCHIVE_THUMB_OUTER_CLASS } from './MomentArchiveThumbnail'
+import { ArchiveTextOnlyMomentStrip, MomentArchiveThumbnail, MOMENT_ARCHIVE_TEXT_STRIP_CLASS, MOMENT_ARCHIVE_THUMB_OUTER_CLASS } from './MomentArchiveThumbnail'
 import { MomentDetailPage } from './MomentDetailPage'
 import { MomentHistoricalGenModal } from './MomentHistoricalGenModal'
 import { MomentsCover } from './MomentsCover'
@@ -95,15 +95,7 @@ function PinnedBarPreview({ moment }: { moment: MomentItemModel }) {
     return <MomentArchiveThumbnail images={images} variant="timeline" />
   }
   const content = sanitizeMomentBodyText(moment.content)
-  return (
-    <div
-      className={`${MOMENT_ARCHIVE_THUMB_OUTER_CLASS} flex items-center justify-center overflow-hidden rounded-lg bg-gray-100 px-1.5`}
-    >
-      <p className="line-clamp-3 text-center text-[9px] leading-snug text-gray-500">
-        {content || '文字动态'}
-      </p>
-    </div>
-  )
+  return <ArchiveTextOnlyMomentStrip content={content} variant="pinnedBar" />
 }
 
 function TimelineMomentCard({
@@ -124,14 +116,18 @@ function TimelineMomentCard({
       onClick={onOpen}
       className="w-full text-left transition-opacity hover:opacity-85"
     >
-      <div className={`flex gap-3 ${hasImages && hasText ? 'items-start' : 'items-center'}`}>
-        {hasImages ? <MomentArchiveThumbnail images={images} variant="timeline" /> : null}
-        {hasText ? (
-          <div className="min-w-0 flex-1">
-            <p className="text-[14px] leading-[1.55] text-[#111827] line-clamp-3">{content}</p>
-          </div>
-        ) : null}
-      </div>
+      {hasImages ? (
+        <div className={`flex gap-3 ${hasText ? 'items-start' : 'items-center'}`}>
+          <MomentArchiveThumbnail images={images} variant="timeline" />
+          {hasText ? (
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] leading-[1.55] text-[#111827] line-clamp-3">{content}</p>
+            </div>
+          ) : null}
+        </div>
+      ) : hasText ? (
+        <ArchiveTextOnlyMomentStrip content={content} variant="timeline" />
+      ) : null}
     </button>
   )
 }
@@ -239,7 +235,6 @@ export function UserMomentsArchive({
     handleTogglePin,
     handleDeleteMoment,
     openFloatingInput,
-    enableVisitorFootprints,
     playerIdentityId,
   } = useMomentFeedInteractions({
     accountId,
@@ -309,20 +304,14 @@ export function UserMomentsArchive({
           momentImages: draft.images,
           allowedCharacters: allowed,
           mentionedCharacters,
-          enableVisitorFootprints: settings.enableVisitorFootprints,
           wechatCtx: qnaWechatCtx,
           momentPublishedAt: publishedAt,
         })
         drafts = ensureMentionedCharacterAwarenessDrafts(
           drafts,
           mentionedCharacters.map((c) => c.charId),
-          settings.enableVisitorFootprints,
         )
-        drafts = finalizeMomentInteractionDrafts(
-          drafts,
-          allowed,
-          settings.enableVisitorFootprints,
-        )
+        drafts = finalizeMomentInteractionDrafts(drafts, allowed)
         if (!drafts.length && !mentionedCharacters.length) return
         const interactions = materializeInteractions(
           drafts,
@@ -356,7 +345,6 @@ export function UserMomentsArchive({
       qnaWechatCtx?.playerIdentityId,
       setAllMoments,
       settings.enableDelayedInteraction,
-      settings.enableVisitorFootprints,
       tags,
       userId,
     ],
@@ -385,12 +373,14 @@ export function UserMomentsArchive({
 
   const hasSignature = !!profile?.signature?.trim()
   const hasPinnedBar = pinnedMoments.length > 0
-  const timelineTopPadding = hasPinnedBar
-    ? ''
-    : hasSignature
-      ? 'pt-12'
-      : 'pt-8'
-  const pinnedTopPadding = hasSignature ? 'pt-11' : 'pt-6'
+  /** 个签在封面下方 absolute 露出：透明占位，勿加在置顶栏灰底上 */
+  const archiveSignatureSpacer = hasSignature
+    ? hasPinnedBar
+      ? 'pt-[5.25rem]'
+      : 'pt-12'
+    : ''
+  /** 无个签时置顶栏与封面间距（透明） */
+  const archivePinnedTopSpacer = !hasSignature && hasPinnedBar ? 'pt-5' : ''
 
   const subjectAuthorProps = useMemo(
     () =>
@@ -410,7 +400,6 @@ export function UserMomentsArchive({
     momentContacts: feedMomentContacts,
     momentRelationships,
     playerIdentityId,
-    enableVisitorFootprints,
     replyingMomentId,
     replyingAuthorName,
     replyingTargetName: displayNickname,
@@ -505,13 +494,14 @@ export function UserMomentsArchive({
   ) : null
 
   return (
-    <div className="relative h-full min-h-0 overflow-hidden">
+    <div className="relative h-full min-h-0 overflow-hidden" data-moments-page-shell>
       <MomentsContentBackgroundLayer />
       <div
         ref={scrollerRef}
         className={`relative z-10 h-full min-h-0 overflow-y-auto bg-transparent text-[#111827] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden ${
           floatingTarget ? 'pb-36' : 'pb-8'
         }`}
+        data-moments-feed-scroller
       >
         <ArchiveMomentsHeader
           title={headerTitle}
@@ -520,7 +510,7 @@ export function UserMomentsArchive({
           rightSlot={headerRightSlot}
         />
         <div className="mx-auto max-w-[560px]">
-          <div ref={coverWrapRef} className="relative z-20">
+          <div ref={coverWrapRef} className="relative">
             {profile ? (
               <MomentsCover
                 coverUrl={coverUrl}
@@ -537,20 +527,22 @@ export function UserMomentsArchive({
             )}
           </div>
 
-          <MomentsContentBackdrop className="-mt-px">
-          <div className={`pb-[max(28px,env(safe-area-inset-bottom,0px))] ${timelineTopPadding}`}>
+          {archiveSignatureSpacer || archivePinnedTopSpacer ? (
+            <div
+              aria-hidden
+              className={`${archiveSignatureSpacer} ${archivePinnedTopSpacer}`.trim()}
+            />
+          ) : null}
           {hasPinnedBar ? (
-            <section
-              className={`mb-6 border-y border-black/[0.04] bg-white/95 px-5 py-4 shadow-[0_1px_0_rgba(0,0,0,0.02)] backdrop-blur-sm ${pinnedTopPadding}`}
-            >
+            <section className={`mb-6 mx-5 ${MOMENT_ARCHIVE_TEXT_STRIP_CLASS} px-4 py-3.5`}>
               <button
                 type="button"
                 onClick={() => setPinnedListOpen(true)}
-                className="flex w-full gap-4 text-left transition-opacity hover:opacity-85"
+                className="flex w-full items-center gap-4 text-left transition-opacity hover:opacity-85"
                 aria-label="查看置顶朋友圈"
               >
-                <div className="w-[20%] shrink-0 pt-0.5">
-                  <span className="text-[14px] font-semibold text-[#0A0A0A]">置顶</span>
+                <div className="flex w-[20%] shrink-0 items-center self-stretch">
+                  <span className="text-[14px] font-semibold leading-none text-[#0A0A0A]">置顶</span>
                 </div>
                 <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   {pinnedMoments.slice(0, 5).map((moment) => (
@@ -561,7 +553,9 @@ export function UserMomentsArchive({
               </button>
             </section>
           ) : null}
-          <div className="px-5">
+
+          <MomentsContentBackdrop className="-mt-px">
+          <div className={`px-5 pb-[max(28px,env(safe-area-inset-bottom,0px))]`}>
           {loading ? (
             <div className="space-y-10 py-6">
               {Array.from({ length: 4 }).map((_, i) => (
@@ -621,7 +615,6 @@ export function UserMomentsArchive({
               {hasMore ? <div ref={sentinelRef} className="h-8" aria-hidden /> : null}
             </motion.section>
           )}
-          </div>
           </div>
           </MomentsContentBackdrop>
         </div>

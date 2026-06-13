@@ -224,13 +224,13 @@ export function WeChatMomentsPage({
   }, [momentContacts])
 
   useEffect(() => {
-    if (!settings.enableVisitorFootprints || !currentAccountId) return
+    if (!currentAccountId) return
     let cancelled = false
 
     void (async () => {
       for (const moment of userMoments) {
         if (cancelled) return
-        if (!momentNeedsVisitorFootprintBackfill(moment, true)) continue
+        if (!momentNeedsVisitorFootprintBackfill(moment)) continue
         if (visitorBackfillDoneRef.current.has(moment.id)) continue
 
         const privacy = privacyMetaToDraftPrivacy(moment.privacy)
@@ -274,7 +274,6 @@ export function WeChatMomentsPage({
     momentRelationships,
     qnaWechatCtx?.playerIdentityId,
     settings.enableDelayedInteraction,
-    settings.enableVisitorFootprints,
     tags,
     userMoments,
   ])
@@ -406,20 +405,14 @@ export function WeChatMomentsPage({
           momentImages: draft.images,
           allowedCharacters: allowed,
           mentionedCharacters,
-          enableVisitorFootprints: settings.enableVisitorFootprints,
           wechatCtx: qnaWechatCtx,
           momentPublishedAt: publishedAt,
         })
         drafts = ensureMentionedCharacterAwarenessDrafts(
           drafts,
           mentionedCharacters.map((c) => c.charId),
-          settings.enableVisitorFootprints,
         )
-        drafts = finalizeMomentInteractionDrafts(
-          drafts,
-          allowed,
-          settings.enableVisitorFootprints,
-        )
+        drafts = finalizeMomentInteractionDrafts(drafts, allowed)
         if (!drafts.length && !mentionedCharacters.length) return
         const interactions = materializeInteractions(
           drafts,
@@ -453,7 +446,6 @@ export function WeChatMomentsPage({
       qnaWechatCtx?.playerIdentityId,
       tags,
       settings.enableDelayedInteraction,
-      settings.enableVisitorFootprints,
     ],
   )
 
@@ -773,13 +765,14 @@ export function WeChatMomentsPage({
   }, [])
 
   return (
-    <div className="relative h-full min-h-0 overflow-hidden">
+    <div className="relative h-full min-h-0 overflow-hidden" data-moments-page-shell>
       <MomentsContentBackgroundLayer />
       <div
         ref={scrollerRef}
         className={`relative z-10 h-full min-h-0 overflow-y-auto bg-transparent text-[#111827] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden ${
           floatingTarget ? 'pb-36' : 'pb-8'
         }`}
+        data-moments-feed-scroller
       >
         <DynamicHeader
           opacity={headerOpacity}
@@ -821,7 +814,6 @@ export function WeChatMomentsPage({
               momentContacts={feedMomentContacts}
               momentRelationships={momentRelationships}
               playerIdentityId={qnaWechatCtx?.playerIdentityId}
-              enableVisitorFootprints={settings.enableVisitorFootprints}
               replyingMomentId={replyingMomentId}
               replyingAuthorName={replyingAuthorName}
               replyingTargetName={displayNickname}
@@ -886,7 +878,6 @@ export function WeChatMomentsPage({
               momentContacts={feedMomentContacts}
               momentRelationships={momentRelationships}
               playerIdentityId={qnaWechatCtx?.playerIdentityId}
-              enableVisitorFootprints={settings.enableVisitorFootprints}
               replyingMomentId={replyingMomentId}
               replyingAuthorName={replyingAuthorName}
               replyingTargetName={displayNickname}

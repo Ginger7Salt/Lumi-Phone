@@ -4,6 +4,10 @@ import type { AnonymousQaWechatContext } from '../anonymousQa/buildAnonymousQaPe
 import { assertMomentsChatApiConfigured } from './momentsChatApiReady'
 import type { CommentCatalogEntry, ThreadParticipant } from './momentCommentThreadContext'
 import type { MomentComment } from './mockMoments'
+import type { Relationship } from '../../phone/apps/wechat/newFriendsPersona/types'
+import {
+  buildMomentCharacterRelationshipPromptBlock,
+} from './momentRelationshipGraph'
 import { MOMENT_TEXT_OUTPUT_HINT, sanitizeMomentText } from './momentTextSanitize'
 import { runMomentsVisionChat } from './momentVisionChat'
 
@@ -26,6 +30,7 @@ const THREAD_REPLY_TASK = `
 - 发布者 publisher 是否出场由剧情决定，可护用户、拆台、和稀泥
 - 每项 1～3 句口语，禁止编号前缀
 - authorCharId 必须来自参与者列表；replyToCommentId 必须来自评论目录
+- **互称规则**：若提供了【角色之间的人脉关系】，提及/回复对方时必须使用其中的「当面称呼」；禁止与关系矛盾的称谓（如母子绝不可互称学姐学长）
 ${MOMENT_TEXT_OUTPUT_HINT}
 `.trim()
 
@@ -68,6 +73,7 @@ export async function generateMomentThreadReplies(params: {
   userComment: MomentComment
   commentCatalog: CommentCatalogEntry[]
   participants: ThreadParticipant[]
+  momentRelationships?: Relationship[]
 }): Promise<ThreadReplyDraft[]> {
   assertMomentsChatApiConfigured(params.wechatCtx.apiConfig)
   const cfg = params.wechatCtx.apiConfig
@@ -89,11 +95,18 @@ export async function generateMomentThreadReplies(params: {
 
   const userLine = `- id: ${params.userComment.id}，${params.userDisplayName} 回复 ${params.targetDisplayName}：${params.userComment.content}`
 
+  const relationshipBlock = buildMomentCharacterRelationshipPromptBlock(
+    params.participants.map((p) => ({ charId: p.charId, displayName: p.displayName })),
+    params.momentRelationships ?? [],
+  )
+
   const userTask = [
     `朋友圈正文：${params.momentContent.trim() || '（无文字）'}`,
     `发布者：${params.publisherDisplayName}（id: ${params.publisherCharacterId}）`,
     `用户 ${params.userDisplayName} 回复了 ${params.targetDisplayName}（id: ${params.targetCharacterId}），触发了评区连锁反应。`,
     '',
+    relationshipBlock,
+    relationshipBlock ? '' : null,
     '【参与者】',
     participantLines,
     '',
@@ -109,7 +122,9 @@ export async function generateMomentThreadReplies(params: {
     '→ 发布者 回复用户：他忘了，我给你补上！',
     '',
     '请生成 replies JSON。',
-  ].join('\n')
+  ]
+    .filter((line) => line !== null)
+    .join('\n')
 
   const raw = await runMomentsVisionChat(cfg as ApiConfig, {
     system: THREAD_REPLY_TASK,

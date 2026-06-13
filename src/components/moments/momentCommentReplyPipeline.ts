@@ -151,6 +151,7 @@ export async function runMomentCommentReplyPipeline(
       userComment,
       commentCatalog,
       participants,
+      momentRelationships,
     })
 
     let drafts = filterThreadRepliesByRelationshipBinding(

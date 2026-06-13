@@ -137,6 +137,54 @@ export function filterPlayerBoundMomentCharacters<
   return characters.filter((c) => hasPlayerIdentityBinding(pid, c.charId, rels))
 }
 
+function clipPerspective(text: string, max = 80): string {
+  const t = text.trim().replace(/\s+/g, ' ')
+  if (!t) return ''
+  return t.length <= max ? t : `${t.slice(0, max)}…`
+}
+
+/**
+ * 评区 AI：列出参与角色之间的有向关系与当面称呼（fromCallsTo），防止乱叫「学姐」等。
+ */
+export function buildMomentCharacterRelationshipPromptBlock(
+  characters: ReadonlyArray<{ charId: string; displayName: string }>,
+  rels: ReadonlyArray<Relationship>,
+): string {
+  const ids = new Set(characters.map((c) => c.charId.trim()).filter(Boolean))
+  const nameById = new Map(
+    characters.map((c) => [c.charId.trim(), c.displayName.trim() || c.charId.trim()]),
+  )
+  if (!ids.size || !rels.length) return ''
+
+  const lines: string[] = []
+  for (const r of rels) {
+    if (r.isPlayerIdentity) continue
+    const from = r.fromCharacterId.trim()
+    const to = r.toCharacterId.trim()
+    if (!from || !to || !ids.has(from) || !ids.has(to)) continue
+
+    const fromName = nameById.get(from) ?? from
+    const toName = nameById.get(to) ?? to
+    const relation = r.relation.trim() || '关系'
+    const call = r.fromCallsTo.trim()
+    const perspective = clipPerspective(r.fromPerspective)
+    const bits = [`${fromName}（${from}）→ ${toName}（${to}）：${relation}`]
+    if (call) bits.push(`${fromName}当面称呼${toName}「${call}」`)
+    if (perspective) bits.push(`${fromName}对${toName}：${perspective}`)
+    lines.push(`- ${bits.join('；')}`)
+  }
+
+  if (!lines.length) return ''
+
+  return [
+    '【角色之间的人脉关系 · 评区互称须严格遵守】',
+    '- 评论里提到/直接回复其他角色时，称呼必须与下列「当面称呼」一致。',
+    '- 禁止臆造与关系不符的称谓（如母子关系绝不可叫「学姐/学长/同学」；无依据不得编造学校/职场称呼）。',
+    '- 若无「当面称呼」，用对方备注名即可，勿乱加亲属或同学称谓。',
+    ...lines,
+  ].join('\n')
+}
+
 export function resolveCharIdByDisplayName(
   displayName: string,
   momentContacts: MomentContactRef[],

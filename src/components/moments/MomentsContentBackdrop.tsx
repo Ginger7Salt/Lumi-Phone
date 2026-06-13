@@ -1,10 +1,11 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 
 import { resolveMomentsContentBackgroundUrl } from './momentsCoverDefaults'
 
 type MomentsContentBackdropProps = {
   children: ReactNode
   className?: string
+  style?: CSSProperties
 }
 
 /**
@@ -24,6 +25,14 @@ export function MomentsContentBackgroundLayer() {
 }
 
 /** 封面下方正文区：内容叠在固定壁纸之上 */
-export function MomentsContentBackdrop({ children, className = '' }: MomentsContentBackdropProps) {
-  return <div className={`relative z-[1] ${className}`.trim()}>{children}</div>
+export function MomentsContentBackdrop({
+  children,
+  className = '',
+  style,
+}: MomentsContentBackdropProps) {
+  return (
+    <div className={`relative z-[1] ${className}`.trim()} style={style}>
+      {children}
+    </div>
+  )
 }

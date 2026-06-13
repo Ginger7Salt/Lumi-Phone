@@ -86,9 +86,11 @@ export function normalizeInstantGenPostType(
   return fallback
 }
 
+import { clampMomentInteractionDelay } from './momentInteractionTiming'
+
 function clampDelaySeconds(raw: unknown, fallback = 60): number {
   const n = typeof raw === 'number' && Number.isFinite(raw) ? Math.floor(raw) : fallback
-  return Math.max(30, Math.min(300, n))
+  return clampMomentInteractionDelay(n)
 }
 
 export function normalizeInstantGenAiDraft(

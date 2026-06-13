@@ -1,5 +1,11 @@
 /** 角色异步互动（仅存 charId，渲染时查通讯录） */
-import { alignCharacterInteractionTiming, realignInteractionVisibleAt } from './momentInteractionTiming'
+import {
+  alignCharacterInteractionTiming,
+  alignThreadedCommentDelays,
+  clampMomentInteractionDelay,
+  realignInteractionVisibleAt,
+  staggerCrossCharacterDelays,
+} from './momentInteractionTiming'
 import type { PublisherSelfCommentDraft } from './momentCharacterPublishTypes'
 
 export interface MomentInteraction {
@@ -35,23 +41,76 @@ export function createInteractionId(): string {
   return `ix-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+/** 已有点赞/评论的角色 id（不含 viewed） */
+export function collectEngagedCharacterIds(
+  items: ReadonlyArray<Pick<AiMomentInteractionDraft | MomentInteraction, 'charId' | 'type'>>,
+): Set<string> {
+  const engaged = new Set<string>()
+  for (const item of items) {
+    if (item.type !== 'like' && item.type !== 'comment') continue
+    const id = item.charId.trim()
+    if (id) engaged.add(id)
+  }
+  return engaged
+}
+
+/** 去掉已有 like/comment 的角色的 viewed（访客仅表示沉默浏览） */
+export function stripViewedForEngagedCharacters(
+  drafts: AiMomentInteractionDraft[],
+): AiMomentInteractionDraft[] {
+  const engaged = collectEngagedCharacterIds(drafts)
+  if (!engaged.size) return drafts
+  return drafts.filter((d) => d.type !== 'viewed' || !engaged.has(d.charId.trim()))
+}
+
+export function stripViewedInteractionsForEngagedCharacters(
+  interactions: MomentInteraction[],
+): MomentInteraction[] {
+  const engaged = collectEngagedCharacterIds(interactions)
+  if (!engaged.size) return interactions
+  return interactions.filter((ix) => ix.type !== 'viewed' || !engaged.has(ix.charId.trim()))
+}
+
 export function materializeInteractions(
   drafts: AiMomentInteractionDraft[],
   publishedAt: number,
   immediate = false,
 ): MomentInteraction[] {
-  const aligned = alignCharacterInteractionTiming(drafts)
-  return aligned.map((d) => ({
-    id: createInteractionId(),
-    charId: d.charId,
-    type: d.type,
-    content: d.type === 'comment' ? d.content?.trim() : undefined,
-    visibleAt: immediate
-      ? publishedAt
-      : publishedAt + Math.max(0, d.delaySeconds) * 1000,
-    replyToCharId: d.replyToCharId,
-    dwellSeconds: d.type === 'viewed' ? d.dwellSeconds : undefined,
-  }))
+  const cleaned = stripViewedForEngagedCharacters(drafts)
+  const aligned = alignThreadedCommentDelays(
+    staggerCrossCharacterDelays(alignCharacterInteractionTiming(cleaned)),
+  )
+  const sortedDrafts = [...aligned].sort(
+    (a, b) => a.delaySeconds - b.delaySeconds || a.charId.localeCompare(b.charId),
+  )
+
+  const interactions: MomentInteraction[] = []
+  const lastCommentIdByChar = new Map<string, string>()
+
+  for (const d of sortedDrafts) {
+    const ix: MomentInteraction = {
+      id: createInteractionId(),
+      charId: d.charId,
+      type: d.type,
+      content: d.type === 'comment' ? d.content?.trim() : undefined,
+      visibleAt: immediate
+        ? publishedAt
+        : publishedAt + Math.max(0, d.delaySeconds) * 1000,
+      replyToCharId: d.replyToCharId,
+      dwellSeconds: d.type === 'viewed' ? d.dwellSeconds : undefined,
+    }
+    if (d.type === 'comment') {
+      const replyToChar = d.replyToCharId?.trim()
+      if (replyToChar) {
+        const parentId = lastCommentIdByChar.get(replyToChar)
+        if (parentId) ix.replyToInteractionId = parentId
+      }
+      lastCommentIdByChar.set(d.charId.trim(), ix.id)
+    }
+    interactions.push(ix)
+  }
+
+  return interactions
 }
 
 export type ElicitReplyInteractionDraft = {
@@ -102,7 +161,7 @@ export function reanchorPendingInteractionsAfterUserComment(
   return interactions.map((ix) => {
     if (ix.visibleAt <= now) return ix
     pendingIndex += 1
-    const minVisibleAt = userCommentCreatedAt + 1200 + pendingIndex * 900
+    const minVisibleAt = userCommentCreatedAt + 1500 + pendingIndex * 1200
     if (ix.visibleAt >= minVisibleAt) return ix
     return { ...ix, visibleAt: minVisibleAt }
   })
@@ -116,8 +175,7 @@ export function getUnlockedInteractions(
 }
 
 function clampInteractionDelay(seconds: number): number {
-  const n = Number.isFinite(seconds) ? Math.floor(seconds) : 60
-  return Math.max(30, Math.min(300, n))
+  return clampMomentInteractionDelay(seconds)
 }
 
 /** 瞬时生成：一次性物化点赞、评论与发布者回复（回复解锁 = 评论 visibleAt + reply.delaySeconds） */

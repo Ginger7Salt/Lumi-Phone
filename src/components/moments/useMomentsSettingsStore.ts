@@ -58,7 +58,6 @@ export type MomentsImageGenApiSettings = MomentsImageGenSettings
 
 export interface MomentsSettings {
   enableDelayedInteraction: boolean
-  enableVisitorFootprints: boolean
   /** 仅提醒朋友与我的直接互动（关闭共同好友吃瓜提醒） */
   onlyDirectInteraction: boolean
   imageGen: MomentsImageGenSettings
@@ -69,7 +68,6 @@ const STORAGE_KEY = 'wechat-moments-settings-v1'
 
 export const DEFAULT_MOMENTS_SETTINGS: MomentsSettings = {
   enableDelayedInteraction: true,
-  enableVisitorFootprints: false,
   onlyDirectInteraction: false,
   proactiveCharacterMoments: { ...DEFAULT_PROACTIVE_CHARACTER_MOMENTS_SETTINGS },
   imageGen: {
@@ -296,10 +294,6 @@ function normalizeSettings(raw: unknown): MomentsSettings {
       typeof o.enableDelayedInteraction === 'boolean'
         ? o.enableDelayedInteraction
         : DEFAULT_MOMENTS_SETTINGS.enableDelayedInteraction,
-    enableVisitorFootprints:
-      typeof o.enableVisitorFootprints === 'boolean'
-        ? o.enableVisitorFootprints
-        : DEFAULT_MOMENTS_SETTINGS.enableVisitorFootprints,
     onlyDirectInteraction:
       typeof o.onlyDirectInteraction === 'boolean'
         ? o.onlyDirectInteraction

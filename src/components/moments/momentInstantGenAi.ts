@@ -49,7 +49,7 @@ const INSTANT_GEN_TASK = `
 【系统任务：实时朋友圈推演与社交生态模拟】
 用户刚刚触发了即时朋友圈生成。你必须完全代入角色人设，一次性返回朋友圈正文、与发布者有**人脉关系绑定**的其他角色的互动、以及你对评论的回复。
 只有与发布者在「管理关系 / 人脉」中**双向互相认识**（A→B 且 B→A 均有关系边）的其他角色才能点赞/评论；单向认识或未绑定的角色不得出现在 interactions 中。
-互动 delaySeconds 须在 30~300 秒之间错落分布；发布者回复的 delaySeconds 为「该评论出现后」再等待的秒数。
+互动 delaySeconds 须在 30~600 秒（10 分钟内）错落分布，不同角色须明显错开；发布者回复的 delaySeconds 为「该评论出现后」再等待的秒数。
 共同好友继续跟发布者/他人互怼时，后续 comment 必须填 replyTo 指向被回复那条互动的 id（如 c_001 或发布者 reply 对应评论），禁止写成无 replyTo 的顶层评论。
 发布者可在评论区对自己追评补充（非回复他人）：在 interactions 里用 authorId=发布者 characterId、无 replyTo、无 reply 的 comment；或使用 publisherSelfComments 数组。**自评必须与本条正文/配图/地点直接相关**，严禁把私聊另起话题搬进评论区。
 

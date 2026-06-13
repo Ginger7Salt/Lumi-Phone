@@ -7,7 +7,7 @@ import type { Relationship } from '../../phone/apps/wechat/newFriendsPersona/typ
 import { ArchiveTimelineDateColumn } from './ArchiveTimelineDateColumn'
 import { getCalendarYear, shouldShowArchiveYearHeader } from './utils/archiveTimelineDate'
 import type { MomentItemModel } from './mockMoments'
-import { MomentArchiveThumbnail } from './MomentArchiveThumbnail'
+import { ArchiveTextOnlyMomentStrip, MomentArchiveThumbnail } from './MomentArchiveThumbnail'
 import { MomentsContentBackdrop, MomentsContentBackgroundLayer } from './MomentsContentBackdrop'
 import { formatMomentLocationDisplay } from './momentLocationUtils'
 import { sanitizeMomentBodyText } from './momentTextSanitize'
@@ -22,7 +22,6 @@ type PinnedMomentsListPageProps = {
   momentContacts?: MomentContactRef[]
   momentRelationships?: Relationship[]
   playerIdentityId?: string | null
-  enableVisitorFootprints?: boolean
   replyingMomentId?: string | null
   replyingAuthorName?: string | null
   replyingTargetName?: string | null
@@ -68,14 +67,18 @@ function PinnedListMomentRow({
         onClick={onOpen}
         className="min-w-0 flex-1 self-start text-left transition-opacity hover:opacity-85"
       >
-        <div className={`flex gap-3 ${hasImages && hasText ? 'items-start' : 'items-center'}`}>
-          {hasImages ? <MomentArchiveThumbnail images={images} variant="timeline" /> : null}
-          {hasText ? (
-            <div className="min-w-0 flex-1">
-              <p className="text-[14px] leading-[1.55] text-[#111827] line-clamp-3">{content}</p>
-            </div>
-          ) : null}
-        </div>
+        {hasImages ? (
+          <div className={`flex gap-3 ${hasText ? 'items-start' : 'items-center'}`}>
+            <MomentArchiveThumbnail images={images} variant="timeline" />
+            {hasText ? (
+              <div className="min-w-0 flex-1">
+                <p className="text-[14px] leading-[1.55] text-[#111827] line-clamp-3">{content}</p>
+              </div>
+            ) : null}
+          </div>
+        ) : hasText ? (
+          <ArchiveTextOnlyMomentStrip content={content} variant="timeline" />
+        ) : null}
       </button>
     </article>
   )

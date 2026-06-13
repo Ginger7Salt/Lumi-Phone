@@ -18,6 +18,7 @@ import type { MomentContactRef } from './newMomentTypes'
 import type { OnOpenMomentParticipantProfile } from './momentProfileNavigation'
 import { profilePayloadFromMomentAuthor } from './momentProfileNavigation'
 import { UserMomentEditMenu } from './UserMomentEditMenu'
+import { MomentVisitorRecordButton } from './MomentVisitorRecordButton'
 
 type MomentItemProps = {
   item: MomentItemModel
@@ -30,7 +31,6 @@ type MomentItemProps = {
   momentContacts?: MomentContactRef[]
   momentRelationships?: Relationship[]
   playerIdentityId?: string | null
-  enableVisitorFootprints?: boolean
   isReplying?: boolean
   replyingAuthorName?: string | null
   replyingTargetName?: string | null
@@ -69,7 +69,6 @@ export function MomentItem({
   momentContacts = [],
   momentRelationships = [],
   playerIdentityId,
-  enableVisitorFootprints = false,
   isReplying = false,
   replyingAuthorName,
   replyingTargetName,
@@ -181,11 +180,18 @@ export function MomentItem({
           <div className="flex items-start justify-between gap-2">
             <h3 className="min-w-0 text-[15px] font-semibold text-[#111827]">{authorDisplay.name}</h3>
             {showUserEditMenu ? (
-              <UserMomentEditMenu
-                isPinned={item.isPinned}
-                onTogglePin={() => void onTogglePin(item.id)}
-                onDelete={() => void onDelete(item.id)}
-              />
+              <div className="flex shrink-0 items-center gap-0.5">
+                <MomentVisitorRecordButton
+                  interactions={item.interactions}
+                  now={now}
+                  contactDirectory={contactDirectory}
+                />
+                <UserMomentEditMenu
+                  isPinned={item.isPinned}
+                  onTogglePin={() => void onTogglePin(item.id)}
+                  onDelete={() => void onDelete(item.id)}
+                />
+              </div>
             ) : showCharacterPinMenu ? (
               <UserMomentEditMenu
                 isPinned={item.isPinned}
@@ -361,7 +367,6 @@ export function MomentItem({
             momentRelationships={momentRelationships}
             playerIdentityId={playerIdentityId}
             publisherCharacterId={item.authorCharacterId}
-            enableVisitorFootprints={enableVisitorFootprints}
             replyingAuthorName={isReplying ? replyingAuthorName : null}
             replyingTargetName={isReplying ? replyingTargetName : null}
             highlightCommentId={highlightCommentId}

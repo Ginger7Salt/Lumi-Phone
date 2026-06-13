@@ -9,9 +9,11 @@ import {
 } from '../anonymousQa/buildAnonymousQaPersonaContext'
 
 import type { AiMomentInteractionDraft } from './momentInteractionTypes'
+import { clampMomentInteractionDelay } from './momentInteractionTiming'
 import { detectUserGhostedChatButPostedMoment } from './momentUserInteractionContext'
 import { assertMomentsChatApiConfigured } from './momentsChatApiReady'
 import type { AllowedMomentCharacter } from './momentPrivacyAudience'
+import { selectCharactersForMomentEngagement } from './momentEngagementAudience'
 import { MOMENT_TEXT_OUTPUT_HINT, sanitizeMomentText } from './momentTextSanitize'
 import { runMomentsVisionChat } from './momentVisionChat'
 import { personaDb } from '../../phone/apps/wechat/newFriendsPersona/idb'
@@ -25,6 +27,7 @@ const USER_MOMENT_INTERACTION_TASK = `
 - **禁止**因角色名/昵称含「狗/猫」等就写「帮你咬他」「哇太乖了」式模板，除非私聊里你本就这种说话方式。
 - 可 0 条互动；comment 最多 1～2 句，像真人随手评，不要戏精表演。
 - comment **必须**承接上方朋友圈正文的具体内容/情绪（如用户说困→关心睡觉、调侃熬夜等），**禁止**「看到了」「收到」「不错哦」等空话。
+- 若 system 中【人脉关系】写明你如何称呼其他角色，评区提到对方时必须用该称呼，禁止臆造「学姐/学长」等与关系不符的叫法。
 - 只输出 JSON，不要 Markdown。
 ${MOMENT_TEXT_OUTPUT_HINT}
 `.trim()
@@ -49,14 +52,9 @@ function buildSingleCharacterInteractionTask(params: {
   momentContent: string
   imageCount: number
   mentioned: boolean
-  enableVisitorFootprints: boolean
   ghostTease: ReturnType<typeof detectUserGhostedChatButPostedMoment>
   privateChatToneAnchor: string
 }): string {
-  const typeUnion = params.enableVisitorFootprints ? '"like"|"comment"|"viewed"' : '"like"|"comment"'
-  const viewedRule = params.enableVisitorFootprints
-    ? '\n- type=viewed：只浏览不点赞不评论；需 dwellSeconds（3～120）'
-    : ''
   const mentionLine = params.mentioned
     ? '\n- 用户在这条朋友圈里 @ 提醒了你；你知晓被提及，但互动深浅仍须符合关系与人设。'
     : ''
@@ -70,9 +68,10 @@ function buildSingleCharacterInteractionTask(params: {
     `配图数：${params.imageCount}${mentionLine}${ghostLine}`,
     params.privateChatToneAnchor,
     '',
-    `输出 JSON：{"interactions":[{"type":${typeUnion},"content":"仅comment需要","delaySeconds":数字,"dwellSeconds":"仅viewed"}]}`,
-    '规则：可 0～2 条；有 comment 时须回应正文具体内容；delaySeconds 30～300；若 like+comment，comment 比 like 大 8～15 秒。',
-    viewedRule,
+    '输出 JSON：{"interactions":[{"type":"like"|"comment","content":"仅comment需要","delaySeconds":数字}]}',
+    '规则：**默认不互动**，输出 {"interactions":[]} 最常见；只有强烈想回应时才点赞或评论。',
+    '可 0～2 条；有 comment 时须回应正文具体内容；delaySeconds 30～600（10 分钟内）。',
+    '禁止 type=viewed；静默浏览由系统另行记录，你只需决定要不要点赞/评论。',
   ]
     .filter(Boolean)
     .join('\n')
@@ -81,7 +80,6 @@ function buildSingleCharacterInteractionTask(params: {
 function parseSingleCharacterInteractions(
   payload: unknown,
   charId: string,
-  allowViewed: boolean,
 ): AiMomentInteractionDraft[] {
   const rows = (() => {
     if (Array.isArray(payload)) return payload
@@ -98,26 +96,16 @@ function parseSingleCharacterInteractions(
     const o = row as Record<string, unknown>
     const typeRaw = o.type
     const type =
-      typeRaw === 'like' || typeRaw === 'comment' || (allowViewed && typeRaw === 'viewed')
-        ? typeRaw
-        : null
+      typeRaw === 'like' || typeRaw === 'comment' ? typeRaw : null
     if (!type) continue
 
     const delayRaw = Number(o.delaySeconds)
-    const delaySeconds = Number.isFinite(delayRaw) ? Math.max(5, Math.min(7200, delayRaw)) : 60
+    const delaySeconds = Number.isFinite(delayRaw) ? clampMomentInteractionDelay(delayRaw) : 90
 
     if (type === 'comment') {
       const content = sanitizeMomentText(typeof o.content === 'string' ? o.content : '')
       if (!content) continue
       out.push({ charId, type, content: content.slice(0, 280), delaySeconds })
-      continue
-    }
-    if (type === 'viewed') {
-      const dwellRaw = Number(o.dwellSeconds)
-      const dwellSeconds = Number.isFinite(dwellRaw)
-        ? Math.max(3, Math.min(300, Math.round(dwellRaw)))
-        : 12
-      out.push({ charId, type, delaySeconds, dwellSeconds })
       continue
     }
     out.push({ charId, type, delaySeconds })
@@ -126,17 +114,13 @@ function parseSingleCharacterInteractions(
   return out
 }
 
-function parseInteractionRaw(
-  raw: string,
-  charId: string,
-  allowViewed: boolean,
-): AiMomentInteractionDraft[] {
+function parseInteractionRaw(raw: string, charId: string): AiMomentInteractionDraft[] {
   const trimmed = raw.trim()
   if (!trimmed) return []
 
   const payload = parseModelJsonPayload(trimmed)
   if (!payload) return []
-  return parseSingleCharacterInteractions(payload, charId, allowViewed)
+  return parseSingleCharacterInteractions(payload, charId)
 }
 
 async function loadPrivateChatMessages(conversationKey: string): Promise<WeChatChatMessage[]> {
@@ -158,7 +142,6 @@ async function generatePersonaBoundInteractionForCharacter(params: {
   imageCount: number
   momentPublishedAt: number
   mentioned: boolean
-  enableVisitorFootprints: boolean
 }): Promise<AiMomentInteractionDraft[]> {
   const haystack = [params.momentContent.trim(), '朋友圈 动态 互动 评论'].filter(Boolean).join('\n')
   const pack = await buildAnonymousQaPersonaPromptPack({
@@ -201,7 +184,6 @@ async function generatePersonaBoundInteractionForCharacter(params: {
     momentContent: params.momentContent,
     imageCount: params.imageCount,
     mentioned: params.mentioned,
-    enableVisitorFootprints: params.enableVisitorFootprints,
     ghostTease,
     privateChatToneAnchor,
   })
@@ -214,7 +196,7 @@ async function generatePersonaBoundInteractionForCharacter(params: {
       temperature: retryNote ? 0.75 : 0.88,
       max_tokens: 680,
     })
-    return parseInteractionRaw(raw, params.character.charId, params.enableVisitorFootprints)
+    return parseInteractionRaw(raw, params.character.charId)
   }
 
   let drafts = await runOnce()
@@ -235,15 +217,19 @@ export async function generatePersonaBoundUserMomentInteractions(params: {
   momentImages?: string[]
   allowedCharacters: AllowedMomentCharacter[]
   mentionedCharacterIds?: Set<string>
-  enableVisitorFootprints?: boolean
   momentPublishedAt: number
 }): Promise<AiMomentInteractionDraft[]> {
   const cfg = params.wechatCtx.apiConfig
   assertMomentsChatApiConfigured(cfg)
 
   const mentionedIds = params.mentionedCharacterIds ?? new Set<string>()
+  const engagementTargets = selectCharactersForMomentEngagement(
+    params.allowedCharacters,
+    mentionedIds,
+    params.momentPublishedAt,
+  )
   const rows = await Promise.all(
-    params.allowedCharacters.map((character) =>
+    engagementTargets.map((character) =>
       generatePersonaBoundInteractionForCharacter({
         cfg: cfg as ApiConfig,
         wechatCtx: params.wechatCtx,
@@ -253,7 +239,6 @@ export async function generatePersonaBoundUserMomentInteractions(params: {
         imageCount: params.imageCount,
         momentPublishedAt: params.momentPublishedAt,
         mentioned: mentionedIds.has(character.charId),
-        enableVisitorFootprints: params.enableVisitorFootprints ?? false,
       }),
     ),
   )

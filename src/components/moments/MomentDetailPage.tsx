@@ -18,7 +18,6 @@ type MomentDetailPageProps = {
   momentContacts?: MomentContactRef[]
   momentRelationships?: Relationship[]
   playerIdentityId?: string | null
-  enableVisitorFootprints?: boolean
   replyingMomentId?: string | null
   replyingAuthorName?: string | null
   replyingTargetName?: string | null
@@ -43,7 +42,6 @@ export function MomentDetailPage({
   momentContacts = [],
   momentRelationships = [],
   playerIdentityId,
-  enableVisitorFootprints = false,
   replyingMomentId,
   replyingAuthorName,
   replyingTargetName,
@@ -66,6 +64,7 @@ export function MomentDetailPage({
   return (
     <motion.div
       className="absolute inset-0 z-[440] flex flex-col bg-transparent"
+      data-moments-page-shell
       initial={{ x: '100%' }}
       animate={{ x: 0 }}
       exit={{ x: '100%' }}
@@ -92,6 +91,7 @@ export function MomentDetailPage({
         <MomentsContentBackgroundLayer />
         <div
           className="relative z-10 h-full min-h-0 overflow-y-auto pb-[max(28px,env(safe-area-inset-bottom,0px))] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+          data-moments-feed-scroller
         >
           <MomentsContentBackdrop className="min-h-full">
             <div className="mx-auto max-w-[560px]">
@@ -104,7 +104,6 @@ export function MomentDetailPage({
                 momentContacts={momentContacts}
                 momentRelationships={momentRelationships}
                 playerIdentityId={playerIdentityId}
-                enableVisitorFootprints={enableVisitorFootprints}
                 isReplying={replyingMomentId === item.id}
                 replyingAuthorName={replyingAuthorName}
                 replyingTargetName={replyingTargetName}

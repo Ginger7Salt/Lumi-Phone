@@ -17,7 +17,6 @@ type MomentsFeedProps = {
   momentContacts?: MomentContactRef[]
   momentRelationships?: Relationship[]
   playerIdentityId?: string | null
-  enableVisitorFootprints?: boolean
   replyingMomentId?: string | null
   replyingAuthorName?: string | null
   replyingTargetName?: string | null
@@ -37,7 +36,6 @@ export function MomentsFeed({
   momentContacts = [],
   momentRelationships = [],
   playerIdentityId,
-  enableVisitorFootprints = false,
   replyingMomentId,
   replyingAuthorName,
   replyingTargetName,
@@ -79,7 +77,6 @@ export function MomentsFeed({
             momentContacts={momentContacts}
             momentRelationships={momentRelationships}
             playerIdentityId={playerIdentityId}
-            enableVisitorFootprints={enableVisitorFootprints}
             isReplying={replyingMomentId === item.id}
             replyingAuthorName={replyingAuthorName}
             replyingTargetName={replyingTargetName}

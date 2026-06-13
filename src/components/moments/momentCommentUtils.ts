@@ -164,7 +164,7 @@ export function buildPublisherElicitDrafts(
       authorCharId: publisherCharId,
       content,
       replyToCommentId: userComment.id,
-      delaySeconds: 35 + (delayOffset + index) * 30,
+      delaySeconds: 35 + (delayOffset + index) * 45,
       isAuthorReply: true,
     })
   }
@@ -181,7 +181,7 @@ export function buildThreadElicitDrafts(
       authorCharId: d.authorCharId,
       content: d.content.trim(),
       replyToCommentId: d.replyToCommentId,
-      delaySeconds: 40 + (delayOffset + index) * 35,
+      delaySeconds: 45 + (delayOffset + index) * 50,
       isAuthorReply: false,
     }))
 }

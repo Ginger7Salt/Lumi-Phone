@@ -1,6 +1,6 @@
 import { ChevronLeft, Heart, MoreHorizontal } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 
 import { resolveProfileAvatarPreviewUrl } from '../../phone/utils/characterAvatarUrl'
 
@@ -115,6 +115,10 @@ export function InteractionHistoryPage({
   const notices = useMomentsStore((s) => s.notices)
   const markAllRead = useMomentsStore((s) => s.markAllRead)
   const unreadNotices = useMemo(() => notices.filter((n) => !n.isRead), [notices])
+  /** 进入页时若有未读则只展示未读；退出后再次进入（已无未读）则展示全部 */
+  const viewModeRef = useRef<'unread' | 'all'>(unreadNotices.length > 0 ? 'unread' : 'all')
+  const visibleNotices = viewModeRef.current === 'unread' ? unreadNotices : notices
+  const pageTitle = viewModeRef.current === 'unread' ? '互动消息' : '全部互动消息'
 
   const handleBack = () => {
     markAllRead()
@@ -147,7 +151,7 @@ export function InteractionHistoryPage({
           <ChevronLeft className="size-5 text-[#111827]" strokeWidth={1.5} />
         </button>
         <h1 className="pointer-events-none absolute inset-x-0 text-center text-[17px] font-semibold text-[#111827]">
-          全部互动消息
+          {pageTitle}
         </h1>
         <div className="ml-auto flex shrink-0">
           <button
@@ -162,9 +166,9 @@ export function InteractionHistoryPage({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-        {!unreadNotices.length ? (
+        {!visibleNotices.length ? (
           <p className="px-6 py-20 text-center text-[13px] leading-relaxed text-gray-400">
-            暂无未读互动消息
+            {viewModeRef.current === 'unread' ? '暂无未读互动消息' : '暂无互动消息'}
           </p>
         ) : (
           <motion.ul
@@ -174,7 +178,7 @@ export function InteractionHistoryPage({
             className="divide-y divide-gray-100 border-b border-gray-100"
           >
             <AnimatePresence initial={false}>
-              {unreadNotices.map((notice) => (
+              {visibleNotices.map((notice) => (
                 <li key={notice.id}>
                   <NoticeRow
                     notice={notice}

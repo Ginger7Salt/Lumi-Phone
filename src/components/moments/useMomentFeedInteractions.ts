@@ -507,7 +507,6 @@ export function useMomentFeedInteractions({
     handleTogglePin,
     handleDeleteMoment,
     openFloatingInput,
-    enableVisitorFootprints: settings.enableVisitorFootprints,
     playerIdentityId: qnaWechatCtx?.playerIdentityId,
   }
 }
