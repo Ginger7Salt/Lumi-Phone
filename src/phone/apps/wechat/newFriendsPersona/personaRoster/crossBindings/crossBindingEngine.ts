@@ -9,7 +9,9 @@ import type {
   CrossBindingNodeType,
   CrossBindingPerspectiveCard,
   CrossBindingSubTabId,
+  RelationshipDirectionDraft,
   RelationshipEdge,
+  RelationshipEdgeDrafts,
 } from './crossBindingTypes'
 
 export function nodeKey(type: CrossBindingNodeType, id: string): string {
@@ -124,10 +126,18 @@ export async function loadPlayerNetworkLinkLabelMap(
   return map
 }
 
-async function syncPlayerNetworkLinkLabels(
+type PlayerNetworkLinkDraftPatch = {
+  relationYouToThem: string
+  relationThemToYou: string
+  youSeeThem: string
+  theySeeYou: string
+  youCallThem: string
+  theyCallYou: string
+}
+
+async function syncPlayerNetworkLinkDraft(
   charId: string,
-  relationYouToThem: string,
-  relationThemToYou: string,
+  patch: PlayerNetworkLinkDraftPatch,
   registry: Map<string, CrossBindingNode>,
 ): Promise<void> {
   const node = registry.get(nodeKey('main', charId)) ?? registry.get(nodeKey('npc', charId))
@@ -138,8 +148,78 @@ async function syncPlayerNetworkLinkLabels(
   const idx = links.findIndex((l) => l.characterId === charId)
   if (idx < 0) return
   const next = [...links]
-  next[idx] = { ...next[idx], relationYouToThem, relationThemToYou }
+  next[idx] = { ...next[idx], ...patch }
   await personaDb.putPlayerNetworkLinks(rootId, next)
+}
+
+function directionDraftFromRelationship(rel?: Relationship, fallbackRelation = '认识'): RelationshipDirectionDraft {
+  return {
+    relation: rel?.relation?.trim() || fallbackRelation,
+    fromCallsTo: rel?.fromCallsTo?.trim() ?? '',
+    fromPerspective: rel?.fromPerspective?.trim() ?? '',
+    toPerspective: rel?.toPerspective?.trim() ?? '',
+  }
+}
+
+export async function loadRelationshipEdgeDrafts(
+  edge: RelationshipEdge,
+  registry: Map<string, CrossBindingNode>,
+): Promise<RelationshipEdgeDrafts> {
+  const involvesUser = edge.sourceType === 'user' || edge.targetType === 'user'
+  const forwardFallback = involvesUser ? DEFAULT_PI_RELATION : '认识'
+  const all = await personaDb.listAllRelationships()
+  const existingForward = all.find((r) => r.id === edge.forwardRelId)
+  const existingReverse = edge.reverseRelId ? all.find((r) => r.id === edge.reverseRelId) : undefined
+
+  if (involvesUser) {
+    const charId = edge.sourceType === 'user' ? edge.targetId : edge.sourceId
+    const node = registry.get(nodeKey('main', charId)) ?? registry.get(nodeKey('npc', charId))
+    const raw = node?.raw as Character | undefined
+    const rootId = raw ? boundMainCharId(raw) || charId : charId
+    const links = await personaDb.getPlayerNetworkLinks(rootId)
+    const link = links.find((l) => l.characterId === charId)
+
+    const youToThem = edge.forwardRelationLabel.trim() || link?.relationYouToThem?.trim() || forwardFallback
+    const themToYou =
+      edge.reverseRelationLabel?.trim() || link?.relationThemToYou?.trim() || youToThem || forwardFallback
+
+    const userToChar: RelationshipDirectionDraft = {
+      relation: youToThem,
+      fromCallsTo: link?.youCallThem?.trim() ?? existingForward?.fromCallsTo?.trim() ?? '',
+      fromPerspective: link?.youSeeThem?.trim() ?? existingForward?.fromPerspective?.trim() ?? '',
+      toPerspective: link?.theySeeYou?.trim() ?? existingForward?.toPerspective?.trim() ?? '',
+    }
+    const charToUser: RelationshipDirectionDraft = {
+      relation: themToYou,
+      fromCallsTo: link?.theyCallYou?.trim() ?? existingReverse?.fromCallsTo?.trim() ?? '',
+      fromPerspective: link?.theySeeYou?.trim() ?? existingReverse?.fromPerspective?.trim() ?? '',
+      toPerspective: link?.youSeeThem?.trim() ?? existingReverse?.toPerspective?.trim() ?? '',
+    }
+
+    return { forward: userToChar, reverse: charToUser }
+  }
+
+  const forward = directionDraftFromRelationship(existingForward, edge.forwardRelationLabel.trim() || forwardFallback)
+  const reverse = edge.isMutual
+    ? directionDraftFromRelationship(
+        existingReverse,
+        edge.reverseRelationLabel?.trim() || forward.relation || forwardFallback,
+      )
+    : undefined
+  return { forward, reverse }
+}
+
+export function edgeFromRelationshipDrafts(
+  edge: RelationshipEdge,
+  drafts: RelationshipEdgeDrafts,
+): RelationshipEdge {
+  const forwardRelation = drafts.forward.relation.trim() || '认识'
+  const reverseRelation = drafts.reverse?.relation.trim() || forwardRelation
+  return {
+    ...edge,
+    forwardRelationLabel: forwardRelation,
+    reverseRelationLabel: edge.isMutual ? reverseRelation : edge.reverseRelationLabel,
+  }
 }
 
 export function relationLabelFromAnchor(edge: RelationshipEdge, anchorId: string): string {
@@ -386,20 +466,29 @@ export function buildPerspectiveCards(
 export async function persistRelationshipEdge(
   edge: RelationshipEdge,
   registry: Map<string, CrossBindingNode>,
+  drafts?: RelationshipEdgeDrafts,
 ): Promise<void> {
-  const forwardLabel = edge.forwardRelationLabel.trim() || '认识'
-  const reverseLabel = edge.isMutual ? edge.reverseRelationLabel?.trim() || forwardLabel : forwardLabel
+  const resolvedEdge = drafts ? edgeFromRelationshipDrafts(edge, drafts) : edge
+  const forwardLabel = resolvedEdge.forwardRelationLabel.trim() || '认识'
+  const reverseLabel = resolvedEdge.isMutual
+    ? resolvedEdge.reverseRelationLabel?.trim() || forwardLabel
+    : forwardLabel
+  const forwardDraft = drafts?.forward
+  const reverseDraft = drafts?.reverse
 
-  const involvesUser = edge.sourceType === 'user' || edge.targetType === 'user'
+  const involvesUser = resolvedEdge.sourceType === 'user' || resolvedEdge.targetType === 'user'
   if (involvesUser) {
-    const userId = edge.sourceType === 'user' ? edge.sourceId : edge.targetId
-    const charId = edge.sourceType === 'user' ? edge.targetId : edge.sourceId
-    const piForward = edge.forwardRelationLabel.trim() || DEFAULT_PI_RELATION
-    const piReverse = edge.reverseRelationLabel?.trim() || piForward
+    const userId = resolvedEdge.sourceType === 'user' ? resolvedEdge.sourceId : resolvedEdge.targetId
+    const charId = resolvedEdge.sourceType === 'user' ? resolvedEdge.targetId : resolvedEdge.sourceId
+    const piForward = forwardLabel || DEFAULT_PI_RELATION
+    const piReverse = reverseLabel || piForward
 
     const all = await personaDb.listAllRelationships()
     const existingA = all.find((r) => r.id === `rel-pi-${userId}-${charId}-a`)
     const existingB = all.find((r) => r.id === `rel-pi-${userId}-${charId}-b`)
+
+    const userToCharDraft = forwardDraft
+    const charToUserDraft = reverseDraft
 
     await personaDb.bulkPutRelationships([
       {
@@ -407,9 +496,9 @@ export async function persistRelationshipEdge(
         fromCharacterId: userId,
         toCharacterId: charId,
         relation: piForward,
-        fromPerspective: existingA?.fromPerspective ?? '',
-        toPerspective: existingA?.toPerspective ?? '',
-        fromCallsTo: existingA?.fromCallsTo ?? '',
+        fromPerspective: userToCharDraft?.fromPerspective ?? existingA?.fromPerspective ?? '',
+        toPerspective: userToCharDraft?.toPerspective ?? existingA?.toPerspective ?? '',
+        fromCallsTo: userToCharDraft?.fromCallsTo ?? existingA?.fromCallsTo ?? '',
         isPlayerIdentity: true,
       },
       {
@@ -417,49 +506,62 @@ export async function persistRelationshipEdge(
         fromCharacterId: charId,
         toCharacterId: userId,
         relation: piReverse,
-        fromPerspective: existingB?.fromPerspective ?? '',
-        toPerspective: existingB?.toPerspective ?? '',
-        fromCallsTo: existingB?.fromCallsTo ?? '',
+        fromPerspective: charToUserDraft?.fromPerspective ?? existingB?.fromPerspective ?? '',
+        toPerspective: charToUserDraft?.toPerspective ?? existingB?.toPerspective ?? '',
+        fromCallsTo: charToUserDraft?.fromCallsTo ?? existingB?.fromCallsTo ?? '',
         isPlayerIdentity: true,
       },
     ])
-    await syncPlayerNetworkLinkLabels(charId, piForward, piReverse, registry)
+    await syncPlayerNetworkLinkDraft(
+      charId,
+      {
+        relationYouToThem: piForward,
+        relationThemToYou: piReverse,
+        youSeeThem: userToCharDraft?.fromPerspective?.trim() ?? existingA?.fromPerspective?.trim() ?? '',
+        theySeeYou: charToUserDraft?.fromPerspective?.trim() ?? existingB?.fromPerspective?.trim() ?? '',
+        youCallThem: userToCharDraft?.fromCallsTo?.trim() ?? existingA?.fromCallsTo?.trim() ?? '',
+        theyCallYou: charToUserDraft?.fromCallsTo?.trim() ?? existingB?.fromCallsTo?.trim() ?? '',
+      },
+      registry,
+    )
     return
   }
 
   const all = await personaDb.listAllRelationships()
-  const existingForward = all.find((r) => r.id === edge.forwardRelId)
-  const existingReverse = edge.reverseRelId ? all.find((r) => r.id === edge.reverseRelId) : undefined
+  const existingForward = all.find((r) => r.id === resolvedEdge.forwardRelId)
+  const existingReverse = resolvedEdge.reverseRelId
+    ? all.find((r) => r.id === resolvedEdge.reverseRelId)
+    : undefined
 
   const forward: Relationship = {
-    id: edge.forwardRelId || uid('rel'),
-    fromCharacterId: edge.sourceId,
-    toCharacterId: edge.targetId,
+    id: resolvedEdge.forwardRelId || uid('rel'),
+    fromCharacterId: resolvedEdge.sourceId,
+    toCharacterId: resolvedEdge.targetId,
     relation: forwardLabel,
-    fromPerspective: existingForward?.fromPerspective ?? '',
-    toPerspective: existingForward?.toPerspective ?? '',
-    fromCallsTo: existingForward?.fromCallsTo ?? '',
+    fromPerspective: forwardDraft?.fromPerspective ?? existingForward?.fromPerspective ?? '',
+    toPerspective: forwardDraft?.toPerspective ?? existingForward?.toPerspective ?? '',
+    fromCallsTo: forwardDraft?.fromCallsTo ?? existingForward?.fromCallsTo ?? '',
     isPlayerIdentity: false,
   }
   await personaDb.putRelationship(forward)
-  if (edge.isMutual) {
-    const reverseId = edge.reverseRelId ?? `rel-${edge.targetId}-${edge.sourceId}-rev`
+  if (resolvedEdge.isMutual) {
+    const reverseId = resolvedEdge.reverseRelId ?? `rel-${resolvedEdge.targetId}-${resolvedEdge.sourceId}-rev`
     await personaDb.putRelationship({
       id: reverseId,
-      fromCharacterId: edge.targetId,
-      toCharacterId: edge.sourceId,
+      fromCharacterId: resolvedEdge.targetId,
+      toCharacterId: resolvedEdge.sourceId,
       relation: reverseLabel,
-      fromPerspective: existingReverse?.fromPerspective ?? '',
-      toPerspective: existingReverse?.toPerspective ?? '',
-      fromCallsTo: existingReverse?.fromCallsTo ?? '',
+      fromPerspective: reverseDraft?.fromPerspective ?? existingReverse?.fromPerspective ?? '',
+      toPerspective: reverseDraft?.toPerspective ?? existingReverse?.toPerspective ?? '',
+      fromCallsTo: reverseDraft?.fromCallsTo ?? existingReverse?.fromCallsTo ?? '',
       isPlayerIdentity: false,
     })
   } else {
     for (const r of all) {
       if (
         !r.isPlayerIdentity &&
-        r.fromCharacterId === edge.targetId &&
-        r.toCharacterId === edge.sourceId
+        r.fromCharacterId === resolvedEdge.targetId &&
+        r.toCharacterId === resolvedEdge.sourceId
       ) {
         await personaDb.deleteRelationshipById(r.id)
       }

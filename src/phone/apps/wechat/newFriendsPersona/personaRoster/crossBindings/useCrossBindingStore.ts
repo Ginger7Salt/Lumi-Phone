@@ -67,9 +67,9 @@ export function useCrossBindingStore(params: {
   }, [refresh])
 
   const upsertEdge = useCallback(
-    async (edge: RelationshipEdge) => {
+    async (edge: RelationshipEdge, drafts?: import('./crossBindingTypes').RelationshipEdgeDrafts) => {
       const { persistRelationshipEdge } = await import('./crossBindingEngine')
-      await persistRelationshipEdge(edge, registry)
+      await persistRelationshipEdge(edge, registry, drafts)
       emitWeChatStorageChanged()
       await refresh()
     },

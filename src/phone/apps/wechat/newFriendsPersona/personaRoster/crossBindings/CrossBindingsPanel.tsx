@@ -200,8 +200,8 @@ export function CrossBindingsPanel({
         isNew={editorCtx?.isNew}
         registry={store.registry}
         onClose={() => setEditorCtx(null)}
-        onSave={async (edge) => {
-          await store.upsertEdge(edge)
+        onSave={async (edge, drafts) => {
+          await store.upsertEdge(edge, drafts)
         }}
         onDelete={async (edge) => {
           await store.removeEdge(edge)

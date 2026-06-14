@@ -14,6 +14,20 @@ export const CROSS_BINDING_SUB_TABS: ReadonlyArray<{
   { id: 'npc', en: 'NPC', zh: '次要/NPC' },
 ] as const
 
+/** 有向关系的一端：关系词、称呼与双方看法 */
+export type RelationshipDirectionDraft = {
+  relation: string
+  fromCallsTo: string
+  fromPerspective: string
+  toPerspective: string
+}
+
+/** 图谱连线编辑时的双向草稿（source→target / target→source） */
+export type RelationshipEdgeDrafts = {
+  forward: RelationshipDirectionDraft
+  reverse?: RelationshipDirectionDraft
+}
+
 /** 列表与拓扑图共享的关系边（含双向各自的关系词） */
 export interface RelationshipEdge {
   id: string
