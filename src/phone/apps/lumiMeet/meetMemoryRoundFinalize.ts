@@ -10,6 +10,7 @@ import { MEET_MEMORY_CONTENT_TAG } from './meetMemoryConstants'
 import type { MeetChatMessage } from './meetTypes'
 import { findMeetWechatAccount, listMeetSelectableWechatAccounts } from './meetWechatAccountPool'
 import { resolveMeetAutoSummaryEnabled } from './meetMemorySummarySettings'
+import { notifyMemorySummaryAttempt } from '../wechat/memory/memorySummaryRetry'
 
 /** 将遇见线程全部标为已纳入自动总结游标（加好友导入微信时调用，避免与私聊游标重复总结） */
 export async function advanceMeetSummaryCursorFromThread(
@@ -117,10 +118,22 @@ export async function finalizeMeetCharacterMemoryRoundAfterAiReply(params: {
       sessionPlayerIdentityId: appHint,
       wechatAccountId: boundAcc || null,
       aiRoundCountChannel: 'meet',
+      summaryNotifyKind: 'meet',
     })
   } catch (err) {
     if (shouldSummarizeNow) {
       await personaDb.rollbackMeetMemoryAiRoundCountForRetry(ck)
+      await notifyMemorySummaryAttempt({
+        ok: false,
+        primaryWritten: false,
+        conversationKey: ck,
+        characterId: cid,
+        displayName: params.characterRealName.trim() || '对方',
+        kind: 'meet',
+        sessionPlayerIdentityId: appHint ?? undefined,
+        wechatAccountId: boundAcc || undefined,
+        failureReason: err instanceof Error ? err.message.trim() : String(err),
+      })
     }
     console.warn('[meet-memory] auto summary failed', err)
   }

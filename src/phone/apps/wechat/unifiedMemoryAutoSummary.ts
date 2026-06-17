@@ -24,12 +24,13 @@ import type {
   WorldBookUserPlaceholderBinding,
 } from './newFriendsPersona/types'
 import { dispatchDatingLinkedMemorySummarySuccess } from './dating/datingLinkedMemorySummarySuccessEvents'
-import { dispatchMeetMemorySummarySuccess } from '../lumiMeet/meetMemorySummarySuccessEvents'
 import {
   type MemoryAiRoundCountChannel,
   resetMemoryAiRoundCountForChannel,
   rollbackMemoryAiRoundCountForChannel,
 } from '../lumiMeet/meetMemorySummarySettings'
+import { notifyMemorySummaryAttempt } from './memory/memorySummaryRetry'
+import type { MemorySummaryRetryKind } from './newFriendsPersona/types'
 import {
   parseUnifiedMemorySummaryWithLinkedModelOutput,
   requestDatingLinkedMemoryFallbackSummary,
@@ -405,8 +406,11 @@ export async function applyUnifiedMemoryFromParsedSummary(
     suppressLinkedMemoryToast?: boolean
     /** 回滚/清零计数时使用的通道；默认微信私聊 */
     aiRoundCountChannel?: MemoryAiRoundCountChannel
+    /** 为 true 时不弹出总结结果 toast（由外层统一通知） */
+    suppressSummaryNotify?: boolean
+    summaryNotifyKind?: MemorySummaryRetryKind
   },
-): Promise<{ wroteAny: boolean; linkedNpcNamesWritten: string[] }> {
+): Promise<{ wroteAny: boolean; linkedNpcNamesWritten: string[]; primaryWritten: boolean }> {
   const skipBump = opts.skipConversationRoundBump === true
   const roundChannel: MemoryAiRoundCountChannel = opts.aiRoundCountChannel ?? 'wechat'
   const defer = opts.deferPrimaryAndUnifiedCursors === true
@@ -509,7 +513,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
       }
       if (skipBump) await resetMemoryAiRoundCountForChannel(ck, roundChannel)
     }
-    return { wroteAny: false, linkedNpcNamesWritten: [] }
+    return { wroteAny: false, linkedNpcNamesWritten: [], primaryWritten: false }
   }
 
   if (datingRound && linkedDeleteOwners.length) {
@@ -627,14 +631,17 @@ export async function applyUnifiedMemoryFromParsedSummary(
     })
   }
 
-  if (!defer && gather.hadOnline && gather.chunkMessages.length) {
+  const primaryWritten = !defer && !!primaryBody
+  const advanceUnifiedCursors = primaryWritten
+
+  if (advanceUnifiedCursors && gather.hadOnline && gather.chunkMessages.length) {
     const latestTs = gather.chunkMessages[gather.chunkMessages.length - 1]!.timestamp
     if (typeof latestTs === 'number' && Number.isFinite(latestTs)) {
       await personaDb.setMemorySummaryCursorTimestamp(ck, latestTs)
     }
   }
 
-  if (!defer && gather.hadMeet && gather.meetMessagesPrior.length) {
+  if (advanceUnifiedCursors && gather.hadMeet && gather.meetMessagesPrior.length) {
     const maxMeetTs = Math.max(
       ...gather.meetMessagesPrior.map((m) =>
         typeof m.ts === 'number' && Number.isFinite(m.ts) && m.ts > 0 ? m.ts : 1,
@@ -647,7 +654,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
 
   const plotsCursor = opts.offlinePlotsForCursorAdvance
   if (
-    !defer &&
+    advanceUnifiedCursors &&
     plotsCursor.length > 0 &&
     (gather.hadOfflinePrior || opts.tagOfflineIncludesNewAiTurn)
   ) {
@@ -665,8 +672,27 @@ export async function applyUnifiedMemoryFromParsedSummary(
     await resetMemoryAiRoundCountForChannel(ck, roundChannel)
   }
 
-  if (!defer && gather.hadMeet) {
-    dispatchMeetMemorySummarySuccess({ characterName: gather.characterRealName })
+  if (primaryWritten && gather.hadMeet) {
+    /* 遇见成功 toast 由 notifyMemorySummaryAttempt 统一弹出 */
+  }
+
+  if (!opts.suppressSummaryNotify && !defer) {
+    const memSourceForNotify = parseWechatAccountPrivateConversationKey(ck)
+    const notifyKind =
+      opts.summaryNotifyKind ??
+      (gather.hadMeet && !gather.hadOnline && !hadOfflineTag ? 'meet' : 'private')
+    await notifyMemorySummaryAttempt({
+      ok: primaryWritten,
+      primaryWritten,
+      conversationKey: ck,
+      characterId: cid,
+      displayName: gather.characterRealName,
+      kind: notifyKind,
+      sessionPlayerIdentityId: memSourceForNotify?.sessionPlayerId,
+      wechatAccountId: memSourceForNotify?.wechatAccountId,
+      datingAiPlotId: opts.datingAiPlotId ?? undefined,
+      failureReason: primaryWritten ? undefined : '模型未返回可入库的总结正文',
+    })
   }
 
   if (!opts.suppressLinkedMemoryToast && linkedNpcNamesWritten.length) {
@@ -676,7 +702,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
     })
   }
 
-  return { wroteAny, linkedNpcNamesWritten }
+  return { wroteAny, linkedNpcNamesWritten, primaryWritten }
 }
 
 /** 解析约会同一 HTTP 返回尾部的合并记忆 JSON 并落库；失败返回 false（调用方可改跑独立总结）。 */
@@ -691,7 +717,8 @@ export async function tryApplyDatingCombinedMemoryJsonTail(params: {
   writePrimaryAndAdvanceCursors: boolean
   /** 当前 AI 剧情气泡 id；重新生成同一段时会先删掉该轮旧关联记忆 */
   datingAiPlotId?: string | null
-}): Promise<{ applied: boolean; linkedNpcNamesWritten: string[] }> {
+  summaryNotifyKind?: MemorySummaryRetryKind
+}): Promise<{ applied: boolean; linkedNpcNamesWritten: string[]; primaryWritten: boolean }> {
   try {
     const summary = parseUnifiedMemorySummaryWithLinkedModelOutput(params.memoryJsonText)
     const full = params.writePrimaryAndAdvanceCursors === true
@@ -702,13 +729,15 @@ export async function tryApplyDatingCombinedMemoryJsonTail(params: {
       deferPrimaryAndUnifiedCursors: !full,
       datingAiPlotId: params.datingAiPlotId,
       suppressLinkedMemoryToast: true,
+      summaryNotifyKind: params.summaryNotifyKind ?? 'dating',
     })
     return {
       applied: !!r?.wroteAny,
+      primaryWritten: !!r?.primaryWritten,
       linkedNpcNamesWritten: Array.isArray(r?.linkedNpcNamesWritten) ? r.linkedNpcNamesWritten : [],
     }
   } catch {
-    return { applied: false, linkedNpcNamesWritten: [] }
+    return { applied: false, linkedNpcNamesWritten: [], primaryWritten: false }
   }
 }
 
@@ -717,6 +746,12 @@ export async function tryApplyDatingCombinedMemoryJsonTail(params: {
  * 合并未游标覆盖的微信消息与约会线下剧情，写入一条长期记忆，并分别推进两条游标。
  * 若线上与线下均无新材料，则回滚计数，避免白消耗一次间隔。
  */
+export type UnifiedMemorySummaryRunResult = {
+  ok: boolean
+  primaryWritten: boolean
+  failureReason?: string
+}
+
 export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
   apiConfig: ApiConfig | null
   /** 保留兼容；回滚与游标一律使用 gather 内解析的会话键（与私聊列表/ChatRoom 一致） */
@@ -738,11 +773,15 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
   datingAiPlotId?: string | null
   /** 回滚计数通道：遇见触发时为 `meet`，默认微信私聊 */
   aiRoundCountChannel?: MemoryAiRoundCountChannel
-}): Promise<void> {
+  /** 手动补跑：不再次回滚/消耗计轮 */
+  isManualRetry?: boolean
+  summaryNotifyKind?: MemorySummaryRetryKind
+  suppressSummaryNotify?: boolean
+}): Promise<UnifiedMemorySummaryRunResult> {
   const cid = params.characterId.trim()
   const skipBump = params.skipConversationRoundBump === true
   const roundChannel: MemoryAiRoundCountChannel = params.aiRoundCountChannel ?? 'wechat'
-  if (!cid) return
+  if (!cid) return { ok: false, primaryWritten: false, failureReason: '无效角色' }
 
   const gather = await gatherUnifiedMemoryInputsForDatingTurn({
     characterId: cid,
@@ -752,18 +791,62 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
     conversationKey: params.conversationKey ?? null,
     wechatAccountId: params.wechatAccountId ?? null,
   })
-  if (!gather) return
+  if (!gather) return { ok: false, primaryWritten: false, failureReason: '无法读取待总结上下文' }
   const ck = gather.conversationKey
 
   const summaryApi = await resolveAutoSummaryApiConfig(params.apiConfig)
   if (!summaryApi) {
-    if (!skipBump) await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
-    return
+    if (!skipBump && !params.isManualRetry) await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
+    const failureReason = '未配置总结模型'
+    if (!params.suppressSummaryNotify) {
+      await notifyMemorySummaryAttempt({
+        ok: false,
+        primaryWritten: false,
+        conversationKey: ck,
+        characterId: cid,
+        displayName: params.characterRealName,
+        kind:
+          params.summaryNotifyKind ??
+          (params.datingPlotsSnapshot || params.datingAiPlotId
+            ? 'dating'
+            : roundChannel === 'meet'
+              ? 'meet'
+              : 'private'),
+        sessionPlayerIdentityId: params.sessionPlayerIdentityId ?? undefined,
+        wechatAccountId: params.wechatAccountId ?? undefined,
+        datingAiPlotId: params.datingAiPlotId ?? undefined,
+        failureReason,
+        suppressNotify: params.suppressSummaryNotify,
+      })
+    }
+    return { ok: false, primaryWritten: false, failureReason }
   }
 
   if (!gather.hadOnline && !gather.hadOfflinePrior && !gather.hadMeet) {
-    if (!skipBump) await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
-    return
+    if (!skipBump && !params.isManualRetry) await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
+    const failureReason = '暂无待总结内容'
+    if (!params.suppressSummaryNotify) {
+      await notifyMemorySummaryAttempt({
+        ok: false,
+        primaryWritten: false,
+        conversationKey: ck,
+        characterId: cid,
+        displayName: params.characterRealName,
+        kind:
+          params.summaryNotifyKind ??
+          (params.datingPlotsSnapshot || params.datingAiPlotId
+            ? 'dating'
+            : roundChannel === 'meet'
+              ? 'meet'
+              : 'private'),
+        sessionPlayerIdentityId: params.sessionPlayerIdentityId ?? undefined,
+        wechatAccountId: params.wechatAccountId ?? undefined,
+        datingAiPlotId: params.datingAiPlotId ?? undefined,
+        failureReason,
+        suppressNotify: params.suppressSummaryNotify,
+      })
+    }
+    return { ok: false, primaryWritten: false, failureReason }
   }
 
   const summary = await requestUnifiedMemorySummaryWithLinked({
@@ -782,11 +865,48 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
     skipConversationRoundBump: skipBump,
     datingAiPlotId: params.datingAiPlotId,
     aiRoundCountChannel: roundChannel,
+    suppressSummaryNotify: true,
+    summaryNotifyKind:
+      params.summaryNotifyKind ??
+      (params.datingPlotsSnapshot || params.datingAiPlotId
+        ? 'dating'
+        : roundChannel === 'meet'
+          ? 'meet'
+          : 'private'),
   })
 
-  if (!applied.wroteAny && !skipBump) {
+  const primaryWritten = applied.primaryWritten
+  const failureReason = primaryWritten ? undefined : '总结未写入长期记忆'
+
+  if (!primaryWritten && !skipBump && !params.isManualRetry) {
     await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
   }
+
+  const notifyKind =
+    params.summaryNotifyKind ??
+    (params.datingPlotsSnapshot || params.datingAiPlotId
+      ? 'dating'
+      : roundChannel === 'meet'
+        ? 'meet'
+        : 'private')
+
+  if (!params.suppressSummaryNotify) {
+    await notifyMemorySummaryAttempt({
+      ok: primaryWritten,
+      primaryWritten,
+      conversationKey: ck,
+      characterId: cid,
+      displayName: params.characterRealName,
+      kind: notifyKind,
+      sessionPlayerIdentityId: params.sessionPlayerIdentityId ?? undefined,
+      wechatAccountId: params.wechatAccountId ?? undefined,
+      datingAiPlotId: params.datingAiPlotId ?? undefined,
+      failureReason,
+      suppressNotify: params.suppressSummaryNotify,
+    })
+  }
+
+  return { ok: primaryWritten, primaryWritten, failureReason }
 }
 
 function buildGroupArchiveText(group: GroupChatRow | null): string {
@@ -868,22 +988,52 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
   conversationKey: string
   groupId: string
   playerIdentityId: string
-}): Promise<void> {
+  isManualRetry?: boolean
+  suppressSummaryNotify?: boolean
+}): Promise<UnifiedMemorySummaryRunResult> {
   const gid = params.groupId.trim()
   const ck = params.conversationKey.trim()
   const pid = params.playerIdentityId.trim()
-  if (!gid || !ck) return
+  if (!gid || !ck) return { ok: false, primaryWritten: false, failureReason: '无效群聊会话' }
 
   const summaryApi = await resolveAutoSummaryApiConfig(params.apiConfig)
   if (!summaryApi) {
-    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
-    return
+    if (!params.isManualRetry) await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    const failureReason = '未配置总结模型'
+    if (!params.suppressSummaryNotify) {
+      await notifyMemorySummaryAttempt({
+        ok: false,
+        primaryWritten: false,
+        conversationKey: ck,
+        characterId: gid,
+        displayName: '群聊',
+        kind: 'group',
+        groupId: gid,
+        sessionPlayerIdentityId: pid,
+        failureReason,
+      })
+    }
+    return { ok: false, primaryWritten: false, failureReason }
   }
 
   const group = await personaDb.getGroupChat(gid)
   if (group && group.playerIdentityId.trim() && pid && group.playerIdentityId.trim() !== pid) {
-    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
-    return
+    if (!params.isManualRetry) await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    const failureReason = '群聊身份不匹配'
+    if (!params.suppressSummaryNotify) {
+      await notifyMemorySummaryAttempt({
+        ok: false,
+        primaryWritten: false,
+        conversationKey: ck,
+        characterId: gid,
+        displayName: group.name?.trim() || '群聊',
+        kind: 'group',
+        groupId: gid,
+        sessionPlayerIdentityId: pid,
+        failureReason,
+      })
+    }
+    return { ok: false, primaryWritten: false, failureReason }
   }
 
   const cursorTs = await personaDb.getMemorySummaryCursorTimestamp(ck)
@@ -900,8 +1050,22 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
   const hadOnline = onlineTranscript.length > 0
   const hadArchive = archiveBlock.trim().length > 0
   if (!hadOnline && !hadArchive) {
-    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
-    return
+    if (!params.isManualRetry) await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    const failureReason = '暂无待总结内容'
+    if (!params.suppressSummaryNotify) {
+      await notifyMemorySummaryAttempt({
+        ok: false,
+        primaryWritten: false,
+        conversationKey: ck,
+        characterId: gid,
+        displayName: group?.name?.trim() || '群聊',
+        kind: 'group',
+        groupId: gid,
+        sessionPlayerIdentityId: pid,
+        failureReason,
+      })
+    }
+    return { ok: false, primaryWritten: false, failureReason }
   }
 
   const summary = await requestGroupChatMemorySummary({
@@ -927,8 +1091,22 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
     /* 保持原文 */
   }
   if (!body) {
-    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
-    return
+    if (!params.isManualRetry) await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    const failureReason = '模型未返回可入库的总结正文'
+    if (!params.suppressSummaryNotify) {
+      await notifyMemorySummaryAttempt({
+        ok: false,
+        primaryWritten: false,
+        conversationKey: ck,
+        characterId: gid,
+        displayName: group?.name?.trim() || '群聊',
+        kind: 'group',
+        groupId: gid,
+        sessionPlayerIdentityId: pid,
+        failureReason,
+      })
+    }
+    return { ok: false, primaryWritten: false, failureReason }
   }
 
   const tagPrefix =
@@ -988,4 +1166,25 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
     // 仅群档案、无新消息游标时仍须推进，否则会反复触发同一段总结
     await personaDb.setMemorySummaryCursorTimestamp(ck, Date.now())
   }
+
+  const primaryWritten = memoryTargets.length > 0
+  const displayName = group?.remark?.trim() || group?.name?.trim() || '群聊'
+  const failureReason = primaryWritten ? undefined : '群聊无可写入记忆的目标成员'
+
+  if (!params.suppressSummaryNotify) {
+    await notifyMemorySummaryAttempt({
+      ok: primaryWritten,
+      primaryWritten,
+      conversationKey: ck,
+      characterId: gid,
+      displayName,
+      kind: 'group',
+      groupId: gid,
+      sessionPlayerIdentityId: pid,
+      wechatAccountId: grpSource?.wechatAccountId,
+      failureReason,
+    })
+  }
+
+  return { ok: primaryWritten, primaryWritten, failureReason }
 }

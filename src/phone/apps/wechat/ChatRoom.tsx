@@ -192,6 +192,8 @@ import {
   runGroupChatMemorySummaryAfterThreshold,
   runUnifiedAutoMemorySummaryAfterThreshold,
 } from './unifiedMemoryAutoSummary'
+import { notifyMemorySummaryAttempt } from './memory/memorySummaryRetry'
+import { parseWechatAccountPrivateConversationKey } from './wechatConversationKey'
 import { DanmakuOverlay } from './DanmakuOverlay'
 import { useWeChatCurrentTime } from './time/useWeChatCurrentTime'
 import { formatWeChatChatTimestamp, shouldRenderWeChatTimestamp } from './time/wechatTimeUtils'
@@ -7801,6 +7803,36 @@ export function ChatRoom({
           } catch (err) {
             if (shouldSummarizeNow) {
               await personaDb.rollbackMemoryAiRoundCountForRetry(conversationKey)
+              const failureReason =
+                err instanceof Error && err.message.trim()
+                  ? err.message.trim()
+                  : String(err)
+              if (roomType === 'group' && groupId?.trim()) {
+                await notifyMemorySummaryAttempt({
+                  ok: false,
+                  primaryWritten: false,
+                  conversationKey,
+                  characterId: groupId.trim(),
+                  displayName: peerNotifyTitle.trim() || '群聊',
+                  kind: 'group',
+                  groupId: groupId.trim(),
+                  sessionPlayerIdentityId: playerIdentityId,
+                  failureReason,
+                })
+              } else {
+                const privSource = parseWechatAccountPrivateConversationKey(conversationKey)
+                await notifyMemorySummaryAttempt({
+                  ok: false,
+                  primaryWritten: false,
+                  conversationKey,
+                  characterId: persistCharacterId,
+                  displayName: notifyPeerRound.trim() || peerNotifyTitle.trim() || '对方',
+                  kind: 'private',
+                  sessionPlayerIdentityId: playerIdentityId,
+                  wechatAccountId: privSource?.wechatAccountId,
+                  failureReason,
+                })
+              }
             }
             logger.log('error', `自动总结失败: ${err instanceof Error ? err.message : String(err)}`)
           }

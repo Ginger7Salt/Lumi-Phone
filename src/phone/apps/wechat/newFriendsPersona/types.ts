@@ -585,6 +585,25 @@ export type MemorySettingsRow = {
   memorySummaryApiKey?: string
   /** 自动总结使用的 chat 模型；留空则回落全局聊天主模型 */
   memorySummaryModelId?: string
+  /** 自动总结失败、待用户在记忆档案馆手动补跑的会话队列 */
+  memorySummaryRetryQueue?: MemorySummaryRetryItem[]
+}
+
+/** 记忆自动总结补跑队列项 */
+export type MemorySummaryRetryKind = 'private' | 'group' | 'dating' | 'meet'
+
+export type MemorySummaryRetryItem = {
+  id: string
+  conversationKey: string
+  characterId: string
+  displayName: string
+  kind: MemorySummaryRetryKind
+  groupId?: string
+  sessionPlayerIdentityId?: string
+  wechatAccountId?: string
+  datingAiPlotId?: string
+  failedAt: number
+  failureReason?: string
 }
 
 /** 微信私聊持久化消息（IndexedDB `chatMessages`） */

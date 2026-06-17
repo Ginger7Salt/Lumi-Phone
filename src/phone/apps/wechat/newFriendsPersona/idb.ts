@@ -16,6 +16,7 @@ import type {
   GroupMember,
   GroupRobotRule,
   MemorySettingsRow,
+  MemorySummaryRetryItem,
   NetworkGraphViewRecord,
   NotificationAudioConfig,
   PlayerIdentity,
@@ -1829,6 +1830,41 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
       }
     }
   }
+  const retryRaw = (r as { memorySummaryRetryQueue?: unknown }).memorySummaryRetryQueue
+  const memorySummaryRetryQueue: MemorySummaryRetryItem[] = []
+  if (Array.isArray(retryRaw)) {
+    for (const row of retryRaw) {
+      if (!row || typeof row !== 'object') continue
+      const item = row as Partial<MemorySummaryRetryItem>
+      const conversationKey = String(item.conversationKey ?? '').trim()
+      const characterId = String(item.characterId ?? '').trim()
+      if (!conversationKey || !characterId) continue
+      const kindRaw = String(item.kind ?? 'private')
+      const kind: MemorySummaryRetryItem['kind'] =
+        kindRaw === 'group' || kindRaw === 'dating' || kindRaw === 'meet' ? kindRaw : 'private'
+      const failedAt =
+        typeof item.failedAt === 'number' && Number.isFinite(item.failedAt)
+          ? Math.floor(item.failedAt)
+          : Date.now()
+      memorySummaryRetryQueue.push({
+        id: String(item.id ?? `retry-${encodeURIComponent(conversationKey)}`).trim(),
+        conversationKey,
+        characterId,
+        displayName: String(item.displayName ?? '').trim() || '未命名',
+        kind,
+        ...(item.groupId?.trim() ? { groupId: item.groupId.trim() } : {}),
+        ...(item.sessionPlayerIdentityId?.trim()
+          ? { sessionPlayerIdentityId: item.sessionPlayerIdentityId.trim() }
+          : {}),
+        ...(item.wechatAccountId?.trim() ? { wechatAccountId: item.wechatAccountId.trim() } : {}),
+        ...(item.datingAiPlotId?.trim() ? { datingAiPlotId: item.datingAiPlotId.trim() } : {}),
+        failedAt,
+        ...(item.failureReason?.trim()
+          ? { failureReason: String(item.failureReason).trim().slice(0, 240) }
+          : {}),
+      })
+    }
+  }
   const scopeRaw = (r as { autoSummaryIntervalScope?: unknown }).autoSummaryIntervalScope
   const autoSummaryIntervalScope: MemorySettingsRow['autoSummaryIntervalScope'] =
     scopeRaw === 'per_character' ? 'per_character' : scopeRaw === 'global' ? 'global' : undefined
@@ -1875,6 +1911,7 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
         : undefined,
     meetAiRoundCountByConversation:
       Object.keys(meetAiRoundCountByConversation).length > 0 ? meetAiRoundCountByConversation : undefined,
+    memorySummaryRetryQueue: memorySummaryRetryQueue.length > 0 ? memorySummaryRetryQueue : undefined,
   }
 }
 
@@ -5291,6 +5328,57 @@ export class PersonaDb {
     await txDone(tx)
     db.close()
     if (opts?.emit !== false) emitWeChatStorageChanged()
+  }
+
+  async listMemorySummaryRetries(): Promise<MemorySummaryRetryItem[]> {
+    const settings = await this.getMemorySettings()
+    return [...(settings.memorySummaryRetryQueue ?? [])].sort((a, b) => b.failedAt - a.failedAt)
+  }
+
+  async enqueueMemorySummaryRetry(
+    item: Omit<MemorySummaryRetryItem, 'id' | 'failedAt'> & { id?: string; failedAt?: number },
+  ): Promise<void> {
+    const ck = item.conversationKey.trim()
+    const characterId = item.characterId.trim()
+    if (!ck || !characterId) return
+    const settings = await this.getMemorySettings()
+    const queue = [...(settings.memorySummaryRetryQueue ?? [])]
+    const entry: MemorySummaryRetryItem = {
+      id: item.id?.trim() || `retry-${encodeURIComponent(ck)}`,
+      conversationKey: ck,
+      characterId,
+      displayName: item.displayName?.trim() || '未命名',
+      kind: item.kind,
+      ...(item.groupId?.trim() ? { groupId: item.groupId.trim() } : {}),
+      ...(item.sessionPlayerIdentityId?.trim()
+        ? { sessionPlayerIdentityId: item.sessionPlayerIdentityId.trim() }
+        : {}),
+      ...(item.wechatAccountId?.trim() ? { wechatAccountId: item.wechatAccountId.trim() } : {}),
+      ...(item.datingAiPlotId?.trim() ? { datingAiPlotId: item.datingAiPlotId.trim() } : {}),
+      failedAt:
+        typeof item.failedAt === 'number' && Number.isFinite(item.failedAt)
+          ? Math.floor(item.failedAt)
+          : Date.now(),
+      ...(item.failureReason?.trim()
+        ? { failureReason: item.failureReason.trim().slice(0, 240) }
+        : {}),
+    }
+    const idx = queue.findIndex((q) => q.conversationKey === ck)
+    if (idx >= 0) queue[idx] = entry
+    else queue.push(entry)
+    await this.putMemorySettings({ memorySummaryRetryQueue: queue })
+  }
+
+  async clearMemorySummaryRetry(conversationKey: string): Promise<void> {
+    const ck = conversationKey.trim()
+    if (!ck) return
+    const settings = await this.getMemorySettings()
+    const prev = settings.memorySummaryRetryQueue ?? []
+    const next = prev.filter((q) => q.conversationKey !== ck)
+    if (next.length === prev.length) return
+    await this.putMemorySettings({
+      memorySummaryRetryQueue: next.length > 0 ? next : undefined,
+    })
   }
 
   /**

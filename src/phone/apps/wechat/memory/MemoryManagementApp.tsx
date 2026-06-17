@@ -1,11 +1,13 @@
 import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { personaDb } from '../newFriendsPersona/idb'
 import type { WeChatContactRow } from '../../../../components/WeChatContactsInstagram'
 import { ListenNumericText } from '../../../../components/discoverListen/ListenNum'
 import { Pressable } from '../../../components/Pressable'
 import { MemoryDashboard } from './MemoryDashboard'
 import { MemoryEngineConfig } from './MemoryEngineConfig'
 import { MemorySummaryProgressPanel } from './MemorySummaryProgressPanel'
+import { MemorySummaryRetryPanel } from './MemorySummaryRetryPanel'
 import { ARCHIVE_BG } from './memoryArchiveTheme'
 import type { MemoryCharacterPageMeta } from './memoryArchiveTypes'
 import { MEMORY_ARCHIVE_TUTORIAL_SECTIONS } from './memoryArchiveTutorialCopy'
@@ -107,7 +109,8 @@ export function MemoryManagementApp({
   currentWechatAccountId?: string
   onBack: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'config' | 'memories' | 'progress'>('memories')
+  const [activeTab, setActiveTab] = useState<'config' | 'memories' | 'progress' | 'retry'>('memories')
+  const [retryCount, setRetryCount] = useState(0)
   const [hubTutorialOpen, setHubTutorialOpen] = useState(false)
   const [characterPage, setCharacterPage] = useState<MemoryCharacterPageMeta | null>(null)
   const characterNavRef = useRef<{ prev: () => void; next: () => void } | null>(null)
@@ -133,6 +136,29 @@ export function MemoryManagementApp({
   const registerCharacterNav = useCallback((nav: { prev: () => void; next: () => void } | null) => {
     characterNavRef.current = nav
   }, [])
+
+  const reloadRetryCount = useCallback(async () => {
+    const list = await personaDb.listMemorySummaryRetries()
+    setRetryCount(list.length)
+  }, [])
+
+  useEffect(() => {
+    void reloadRetryCount()
+    const onStorage = () => void reloadRetryCount()
+    window.addEventListener('wechat-storage-changed', onStorage)
+    return () => window.removeEventListener('wechat-storage-changed', onStorage)
+  }, [reloadRetryCount])
+
+  useEffect(() => {
+    const onResult = (e: Event) => {
+      const ce = e as CustomEvent<{ ok?: boolean }>
+      if (ce.detail?.ok) return
+      void reloadRetryCount()
+      setActiveTab('retry')
+    }
+    window.addEventListener('wechat-memory-summary-result', onResult as EventListener)
+    return () => window.removeEventListener('wechat-memory-summary-result', onResult as EventListener)
+  }, [reloadRetryCount])
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden text-gray-900" style={{ background: ARCHIVE_BG }}>
@@ -168,7 +194,7 @@ export function MemoryManagementApp({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {!onCharacterPage ? (
           <div className="shrink-0 px-4 pb-2 pt-2" style={{ background: ARCHIVE_BG }}>
-            <div className="mx-auto grid max-w-xl grid-cols-3 gap-1 rounded-full bg-gray-100/80 p-1">
+            <div className="mx-auto grid max-w-xl grid-cols-4 gap-1 rounded-full bg-gray-100/80 p-1">
               <Pressable
                 type="button"
                 role="tab"
@@ -194,6 +220,24 @@ export function MemoryManagementApp({
                 }`}
               >
                 进度
+              </Pressable>
+              <Pressable
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'retry'}
+                onClick={() => setActiveTab('retry')}
+                className={`relative min-h-[44px] rounded-full py-2.5 text-center text-[13px] font-semibold transition-colors ${
+                  activeTab === 'retry'
+                    ? 'bg-white text-gray-900 shadow-[0_4px_16px_rgba(0,0,0,0.04)]'
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                待总结
+                {retryCount > 0 ? (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+                    {retryCount > 9 ? '9+' : retryCount}
+                  </span>
+                ) : null}
               </Pressable>
               <Pressable
                 type="button"
@@ -230,6 +274,14 @@ export function MemoryManagementApp({
             currentWechatAccountId={currentWechatAccountId}
             playerIdentityId={playerIdentityId}
           />
+        </div>
+        <div
+          className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch] ${
+            activeTab === 'retry' && !onCharacterPage ? '' : 'hidden'
+          }`}
+          aria-hidden={activeTab !== 'retry' || onCharacterPage}
+        >
+          <MemorySummaryRetryPanel />
         </div>
         <div
           className={`flex min-h-0 flex-1 flex-col overflow-hidden ${

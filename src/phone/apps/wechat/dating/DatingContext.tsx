@@ -11,9 +11,11 @@ import {
 } from 'react'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../newFriendsPersona/idb'
 import {
+  parseWechatAccountPrivateConversationKey,
   resolvePrivateChatSessionPlayerIdentityId,
   resolvePrivateWeChatStorageConversationKey,
 } from '../wechatConversationKey'
+import { notifyMemorySummaryAttempt } from '../memory/memorySummaryRetry'
 import { loadAccountsBundle } from '../wechatAccountPersistence'
 import { peekPrivateChatGroupAnchorFromDockStaging } from '../wechatPrivateGroupAnchorStaging'
 import { migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
@@ -746,9 +748,23 @@ function scheduleDatingMemoryAutoSummary(
         datingPlotsSnapshot,
         skipConversationRoundBump: false,
         datingAiPlotId: datingAiPlotId ?? undefined,
+        summaryNotifyKind: 'dating',
       })
-    } catch {
+    } catch (err) {
       await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+      const privSource = parseWechatAccountPrivateConversationKey(ck)
+      await notifyMemorySummaryAttempt({
+        ok: false,
+        primaryWritten: false,
+        conversationKey: ck,
+        characterId: cid,
+        displayName: characterRealName.trim() || '对方',
+        kind: 'dating',
+        sessionPlayerIdentityId: privSource?.sessionPlayerId,
+        wechatAccountId: privSource?.wechatAccountId,
+        datingAiPlotId: datingAiPlotId ?? undefined,
+        failureReason: err instanceof Error ? err.message.trim() : String(err),
+      })
     }
   })()
 }
@@ -805,7 +821,7 @@ async function finalizeDatingMemoryAfterAiReply(params: {
 
   const split = splitDatingAiResponseAndUnifiedMemoryJson(params.aiTextRaw)
   const linkedNpcNamesWritten: string[] = []
-  let applied = false
+  let primaryWritten = false
   if (split.memoryJsonText?.trim()) {
     const r = await tryApplyDatingCombinedMemoryJsonTail({
       memoryJsonText: split.memoryJsonText.trim(),
@@ -813,8 +829,9 @@ async function finalizeDatingMemoryAfterAiReply(params: {
       offlinePlotsForCursorAdvance: params.plotsSnapshotAfterAi,
       writePrimaryAndAdvanceCursors: shouldSummarize,
       datingAiPlotId,
+      summaryNotifyKind: 'dating',
     })
-    applied = r.applied
+    primaryWritten = r.primaryWritten
     linkedNpcNamesWritten.push(...(r.linkedNpcNamesWritten ?? []))
   }
   const shouldTryLinkedFallback =
@@ -833,10 +850,9 @@ async function finalizeDatingMemoryAfterAiReply(params: {
       eligibleLinkedNpcRoster: roster,
       latestAiPlotBody: latestAiPlotBodyFromSnapshot(params.plotsSnapshotAfterAi),
     })
-    if (r.linkedNpcNamesWritten.length) applied = true
-    linkedNpcNamesWritten.push(...(r.linkedNpcNamesWritten ?? []))
+    if (r.linkedNpcNamesWritten.length) linkedNpcNamesWritten.push(...(r.linkedNpcNamesWritten ?? []))
   }
-  if (!applied && shouldSummarize && datingMemOn) {
+  if (shouldSummarize && datingMemOn && !primaryWritten) {
     scheduleDatingMemoryAutoSummary(
       params.char.id,
       params.char.realName,

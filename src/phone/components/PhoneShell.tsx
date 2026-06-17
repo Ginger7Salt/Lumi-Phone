@@ -4,6 +4,7 @@ import { DesktopLyricsWidget } from '../../components/discoverListen/DesktopLyri
 import { ListenTogetherFullscreenHost } from '../../components/discoverListen/ListenTogetherFullscreenHost'
 import { ListenTogetherCommentsOverlayHost } from '../../components/discoverListen/ListenTogetherCommentsOverlayHost'
 import { ListenTogetherPlayModeToastHost } from '../../components/discoverListen/ListenTogetherPlayModeToastHost'
+import { WechatMemorySummaryToastHost } from '../apps/wechat/memory/WechatMemorySummaryToastHost'
 import { useCustomization } from '../CustomizationContext'
 
 type Props = {
@@ -118,6 +119,7 @@ export function PhoneShell({ children }: Props) {
       <ListenTogetherCommentsOverlayHost />
       <DesktopLyricsWidget />
       <ListenTogetherPlayModeToastHost />
+      <WechatMemorySummaryToastHost />
       <FloatingMusicOrb />
     </div>
   )
