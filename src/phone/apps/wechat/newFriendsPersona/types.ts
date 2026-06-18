@@ -516,7 +516,7 @@ export type MemorySettingsRow = {
    * 不论此项为何，入库时仍会写入模型提炼的 category / precise / emotion_need，并合并写入 `memoryKeywords` 备份，便于日后从「始终触发」改为「关键词触发」时不丢词。
    */
   autoSummaryDefaultMemoryTriggerMode?: CharacterMemoryTriggerMode
-  /** 各会话自上次自动总结以来已完成的「AI 回复轮」计数 */
+  /** 各会话自上次自动总结以来已完成的「AI 回复轮」计数（微信私聊 + 线下约会共用） */
   aiRoundCountByConversation?: Record<string, number>
   /** 各会话最近一次自动总结覆盖到的消息时间戳（闭区间右端） */
   summaryCursorTimestampByConversation?: Record<string, number>
@@ -536,9 +536,10 @@ export type MemorySettingsRow = {
    */
   linkedMemoryAutoSummaryEnabled?: boolean
   /**
-   * 约会 AI 回复是否计入与私聊共用的「总结间隔」轮数；满间隔时合并微信 + 线下剧情写入主角长期记忆。
+   * 约会 AI 回复计入与私聊共用的「总结间隔」轮数；满间隔时合并微信 + 线下剧情写入主角长期记忆。
    * 显式 `false` 关闭后，仅微信私聊计轮；缺省为开启。
    */
+  /** @deprecated 约会剧情始终计入总结轮数；保留字段仅为旧数据兼容 */
   datingAutoSummaryEnabled?: boolean
   /**
    * 遇见 App 临时会话是否触发自动总结（与微信私聊设置独立；写入的记忆仍共用同一长期记忆库）。
@@ -697,6 +698,67 @@ export type WeChatListenCommentSharePayload = {
   targetCover?: string
 }
 
+/** 收藏记忆切片转发卡（持久化于 chatMessages.sharedRecord） */
+export type WeChatSharedRecordPayload = {
+  kind: 'shared_record'
+  shareId: string
+  originalSenderName: string
+  originalSenderCharacterId: string
+  /** 原消息发送方：角色 or 玩家本人（与 conversation characterId 区分） */
+  originalSenderKind?: 'character' | 'player'
+  recordType: 'text' | 'voice' | 'image'
+  contentSummary: string
+  timestamp: number
+  voiceDurationSec?: number
+  voiceAudioUrl?: string
+  voiceTranscript?: string
+  /** 合成语音 data URL 存 KV 时的键（通常为 shareId） */
+  voiceAudioKvKey?: string
+  imageUrls?: string[]
+}
+
+/** 合并转发聊天记录 · 单条摘要 */
+export type WeChatForwardedMessageItem = {
+  senderName: string
+  content: string
+  timestamp?: number
+  /** 落库前：单行时间提示（如 22:10、昨天 22:10），由客户端结合 when= 解析 */
+  timeHint?: string
+  senderKind?: 'player' | 'character'
+  senderCharacterId?: string
+  /** 临时 NPC 发言人头像（来自 image/随机网友头像 池，落库稳定） */
+  senderAvatarUrl?: string
+  /** 消息已撤回 */
+  isRecalled?: boolean
+  /** 图片 / 表情包（表情包时 isSticker=true） */
+  images?: { base64: string; type: WeChatImageMime }[]
+  isSticker?: boolean
+  voice?: WeChatVoicePayload
+  redPacket?: WeChatRedPacketPayload
+  transfer?: WeChatTransferPayload
+}
+
+export type WeChatChatHistoryParticipantRef = {
+  kind: 'player' | 'character'
+  displayName: string
+  characterId?: string
+}
+
+/** 合并转发聊天记录卡片（持久化于 chatMessages.chatHistory） */
+export type WeChatChatHistoryPayload = {
+  kind: 'chat_history'
+  title: string
+  messages: WeChatForwardedMessageItem[]
+  /** 剧情内发生时间（来自 forward_history 的 when=） */
+  occurredAtHint?: string
+  /** 落库时剧情「现在」锚点，避免阅读器重复漂移 */
+  historyAnchorMs?: number
+  participants?: {
+    a: WeChatChatHistoryParticipantRef
+    b: WeChatChatHistoryParticipantRef
+  }
+}
+
 export type WeChatChatMessage = {
   id: string
   characterId: string
@@ -717,6 +779,10 @@ export type WeChatChatMessage = {
   musicSync?: WeChatMusicSyncPayload
   /** 听一听评论分享卡片 */
   listenCommentShare?: WeChatListenCommentSharePayload
+  /** 收藏记忆切片转发卡 */
+  sharedRecord?: WeChatSharedRecordPayload
+  /** 合并转发聊天记录卡片 */
+  chatHistory?: WeChatChatHistoryPayload
   /** 图片消息：纯图片时 content 允许为空串 */
   images?: { base64: string; type: WeChatImageMime }[]
   /** 是否收藏 */
@@ -767,6 +833,14 @@ export type Favorite = {
   content: string
   timestamp: number
   createdAt: number
+  /** 语音收藏：时长（秒） */
+  voiceDurationSec?: number
+  /** 语音收藏：展示用转写 */
+  voiceTranscript?: string
+  /** 大 data URL 用 voiceAudioKvKey + Phone KV */
+  voiceAudioUrl?: string
+  /** Phone KV 键（通常为 favorite.id） */
+  voiceAudioKvKey?: string
 }
 
 export type HeartWhisper = {

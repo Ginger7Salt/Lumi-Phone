@@ -1,3 +1,4 @@
+import { Construction } from 'lucide-react'
 import type { AppSlot } from '../types'
 import { AppIconTile } from './AppIconTile'
 import { Pressable } from './Pressable'
@@ -10,9 +11,11 @@ type Props = {
   message?: string
   /** 补充说明（较小字号） */
   hint?: string
+  /** 开发中占位样式（图标 + 主标题） */
+  underDev?: boolean
 }
 
-export function AppPlaceholderScreen({ appId, onBack, message, hint }: Props) {
+export function AppPlaceholderScreen({ appId, onBack, message, hint, underDev }: Props) {
   const { state } = useCustomization()
   const app = state.apps.find((a) => a.id === appId)
   const { theme, appPageStyles } = state
@@ -75,14 +78,38 @@ export function AppPlaceholderScreen({ appId, onBack, message, hint }: Props) {
             boxShadow: 'var(--phone-shadow)',
           }}
         >
-          <p className="text-[14px] leading-relaxed" style={{ color: theme.textMuted }}>
-            {message ?? '此页面为占位，后续可接入真实功能或后端。'}
-          </p>
-          {hint ? (
-            <p className="mt-3 text-[12px] leading-relaxed opacity-90" style={{ color: theme.textMuted }}>
-              {hint}
-            </p>
-          ) : null}
+          {underDev ? (
+            <>
+              <div
+                className="mx-auto flex h-14 w-14 items-center justify-center rounded-full"
+                style={{ backgroundColor: `${theme.border}40`, color: theme.textMuted }}
+              >
+                <Construction className="size-7" strokeWidth={1.5} aria-hidden />
+              </div>
+              <p className="mt-5 text-[17px] font-semibold" style={{ color: theme.text }}>
+                {message ?? '功能开发中'}
+              </p>
+              {hint ? (
+                <p className="mt-2 text-[14px] leading-relaxed" style={{ color: theme.textMuted }}>
+                  {hint}
+                </p>
+              ) : null}
+              <p className="mt-4 text-[13px] opacity-80" style={{ color: theme.textMuted }}>
+                敬请期待
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[14px] leading-relaxed" style={{ color: theme.textMuted }}>
+                {message ?? '此页面为占位，后续可接入真实功能或后端。'}
+              </p>
+              {hint ? (
+                <p className="mt-3 text-[12px] leading-relaxed opacity-90" style={{ color: theme.textMuted }}>
+                  {hint}
+                </p>
+              ) : null}
+            </>
+          )}
         </section>
       </div>
     </div>

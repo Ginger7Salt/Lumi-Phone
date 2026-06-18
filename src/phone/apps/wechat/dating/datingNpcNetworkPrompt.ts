@@ -1,75 +1,120 @@
+import { listAllLinkedMemoryEligibleCharacters } from '../memory/linkedMemoryEligiblePeers'
+import { buildNetworkRelationshipsPromptBlock } from '../networkRelationshipsPrompt'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { Character } from '../newFriendsPersona/types'
-import { buildNetworkRelationshipsPromptBlock } from '../networkRelationshipsPrompt'
-import { worldBookPronounGuideAnnotation } from '../newFriendsPersona/worldBookPronounGuide'
+import { formatWorldBackgroundForPrompt } from '../newFriendsPersona/worldBackgroundFormat'
+import { buildPrivateChatNetworkNpcPronounBlock } from '../privateChatNetworkNpcPronoun'
+import { resolveOfflineDatingArchiveContext } from './offlineDatingArchiveResolve'
+import { buildCharacterCard, buildWorldBookText } from '../wechatChatAi'
 
-const MAX_CHARS = 4200
-const NPC_WB_PER_NPC = 380
+/** 人脉全员完整档案 + 关系边的总预算（约会参考资料内单独一块） */
+const NETWORK_BLOCK_MAX_CHARS = 96_000
+const RELATIONSHIPS_MAX_CHARS = 14_000
+const MAX_PEER_PROFILES = 32
 
-/** 人脉 NPC 世界书短摘录（启用条目拼接后截断） */
-function formatNpcWorldBooksSnippet(n: Character): string {
+type PeerRoleLabel = '人脉子角色' | '已绑定主角'
+
+function peerRoleLabel(ch: Character, rootId: string): PeerRoleLabel {
+  const gen = ch.generatedForCharacterId?.trim()
+  if (gen && gen === rootId) return '人脉子角色'
+  return '已绑定主角'
+}
+
+function allocatePeerCaps(peerCount: number): { bioMax: number; wbMax: number; wbgMax: number } {
+  const relReserve = RELATIONSHIPS_MAX_CHARS
+  const headerReserve = 2400
+  const rosterBudget = Math.max(8000, NETWORK_BLOCK_MAX_CHARS - relReserve - headerReserve)
+  const perPeer = peerCount > 0 ? Math.floor(rosterBudget / peerCount) : rosterBudget
+  return {
+    bioMax: Math.min(8000, Math.max(600, Math.floor(perPeer * 0.28))),
+    wbMax: Math.min(6000, Math.max(1600, Math.floor(perPeer * 0.58))),
+    wbgMax: Math.min(5000, Math.max(400, Math.floor(perPeer * 0.12))),
+  }
+}
+
+async function formatFullPeerProfileForDatingPrompt(
+  ch: Character,
+  roleLabel: PeerRoleLabel,
+  caps: { bioMax: number; wbMax: number; wbgMax: number },
+): Promise<string> {
+  const name = (ch.name || ch.wechatNickname || '').trim() || '未命名'
   const chunks: string[] = []
-  for (const w of n.worldBooks ?? []) {
-    if (!w.enabled) continue
-    for (const it of w.items ?? []) {
-      if (!it.enabled) continue
-      const c = String(it.content || '').trim()
-      if (!c) continue
-      const ann = worldBookPronounGuideAnnotation(it.pronounGuide, String(n.name || '').trim() || '该角色', 'character_card')
-      chunks.push(`《${w.name}》${it.name}：${c}${ann ? ` ${ann}` : ''}`)
+  chunks.push(`### ${name}（${roleLabel}；正文勿输出人设 id）`)
+  chunks.push(`【角色档案】\n${buildCharacterCard(ch, { bioMaxChars: caps.bioMax })}`)
+
+  if (ch.worldBackgroundEnabled !== false && ch.worldBackgroundId?.trim()) {
+    try {
+      const wbg = await personaDb.getWorldBackground(ch.worldBackgroundId.trim())
+      const block = formatWorldBackgroundForPrompt(wbg).trim().slice(0, caps.wbgMax)
+      if (block) chunks.push(`【世界背景】\n${block}`)
+    } catch {
+      /* 无世界背景仍继续拼世界书 */
     }
   }
-  const raw = chunks.join('｜')
-  if (!raw) return ''
-  return raw.length <= NPC_WB_PER_NPC ? raw : `${raw.slice(0, NPC_WB_PER_NPC)}…`
+
+  const wb = buildWorldBookText(ch, caps.wbMax).trim()
+  if (wb) chunks.push(`【世界书】\n${wb}`)
+
+  return chunks.join('\n\n')
 }
 
 /**
- * 组装「主角 + 绑定 NPC + 圈内关系 + 玩家视角链接」文本块，供约会线下 AI 遵守人脉，不乱造替名 NPC。
+ * 组装「约会对象人脉圈」完整人设 + 关系边，供线下剧情 AI 写配角时不 OOC。
+ * 含绑定 NPC 与「管理关系」里的主角型人脉；当前约会对象本人已在别处注入，此处不重复。
  */
 export async function loadDatingNpcNetworkPromptBlock(params: {
   mainCharacterId: string
   mainRealName: string
 }): Promise<string> {
-  const rootId = params.mainCharacterId.trim()
-  if (!rootId) return ''
-  const mainLabel = params.mainRealName.trim() || '主角'
+  const perspectiveId = params.mainCharacterId.trim()
+  if (!perspectiveId) return ''
+  const mainLabel = params.mainRealName.trim() || '约会对象'
 
   try {
-    const npcRows = await personaDb.listNpcsFor(rootId)
-    const npcs = npcRows as Character[]
+    const archCtx = await resolveOfflineDatingArchiveContext(perspectiveId)
+    const rootId = archCtx?.archiveCharacterId?.trim() || perspectiveId
 
-    const lines: string[] = []
-    lines.push(`【主角】${mainLabel}（勿在正文输出 id）`)
-
-    if (npcs.length) {
-      lines.push('\n【绑定 NPC 名册】（线下有名配角**优先**使用下列姓名与身份；**禁止**在已有对应关系位时再发明随机全名顶替）')
-      for (const n of npcs.slice(0, 36)) {
-        const nm = (n.name || '').trim() || '未命名'
-        const idt = (n.identity || '').trim() || '未设定'
-        const wb = (n.bio || '').trim().slice(0, 80)
-        const wbBooks = formatNpcWorldBooksSnippet(n)
-        lines.push(
-          `- ${nm}：${idt}${wb ? `；简介摘录：${wb}` : ''}${wbBooks ? `；世界书摘录：${wbBooks}` : ''}`,
-        )
-      }
-    }
+    const { all: linkedRows } = await listAllLinkedMemoryEligibleCharacters(rootId)
+    const peers = linkedRows
+      .filter((c) => c.id.trim() && c.id.trim() !== perspectiveId)
+      .slice(0, MAX_PEER_PROFILES)
 
     const relBlock = await buildNetworkRelationshipsPromptBlock({
       rootId,
-      focusCharacterId: rootId,
-      mainToNpcOnly: true,
-      maxChars: 2800,
+      focusCharacterId: perspectiveId,
+      mainToNpcOnly: false,
+      maxChars: RELATIONSHIPS_MAX_CHARS,
     })
 
-    if (!npcs.length && !relBlock.trim()) return ''
+    const mainRow = await personaDb.getCharacter(perspectiveId).catch(() => null)
+    const pronounBlock = mainRow
+      ? await buildPrivateChatNetworkNpcPronounBlock({ character: mainRow })
+      : ''
 
-    const roster = lines.join('\n')
-    const body = `${roster}${relBlock}`.slice(0, MAX_CHARS)
-    return (
-      `【主角人脉网·须参考】以下来自人设「人脉」绑定；**有名 NPC 须优先从下表与关系中选用**，勿随意用新全名顶替表中已有职能/关系位（如已有队友却写另一随机队友名）。` +
-      `若仅需一次性无名龙套，用「工作人员」「路人」等弱指代，勿起易与表内混淆的全名。\n\n${body}`
-    )
+    if (!peers.length && !relBlock.trim() && !pronounBlock.trim()) return ''
+
+    const caps = allocatePeerCaps(peers.length)
+    const profileSections: string[] = []
+    for (const ch of peers) {
+      profileSections.push(
+        await formatFullPeerProfileForDatingPrompt(ch, peerRoleLabel(ch, rootId), caps),
+      )
+    }
+
+    const intro =
+      `【主角人脉网·完整人设·须参考】下列为「${mainLabel}」人脉圈内**其它角色**的完整档案（档案 / 简介 / 世界书 / 关系），` +
+      `线下剧情中若让其出场、对白或被人提及，须与下表一致，**禁止**写成 generic 路人腔或与档案矛盾的言行。` +
+      `须优先使用表内真实姓名；勿用新全名顶替已有职能位。无名龙套可用「工作人员」「路人」等弱指代。\n\n` +
+      `【当前约会对象】${mainLabel}（完整档案已在「角色信息 / 世界书」中注入，此处不重复。）`
+
+    const bodyParts = [intro]
+    if (profileSections.length) {
+      bodyParts.push('\n【人脉角色·完整档案】\n' + profileSections.join('\n\n---\n\n'))
+    }
+    if (relBlock.trim()) bodyParts.push(relBlock.trim())
+    if (pronounBlock.trim()) bodyParts.push(pronounBlock.trim())
+
+    return bodyParts.join('\n\n').slice(0, NETWORK_BLOCK_MAX_CHARS)
   } catch {
     return ''
   }

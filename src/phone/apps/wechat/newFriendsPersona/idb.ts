@@ -35,6 +35,9 @@ import type {
   WeChatVoicePayload,
   WeChatMusicSyncPayload,
   WeChatListenCommentSharePayload,
+  WeChatSharedRecordPayload,
+  WeChatChatHistoryPayload,
+  WeChatChatHistoryParticipantRef,
   WeChatTimeConfig,
   WeChatGlobalSettingsRow,
   WeChatMessageSearchIndexRow,
@@ -54,6 +57,7 @@ import {
   resolveProactiveMessageIntervalSeconds,
 } from '../proactivePrivateMessageTypes'
 import { clampProactiveVariableIntervalSeconds } from '../proactiveVariableInterval'
+import { normalizeForwardedMessageItem } from '../chatHistory/normalizeForwardedMessageItem'
 import { buildCharacterFullTrashArchive, type PersonaDbTrashSource } from '../../recycleBin/archiveCharacterDeletion'
 import { suppressMomentMemoryArchiveFromMemory } from '../memory/momentMemoryArchiveSuppression'
 import { INDEXED_TRASH_RETENTION_MS, emitIndexedTrashChanged } from '../../recycleBin/recycleBinEvents'
@@ -1111,6 +1115,109 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
       ...(targetCover ? { targetCover } : {}),
     }
   })()
+  const rawSharedRecord = (m as { sharedRecord?: unknown }).sharedRecord
+  const sharedRecord: WeChatSharedRecordPayload | undefined = (() => {
+    if (!rawSharedRecord || typeof rawSharedRecord !== 'object') return undefined
+    const r = rawSharedRecord as Record<string, unknown>
+    const kind = typeof r.kind === 'string' ? r.kind.trim() : ''
+    if (kind !== 'shared_record') return undefined
+    const shareId = typeof r.shareId === 'string' ? r.shareId.trim() : ''
+    const originalSenderName =
+      typeof r.originalSenderName === 'string' ? r.originalSenderName.trim().slice(0, 64) : ''
+    const originalSenderCharacterId =
+      typeof r.originalSenderCharacterId === 'string' ? r.originalSenderCharacterId.trim() : ''
+    const originalSenderKindRaw = typeof r.originalSenderKind === 'string' ? r.originalSenderKind.trim() : ''
+    const originalSenderKind =
+      originalSenderKindRaw === 'player'
+        ? ('player' as const)
+        : originalSenderKindRaw === 'character'
+          ? ('character' as const)
+          : undefined
+    const recordType =
+      r.recordType === 'voice' ? 'voice' : r.recordType === 'image' ? 'image' : r.recordType === 'text' ? 'text' : null
+    const contentSummary =
+      typeof r.contentSummary === 'string' ? r.contentSummary.trim().slice(0, 2000) : ''
+    const tsRaw = typeof r.timestamp === 'number' ? r.timestamp : Number(r.timestamp)
+    const timestamp = Number.isFinite(tsRaw) ? Math.floor(tsRaw) : Date.now()
+    if (!shareId || !originalSenderName || !recordType || !contentSummary) return undefined
+    const voiceDurationRaw = typeof r.voiceDurationSec === 'number' ? r.voiceDurationSec : Number(r.voiceDurationSec)
+    const voiceDurationSec = Number.isFinite(voiceDurationRaw)
+      ? Math.max(1, Math.floor(voiceDurationRaw))
+      : undefined
+    const voiceAudioUrlRaw = typeof r.voiceAudioUrl === 'string' ? r.voiceAudioUrl.trim() : ''
+    const voiceAudioUrl =
+      voiceAudioUrlRaw && !voiceAudioUrlRaw.startsWith('data:') && voiceAudioUrlRaw.length <= 2000
+        ? voiceAudioUrlRaw
+        : ''
+    const voiceAudioKvKey =
+      typeof r.voiceAudioKvKey === 'string' ? r.voiceAudioKvKey.trim().slice(0, 128) : ''
+    const voiceTranscript = typeof r.voiceTranscript === 'string' ? r.voiceTranscript.trim().slice(0, 2000) : ''
+    const imageUrlsRaw = Array.isArray(r.imageUrls) ? r.imageUrls : []
+    const imageUrls = imageUrlsRaw
+      .filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
+      .map((u) => u.trim().slice(0, 2000))
+      .slice(0, 4)
+    return {
+      kind: 'shared_record',
+      shareId,
+      originalSenderName,
+      originalSenderCharacterId,
+      ...(originalSenderKind ? { originalSenderKind } : {}),
+      recordType,
+      contentSummary,
+      timestamp,
+      ...(voiceDurationSec ? { voiceDurationSec } : {}),
+      ...(voiceAudioUrl ? { voiceAudioUrl } : {}),
+      ...(voiceAudioKvKey ? { voiceAudioKvKey } : {}),
+      ...(voiceTranscript ? { voiceTranscript } : {}),
+      ...(imageUrls.length ? { imageUrls } : {}),
+    }
+  })()
+  const rawChatHistory = (m as { chatHistory?: unknown }).chatHistory
+  const chatHistory: WeChatChatHistoryPayload | undefined = (() => {
+    if (!rawChatHistory || typeof rawChatHistory !== 'object') return undefined
+    const r = rawChatHistory as Record<string, unknown>
+    const kind = typeof r.kind === 'string' ? r.kind.trim() : ''
+    if (kind !== 'chat_history') return undefined
+    const title = typeof r.title === 'string' ? r.title.trim().slice(0, 120) : ''
+    const rawMessages = Array.isArray(r.messages) ? r.messages : []
+    const messages = rawMessages
+      .map((x) => normalizeForwardedMessageItem(x))
+      .filter((x): x is NonNullable<typeof x> => !!x)
+      .slice(0, 200)
+    const parseParticipant = (raw: unknown): WeChatChatHistoryParticipantRef | undefined => {
+      if (!raw || typeof raw !== 'object') return undefined
+      const p = raw as Record<string, unknown>
+      const displayName = typeof p.displayName === 'string' ? p.displayName.trim().slice(0, 64) : ''
+      const kindRaw = p.kind
+      if (kindRaw !== 'player' && kindRaw !== 'character') return undefined
+      const characterId = typeof p.characterId === 'string' ? p.characterId.trim().slice(0, 128) : undefined
+      if (!displayName) return undefined
+      return {
+        kind: kindRaw,
+        displayName,
+        ...(characterId ? { characterId } : {}),
+      }
+    }
+    const rawParticipants = r.participants
+    const participants =
+      rawParticipants && typeof rawParticipants === 'object'
+        ? (() => {
+            const po = rawParticipants as Record<string, unknown>
+            const a = parseParticipant(po.a)
+            const b = parseParticipant(po.b)
+            if (!a || !b) return undefined
+            return { a, b }
+          })()
+        : undefined
+    if (!title || !messages.length) return undefined
+    return {
+      kind: 'chat_history',
+      title,
+      messages,
+      ...(participants ? { participants } : {}),
+    }
+  })()
   const originalContent =
     typeof (m as { originalContent?: unknown }).originalContent === 'string'
       ? String((m as { originalContent?: unknown }).originalContent).slice(0, 8000)
@@ -1161,6 +1268,8 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     voice,
     musicSync,
     listenCommentShare,
+    sharedRecord,
+    chatHistory,
     images: images.length ? images : undefined,
     isFavorite,
     replyTo,
@@ -1185,6 +1294,17 @@ function normalizeFavorite(input: unknown): Favorite | null {
   const content = typeof r.content === 'string' ? r.content : ''
   const timestamp = typeof r.timestamp === 'number' && Number.isFinite(r.timestamp) ? r.timestamp : now
   const createdAt = typeof r.createdAt === 'number' && Number.isFinite(r.createdAt) ? r.createdAt : now
+  const voiceDurationRaw = typeof r.voiceDurationSec === 'number' ? r.voiceDurationSec : Number.NaN
+  const voiceDurationSec = Number.isFinite(voiceDurationRaw) ? Math.max(1, Math.floor(voiceDurationRaw)) : undefined
+  const voiceTranscript =
+    typeof r.voiceTranscript === 'string' ? r.voiceTranscript.trim().slice(0, 2000) : undefined
+  const voiceAudioUrlRaw = typeof r.voiceAudioUrl === 'string' ? r.voiceAudioUrl.trim() : ''
+  const voiceAudioUrl =
+    voiceAudioUrlRaw && !voiceAudioUrlRaw.startsWith('data:') && voiceAudioUrlRaw.length <= 2000
+      ? voiceAudioUrlRaw
+      : undefined
+  const voiceAudioKvKey =
+    typeof r.voiceAudioKvKey === 'string' ? r.voiceAudioKvKey.trim().slice(0, 128) : undefined
   return {
     id: r.id.trim(),
     messageId: r.messageId.trim(),
@@ -1192,6 +1312,10 @@ function normalizeFavorite(input: unknown): Favorite | null {
     content,
     timestamp,
     createdAt,
+    ...(voiceDurationSec ? { voiceDurationSec } : {}),
+    ...(voiceTranscript ? { voiceTranscript } : {}),
+    ...(voiceAudioUrl ? { voiceAudioUrl } : {}),
+    ...(voiceAudioKvKey ? { voiceAudioKvKey } : {}),
   }
 }
 
@@ -1810,9 +1934,7 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
   const linkedMemRaw = (r as { linkedMemoryAutoSummaryEnabled?: unknown }).linkedMemoryAutoSummaryEnabled
   const linkedMemoryAutoSummaryEnabled: MemorySettingsRow['linkedMemoryAutoSummaryEnabled'] =
     linkedMemRaw === false ? false : linkedMemRaw === true ? true : undefined
-  const datingAutoRaw = (r as { datingAutoSummaryEnabled?: unknown }).datingAutoSummaryEnabled
-  const datingAutoSummaryEnabled: MemorySettingsRow['datingAutoSummaryEnabled'] =
-    datingAutoRaw === false ? false : datingAutoRaw === true ? true : undefined
+  const datingAutoSummaryEnabled: MemorySettingsRow['datingAutoSummaryEnabled'] = true
   const meetAutoRaw = (r as { meetAutoSummaryEnabled?: unknown }).meetAutoSummaryEnabled
   const meetAutoSummaryEnabled: MemorySettingsRow['meetAutoSummaryEnabled'] =
     meetAutoRaw === false ? false : meetAutoRaw === true ? true : undefined
@@ -2850,10 +2972,10 @@ export class PersonaDb {
     return res.map(normalizeCharacter).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
   }
 
-  /** 仅主角/独立角色（人脉 NPC 不在列表展示） */
+  /** 仅主角/独立角色（人脉 NPC、玩家身份行不在列表展示） */
   async listRootCharacters(): Promise<Stored[]> {
     const all = await this.listCharacters()
-    return all.filter((c) => !c.generatedForCharacterId)
+    return all.filter((c) => !c.generatedForCharacterId && !c.isPlayerIdentity)
   }
 
   async listNpcsFor(mainCharacterId: string): Promise<Stored[]> {
@@ -2870,7 +2992,7 @@ export class PersonaDb {
 
   async listRootCharactersForWechatAccount(wechatAccountId: string): Promise<Stored[]> {
     const rows = await this.listCharactersForWechatAccount(wechatAccountId)
-    return rows.filter((c) => !c.generatedForCharacterId)
+    return rows.filter((c) => !c.generatedForCharacterId && !c.isPlayerIdentity)
   }
 
   async listNpcsForWechatAccount(mainCharacterId: string, wechatAccountId: string): Promise<Stored[]> {
@@ -2983,7 +3105,7 @@ export class PersonaDb {
       const canonical = await resolveCanonicalCharacterId(rawId)
       if (!canonical || seen.has(canonical)) continue
       const ch = await this.getCharacterWithoutCanonicalRedirect(canonical)
-      if (!ch || ch.generatedForCharacterId) continue
+      if (!ch || ch.generatedForCharacterId || ch.isPlayerIdentity) continue
       if (!characterBelongsToWechatAccount(ch, acc)) continue
       seen.add(ch.id)
       out.push(ch)
@@ -4255,13 +4377,37 @@ export class PersonaDb {
       return null
     }
     const now = Date.now()
+    const favId = `fav-${now}-${Math.random().toString(36).slice(2, 8)}`
+    const voice = msg.voice
+    let voiceDurationSec: number | undefined
+    let voiceTranscript: string | undefined
+    let voiceAudioUrl: string | undefined
+    let voiceAudioKvKey: string | undefined
+    if (voice) {
+      voiceDurationSec = Math.max(1, Math.floor(voice.durationSec || 0))
+      voiceTranscript = voice.transcriptText?.trim() || msg.content?.trim() || undefined
+      const rawAudio = voice.audioUrl?.trim()
+      if (rawAudio) {
+        const { persistFavoriteVoiceAudio, shouldStoreVoiceAudioInKv } = await import('../wechatVoiceAudioCache')
+        if (shouldStoreVoiceAudioInKv(rawAudio)) {
+          voiceAudioKvKey = favId
+          await persistFavoriteVoiceAudio(favId, rawAudio)
+        } else {
+          voiceAudioUrl = rawAudio
+        }
+      }
+    }
     const fav: Favorite = {
-      id: `fav-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      id: favId,
       messageId: msg.id,
       characterId: msg.characterId,
       content: msg.content,
       timestamp: msg.timestamp,
       createdAt: now,
+      ...(voiceDurationSec ? { voiceDurationSec } : {}),
+      ...(voiceTranscript ? { voiceTranscript } : {}),
+      ...(voiceAudioUrl ? { voiceAudioUrl } : {}),
+      ...(voiceAudioKvKey ? { voiceAudioKvKey } : {}),
     }
     const normalized = normalizeFavorite(fav)
     if (!normalized) return null
@@ -4271,6 +4417,96 @@ export class PersonaDb {
     db.close()
     emitWeChatStorageChanged()
     return normalized
+  }
+
+  /** 聊天语音合成完成后，同步到对应收藏（避免收藏页/转发重复合成）。 */
+  async syncFavoriteVoiceAudioFromMessage(messageId: string, audioUrl: string): Promise<void> {
+    const mid = messageId.trim()
+    const url = audioUrl.trim()
+    if (!mid || !url) return
+    const favs = await this.listFavorites()
+    const fav = favs.find((f) => f.messageId.trim() === mid)
+    if (!fav) return
+
+    const { persistFavoriteVoiceAudio, shouldStoreVoiceAudioInKv } = await import('../wechatVoiceAudioCache')
+    const kvKey = fav.id.trim()
+    let voiceAudioUrl: string | undefined
+    let voiceAudioKvKey: string | undefined
+    if (shouldStoreVoiceAudioInKv(url)) {
+      voiceAudioKvKey = kvKey
+      await persistFavoriteVoiceAudio(kvKey, url)
+    } else {
+      voiceAudioUrl = url
+    }
+
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(FAVORITES_STORE)) {
+      db.close()
+      return
+    }
+    const updated: Favorite = { ...fav }
+    if (voiceAudioKvKey) {
+      updated.voiceAudioKvKey = voiceAudioKvKey
+      delete updated.voiceAudioUrl
+    } else if (voiceAudioUrl) {
+      updated.voiceAudioUrl = voiceAudioUrl
+      delete updated.voiceAudioKvKey
+    }
+    const normalized = normalizeFavorite(updated)
+    if (!normalized) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(FAVORITES_STORE, 'readwrite')
+    tx.objectStore(FAVORITES_STORE).put(normalized)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+  }
+
+  async listFavorites(): Promise<Favorite[]> {
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(FAVORITES_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(FAVORITES_STORE, 'readonly')
+    const req = tx.objectStore(FAVORITES_STORE).getAll()
+    const raw = await new Promise<unknown[]>((resolve, reject) => {
+      req.onsuccess = () => resolve((req.result as unknown[]) ?? [])
+      req.onerror = () => reject(req.error ?? new Error('list favorites'))
+    })
+    await txDone(tx)
+    db.close()
+    return raw
+      .map((row) => normalizeFavorite(row))
+      .filter((x): x is Favorite => !!x)
+      .sort((a, b) => b.createdAt - a.createdAt)
+  }
+
+  async deleteFavorite(id: string): Promise<void> {
+    const fid = id.trim()
+    if (!fid) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(FAVORITES_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(FAVORITES_STORE, 'readwrite')
+    const store = tx.objectStore(FAVORITES_STORE)
+    const existing = await new Promise<Favorite | null>((resolve, reject) => {
+      const req = store.get(fid)
+      req.onsuccess = () => resolve(normalizeFavorite(req.result))
+      req.onerror = () => reject(req.error ?? new Error('get favorite'))
+    })
+    store.delete(fid)
+    await txDone(tx)
+    db.close()
+    if (existing?.messageId) {
+      await this.setWeChatChatMessageFavorite(existing.messageId, false)
+    } else {
+      emitWeChatStorageChanged()
+    }
   }
 
   private async maybePlayWeChatNewMessageSound(params: {
@@ -5395,11 +5631,11 @@ export class PersonaDb {
     const next = prev + 1
     if (next >= interval) {
       delete map[conversationKey]
-      await this.putMemorySettings({ aiRoundCountByConversation: map }, { emit: false })
+      await this.putMemorySettings({ aiRoundCountByConversation: map })
       return { shouldSummarize: true }
     }
     map[conversationKey] = next
-    await this.putMemorySettings({ aiRoundCountByConversation: map }, { emit: false })
+    await this.putMemorySettings({ aiRoundCountByConversation: map })
     return { shouldSummarize: false }
   }
 
@@ -5411,7 +5647,7 @@ export class PersonaDb {
     const interval = resolveAutoSummaryIntervalForConversationKey(settings, conversationKey)
     const map = { ...(settings.aiRoundCountByConversation ?? {}) }
     map[conversationKey] = Math.max(0, interval - 1)
-    await this.putMemorySettings({ aiRoundCountByConversation: map }, { emit: false })
+    await this.putMemorySettings({ aiRoundCountByConversation: map })
   }
 
   /**
@@ -5471,10 +5707,9 @@ export class PersonaDb {
     const settings = await this.getMemorySettings()
     const map = { ...(settings.aiRoundCountByConversation ?? {}) }
     delete map[ck]
-    await this.putMemorySettings(
-      { aiRoundCountByConversation: Object.keys(map).length ? map : undefined },
-      { emit: false },
-    )
+    await this.putMemorySettings({
+      aiRoundCountByConversation: Object.keys(map).length ? map : undefined,
+    })
   }
 
   /** 读取会话最近一次自动总结覆盖到的消息时间戳；未记录则返回 null。 */
@@ -5890,6 +6125,7 @@ export class PersonaDb {
     const globalIdMap = await resolveMissingIdPlaceholderDisplayNames(
       { ...npcNetworkIdMap, ...ownerIdMap, ...groupPeerIdMap },
       allRawForIdResolve,
+      [...Object.keys(npcNetworkIdMap), owner, ...groupInvolvedIds],
     )
 
     return Promise.all(
@@ -5912,7 +6148,11 @@ export class PersonaDb {
             archiveCharName = baseNames.charName
           }
         }
-        idToDisplayName = await resolveMissingIdPlaceholderDisplayNames(idToDisplayName, [raw])
+        idToDisplayName = await resolveMissingIdPlaceholderDisplayNames(idToDisplayName, [raw], [
+          owner,
+          ...Object.keys(globalIdMap),
+          ...Object.keys(npcNetworkIdMap),
+        ])
         const userName = await resolveMemoryExpandUserName(m, ownerRow, baseNames.userName)
         return expandLinkedMemoryPlaceholders(raw, {
           charName: baseNames.charName,

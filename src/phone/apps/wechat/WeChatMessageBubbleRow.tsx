@@ -7,6 +7,7 @@ import {
   ChatGroupSpeakerRankOnAvatar,
 } from './group/ChatGroupSpeakerAvatarWrap'
 import { useWeChatLongPress } from './hooks/useWeChatLongPress'
+import { composeMultiSelectLeading } from './chatHistory/MultiSelectAvatarSlot'
 
 /** 聊天气泡最大宽：100vw - 左右基准线 24px×2 - 头像列预留 80px（40 头像 + 12 间距 + 28 冗余） */
 const CHAT_BUBBLE_MAX = 'max-w-[calc(100vw-24px-24px-80px)]'
@@ -119,6 +120,8 @@ export type WeChatMessageBubbleRowProps = {
   onBubbleLongPress?: (anchorRect: DOMRect) => void
   /** 面板打开时，气泡显示选中态 */
   bubbleSelected?: boolean
+  /** 多选模式：替换头像槽位为复选框 */
+  multiSelectAvatar?: ReactNode
 }
 
 function BubbleMessageTail({
@@ -187,6 +190,7 @@ function useMessageBubbleSingleLine(contentRef: RefObject<HTMLDivElement | null>
     const el = contentRef.current
     if (!el) return
     let raf = 0
+    let roBusy = false
     const measureNow = () => {
       const node = contentRef.current
       if (!node) return
@@ -194,9 +198,12 @@ function useMessageBubbleSingleLine(contentRef: RefObject<HTMLDivElement | null>
       setSingleLine((prev) => (prev === next ? prev : next))
     }
     const scheduleMeasure = () => {
+      if (roBusy) return
+      roBusy = true
       if (raf) cancelAnimationFrame(raf)
       raf = requestAnimationFrame(() => {
         raf = 0
+        roBusy = false
         measureNow()
       })
     }
@@ -206,6 +213,7 @@ function useMessageBubbleSingleLine(contentRef: RefObject<HTMLDivElement | null>
     return () => {
       ro.disconnect()
       if (raf) cancelAnimationFrame(raf)
+      roBusy = false
     }
   }, [text])
   return singleLine
@@ -239,6 +247,7 @@ export function WeChatMessageBubbleRow({
   onOtherAvatarClick,
   onBubbleLongPress,
   bubbleSelected = false,
+  multiSelectAvatar,
   replyPreview,
   replyPreviewInsetStyle,
 }: WeChatMessageBubbleRowProps) {
@@ -250,7 +259,7 @@ export function WeChatMessageBubbleRow({
   /** 合并组内无头像行仍占头像+间距宽，与首条气泡对齐 */
   const reserveAvatarGutter = showAvatar
   const alignWithAvatarMid = Boolean(singleLine && reserveAvatarGutter)
-  const showTail = showBubbleTail && showAvatarVisual
+  const showTail = showBubbleTail && showAvatarVisual && !multiSelectAvatar
   const tailMode: 'avatarMidline' | 'bubbleCenter' = alignWithAvatarMid ? 'bubbleCenter' : 'avatarMidline'
 
   const bubbleBgChat = isSelf ? 'var(--wx-self-bubble-bg)' : 'var(--wx-other-bubble-bg)'
@@ -270,7 +279,7 @@ export function WeChatMessageBubbleRow({
   const textCls = variant === 'chat' ? 'text-[15px]' : 'text-[14px]'
   const messageBodyVisible = messageText.replace(/\u200b/g, '').trim().length > 0
   const messageBody = messageBodyVisible ? (
-    <span className="whitespace-pre-wrap break-words">
+    <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
       <WeChatChatMixedText text={messageText} />
     </span>
   ) : null
@@ -375,15 +384,19 @@ export function WeChatMessageBubbleRow({
     if (!isSelf) {
       return (
         <div className={`w-full max-w-full shrink-0 overflow-x-visible ${rowClassName}`}>
-          {!showAvatar ? (
+          {!showAvatar && !multiSelectAvatar ? (
             <div className="ml-[24px] mr-auto min-w-0">{bubbleBlock}</div>
-          ) : showAvatarVisual ? (
+          ) : showAvatarVisual || multiSelectAvatar ? (
             <div
               className={`ml-[24px] mr-auto flex max-w-full flex-row gap-[12px] ${
-                chatOtherSenderNickname?.trim() || (rankBeside && chatOtherAvatarRankBadge) ? 'items-start' : rowAlign
+                !multiSelectAvatar && (chatOtherSenderNickname?.trim() || (rankBeside && chatOtherAvatarRankBadge))
+                  ? 'items-start'
+                  : rowAlign
               }`}
             >
-              {rankBeside || !chatOtherAvatarRankBadge ? (
+              {composeMultiSelectLeading(
+                multiSelectAvatar,
+                rankBeside || !chatOtherAvatarRankBadge ? (
                 otherChatAvatarSrc ? (
                   <img
                     src={otherChatAvatarSrc}
@@ -439,11 +452,13 @@ export function WeChatMessageBubbleRow({
                     />
                   )}
                 </ChatGroupSpeakerRankOnAvatar>
+              ),
+              showAvatarColumn,
               )}
               <div className="flex min-w-0 flex-1 flex-col items-start gap-[3px]">
-                {rankBeside ? (
+                {!multiSelectAvatar && rankBeside ? (
                   <ChatGroupSenderNicknameWithRank nickname={chatOtherSenderNickname} rankBadge={chatOtherAvatarRankBadge ?? null} />
-                ) : chatOtherSenderNickname?.trim() ? (
+                ) : !multiSelectAvatar && chatOtherSenderNickname?.trim() ? (
                   <span
                     className="max-w-[min(200px,calc(100vw-24px-24px-40px-12px))] truncate text-[11px] leading-snug"
                     style={{ color: 'var(--wx-text-muted, #888)' }}
@@ -456,15 +471,19 @@ export function WeChatMessageBubbleRow({
             </div>
           ) : reserveAvatarGutter ? (
             <div className={`ml-[24px] mr-auto flex max-w-full flex-row ${rowAlign} gap-[12px]`}>
-              {rankBeside || !chatOtherAvatarRankBadge ? (
-                <div className="h-10 w-10 shrink-0" aria-hidden />
-              ) : (
-                <ChatGroupSpeakerRankOnAvatar rankBadge={chatOtherAvatarRankBadge}>
+              {composeMultiSelectLeading(
+                multiSelectAvatar,
+                rankBeside || !chatOtherAvatarRankBadge ? (
                   <div className="h-10 w-10 shrink-0" aria-hidden />
-                </ChatGroupSpeakerRankOnAvatar>
+                ) : (
+                  <ChatGroupSpeakerRankOnAvatar rankBadge={chatOtherAvatarRankBadge}>
+                    <div className="h-10 w-10 shrink-0" aria-hidden />
+                  </ChatGroupSpeakerRankOnAvatar>
+                ),
+              showAvatarColumn,
               )}
               <div className="flex min-w-0 flex-1 flex-col items-start gap-[3px]">
-                {rankBeside ? (
+                {!multiSelectAvatar && rankBeside ? (
                   <ChatGroupSenderNicknameWithRank nickname={chatOtherSenderNickname} rankBadge={chatOtherAvatarRankBadge ?? null} />
                 ) : null}
                 {bubbleBlock}
@@ -482,12 +501,14 @@ export function WeChatMessageBubbleRow({
         className={`flex w-full max-w-full shrink-0 items-end justify-end gap-[4px] overflow-x-visible ${rowClassName}`}
       >
         {chatAccessory}
-        {!showAvatar ? (
+        {!showAvatar && !multiSelectAvatar ? (
           <div className="mr-[24px] ml-auto min-w-0">{bubbleBlock}</div>
-        ) : showAvatarVisual ? (
+        ) : showAvatarVisual || multiSelectAvatar ? (
           <div className={`mr-[24px] ml-auto flex max-w-full flex-row ${rowAlign} gap-[12px]`}>
             {bubbleBlock}
-            {rankBeside || !chatSelfAvatarRankBadge ? (
+            {composeMultiSelectLeading(
+              multiSelectAvatar,
+              rankBeside || !chatSelfAvatarRankBadge ? (
               selfChatAvatarSrc ? (
                 <img
                   src={selfChatAvatarSrc}
@@ -537,18 +558,24 @@ export function WeChatMessageBubbleRow({
                   />
                 )}
               </ChatGroupSpeakerRankOnAvatar>
-            )}
+                ),
+              showAvatarColumn,
+              )}
           </div>
         ) : reserveAvatarGutter ? (
           <div className={`mr-[24px] ml-auto flex max-w-full flex-row ${rowAlign} gap-[12px]`}>
             {bubbleBlock}
-            {rankBeside || !chatSelfAvatarRankBadge ? (
-              <div className="h-10 w-10 shrink-0" aria-hidden />
-            ) : (
-              <ChatGroupSpeakerRankOnAvatar rankBadge={chatSelfAvatarRankBadge}>
+            {composeMultiSelectLeading(
+              multiSelectAvatar,
+              rankBeside || !chatSelfAvatarRankBadge ? (
                 <div className="h-10 w-10 shrink-0" aria-hidden />
-              </ChatGroupSpeakerRankOnAvatar>
-            )}
+              ) : (
+                <ChatGroupSpeakerRankOnAvatar rankBadge={chatSelfAvatarRankBadge}>
+                  <div className="h-10 w-10 shrink-0" aria-hidden />
+                </ChatGroupSpeakerRankOnAvatar>
+                ),
+              showAvatarColumn,
+              )}
           </div>
         ) : (
           <div className="mr-[24px] ml-auto min-w-0">{bubbleBlock}</div>

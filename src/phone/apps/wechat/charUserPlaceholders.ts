@@ -15,6 +15,7 @@ import {
   formatPlayerLineScopeLabel,
   type MemoryPromptLineScope,
 } from './wechatMemoryLineScope'
+import { normalizeMemoryIdPlaceholderSyntax } from './memory/memoryIdPlaceholderNormalize'
 
 /** 档案室条目、人设世界书正文推荐写法：`{{char}}`=该人设角色本人，`{{user}}`=玩家绑定身份本人 */
 export const WORLD_BOOK_CHAR_PLACEHOLDER = '{{char}}'
@@ -455,10 +456,10 @@ export type LinkedMemoryPlaceholderExpandInput = {
  */
 export function expandLinkedMemoryPlaceholders(text: string, input: LinkedMemoryPlaceholderExpandInput): string {
   const idMap = input.idToDisplayName ?? {}
-  let s = String(text ?? '')
+  let s = normalizeMemoryIdPlaceholderSyntax(String(text ?? ''))
   s = s.replace(/\{\{id:([^}]+)\}\}/g, (_m, rawId: string) => {
     const id = String(rawId ?? '').trim()
-    if (!id) return ''
+    if (!id || id.includes('{{')) return _m
     const nm = idMap[id]
     return nm != null && String(nm).trim() ? String(nm).trim() : `{{id:${id}}}`
   })

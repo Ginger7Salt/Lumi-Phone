@@ -220,7 +220,6 @@ export function MemoryEngineConfig({
   const [characterRows, setCharacterRows] = useState<Character[]>([])
   const [perCharIntervalDrafts, setPerCharIntervalDrafts] = useState<Record<string, string>>({})
   const [linkedMemoryAutoSummaryEnabled, setLinkedMemoryAutoSummaryEnabled] = useState(true)
-  const [datingAutoSummaryEnabled, setDatingAutoSummaryEnabled] = useState(true)
   const [summaryDedicatedApiEnabled, setSummaryDedicatedApiEnabled] = useState(false)
   const [summaryConfig, setSummaryConfig] = useState<SummaryAPIConfig>({ endpoint: '', apiKey: '' })
   const [hasSavedSummaryKey, setHasSavedSummaryKey] = useState(false)
@@ -266,7 +265,6 @@ export function MemoryEngineConfig({
     setCharacterRows(chars)
     setPerCharIntervalDrafts({})
     setLinkedMemoryAutoSummaryEnabled(settings.linkedMemoryAutoSummaryEnabled !== false)
-    setDatingAutoSummaryEnabled(settings.datingAutoSummaryEnabled !== false)
     setSummaryDedicatedApiEnabled(settings.memorySummaryUseDedicatedApi === true)
     setSummaryConfig({
       endpoint: settings.memorySummaryApiUrl?.trim() || '',
@@ -461,12 +459,6 @@ export function MemoryEngineConfig({
     const next = !linkedMemoryAutoSummaryEnabled
     setLinkedMemoryAutoSummaryEnabled(next)
     await personaDb.putMemorySettings({ linkedMemoryAutoSummaryEnabled: next })
-  }
-
-  const toggleDatingAutoSummary = async () => {
-    const next = !datingAutoSummaryEnabled
-    setDatingAutoSummaryEnabled(next)
-    await personaDb.putMemorySettings({ datingAutoSummaryEnabled: next })
   }
 
   const setSummaryApiMode = async (mode: MemoryApiMode) => {
@@ -759,7 +751,7 @@ export function MemoryEngineConfig({
           {intervalScope === 'global' ? (
             <SettingRow
               label="每满 N 轮 AI 回复"
-              hint="微信私聊与约会剧情（若开启计轮）共用此间隔"
+              hint="微信私聊与线下约会共用此间隔计轮"
               control={
                 <div className="rounded-2xl bg-gray-50 px-3 py-2 transition-colors focus-within:bg-gray-100">
                   <input
@@ -815,7 +807,7 @@ export function MemoryEngineConfig({
                     kind: 'bullets',
                     title: '关闭后',
                     items: [
-                      '主角自有约会记忆仍可按间隔写入（需开「约会剧情计入总结轮数」）',
+                      '主角自有约会记忆仍随自动总结间隔写入',
                       '不会再自动给配角写关联条',
                       '配角私聊时通常不知道别处的线下剧情，除非直接聊过或手动刻录',
                     ],
@@ -833,47 +825,6 @@ export function MemoryEngineConfig({
                 on={linkedMemoryAutoSummaryEnabled && autoSummaryEnabled}
                 disabled={!autoSummaryEnabled}
                 onToggle={() => void toggleLinkedMemoryAutoSummary()}
-              />
-            }
-          />
-        </div>
-        <div data-memory-coach="dating-summary">
-          <SettingRow
-            label="约会剧情计入总结轮数"
-            labelExtra={
-              <MemoryFeatureHelpButton
-                featureTitle="约会剧情计入总结轮数"
-                blocks={[
-                  {
-                    kind: 'text',
-                    text: '与私聊共用「总结间隔」，决定约会 AI 回复是否参与自动总结计轮。',
-                  },
-                  {
-                    kind: 'bullets',
-                    title: '开启后',
-                    items: [
-                      '约会 AI 回复也计轮，满间隔时把微信 + 线下剧情合并入库',
-                      '主角自有记忆可涵盖线下约会内容',
-                    ],
-                  },
-                  {
-                    kind: 'bullets',
-                    title: '关闭后',
-                    items: [
-                      '只在微信私聊里计轮与总结',
-                      '约会剧情不会推进自动总结进度',
-                    ],
-                  },
-                ]}
-              />
-            }
-            control={
-              <MemoryEngineSoftSwitch
-                on={datingAutoSummaryEnabled && autoSummaryEnabled}
-                onToggle={() => {
-                  if (!autoSummaryEnabled) return
-                  void toggleDatingAutoSummary()
-                }}
               />
             }
           />

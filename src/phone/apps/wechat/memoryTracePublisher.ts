@@ -123,11 +123,7 @@ function buildFullPersonaDetailForMemoryTrace(ch: Character | null): string {
   const card = buildCharacterCard(ch)
   const parts: string[] = [`【档案摘要·与模型注入同源】\n${card}`]
   if (ch.wechatId?.trim()) parts.push(`【微信号（展示用）】${ch.wechatId.trim()}`)
-  if (ch.bio?.trim()) parts.push(`【简介 / 人设长文】\n${ch.bio.trim()}`)
-  if (ch.motto?.trim()) parts.push(`【座右铭】\n${ch.motto.trim()}`)
   if (ch.openingLines?.trim()) parts.push(`【默认开场白（每行一条气泡）】\n${ch.openingLines.trim()}`)
-  if (ch.interests?.length) parts.push(`【兴趣标签】${ch.interests.map((x) => String(x ?? '').trim()).filter(Boolean).join('、')}`)
-  if (ch.painPoints?.length) parts.push(`【雷点】${ch.painPoints.map((x) => String(x ?? '').trim()).filter(Boolean).join('、')}`)
   if (ch.remark?.trim()) parts.push(`【通讯录备注】${ch.remark.trim()}`)
   if (ch.schedule) {
     try {

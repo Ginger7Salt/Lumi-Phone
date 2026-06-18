@@ -1,3 +1,4 @@
+import { buildOpenAiAudioTranscriptionsEndpoint } from '../../api/openAiCompatibleEndpoints'
 import type { ApiConfig } from '../../api/types'
 
 export type VoiceAsrResult = {
@@ -7,14 +8,6 @@ export type VoiceAsrResult = {
 
 const SILICONFLOW_ASR_MODEL = 'FunAudioLLM/SenseVoiceSmall'
 export const SILICONFLOW_ASR_DEFAULT_BASE_URL = 'https://api.siliconflow.cn/v1'
-
-function resolveAsrEndpoint(apiUrl: string): string {
-  const base = apiUrl.trim().replace(/\/+$/, '')
-  if (!base) return ''
-  if (/\/v1\/audio\/transcriptions$/i.test(base)) return base
-  if (/\/v1$/i.test(base)) return `${base}/audio/transcriptions`
-  return `${base}/v1/audio/transcriptions`
-}
 
 function mapEmotionToken(token: string): string | undefined {
   const t = token.trim().toLowerCase()
@@ -42,7 +35,7 @@ export async function requestSiliconflowTranscription(cfg: ApiConfig | null, aud
   if (!cfg?.apiKey?.trim()) {
     throw new Error('未配置语音识别 API，无法使用')
   }
-  const endpoint = resolveAsrEndpoint(cfg.apiUrl || SILICONFLOW_ASR_DEFAULT_BASE_URL)
+  const endpoint = buildOpenAiAudioTranscriptionsEndpoint(cfg.apiUrl || SILICONFLOW_ASR_DEFAULT_BASE_URL)
   if (!endpoint) throw new Error('语音识别 API URL 无效')
   const ext = audioBlob.type.includes('ogg') ? 'ogg' : audioBlob.type.includes('mp4') ? 'm4a' : 'webm'
   const file = new File([audioBlob], `voice.${ext}`, { type: audioBlob.type || 'audio/webm' })

@@ -20,6 +20,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useAnimation } from 'framer-motion'
@@ -33,6 +34,10 @@ import { buildMemoryRelevanceHaystack } from '../wechatMemoryPromptBlocks'
 import { formatHeartWhisperGenerateError, HeartWhisperModal } from '../HeartWhisperModal'
 import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
 import { useDating, vnRollbackJumpStorageKey } from './DatingContext'
+import {
+  isDatingPlotContentHintActive,
+  subscribeDatingPlotContentHint,
+} from './datingPlotGenerationEvents'
 import { splitDatingAssistantOutput } from './plotCoT'
 import { StoryFeed } from './StoryFeed'
 import { extractVnVoiceParamsBlock } from './vnVoiceParamsStrip'
@@ -44,6 +49,13 @@ import {
   DATING_AI_LENGTH_TARGET_MIN,
 } from './types'
 import type { BranchOption, DatingCardStyle, NarrativePerspective } from './types'
+import { DirectorModeHelpButton, DirectorModeHelpPanel } from './DirectorModeHelp'
+import { DatingNetworkMentionControls } from './DatingNetworkMentionControls'
+import {
+  collectDatingNetworkMentionIds,
+  handleDatingNetworkMentionKeyDown,
+  stripDatingNetworkMentionMarkers,
+} from './datingNetworkMentionInput'
 import type { HeartWhisper } from '../newFriendsPersona/types'
 import { VNDialogBox } from './VNDialogBox'
 import { VNBottomControls } from './VNBottomControls'
@@ -63,10 +75,21 @@ import {
   VN_BGM_DIVERSITY_WINDOW,
 } from './vnBgmCatalog'
 import { VnRainOverlay } from './vnAtmosphereEffects'
-import { createMiniMaxT2ASyncAudioBlob } from '../../voiceprint/services/minimaxApi'
+import {
+  readMiniMaxCredentialsFromLocalStorage,
+  readMiniMaxSpeechModelFromLocalStorage,
+  synthesizeMiniMaxVoiceAudioBlob,
+} from '../../voiceprint/services/minimaxApi'
+import { lookupBoundVoiceIdForCharacter } from '../../voiceprint/characterVoiceMapStorage'
 import { densityToTrackCount, hexAndOpacityToRgba, resolveEffectiveDanmakuVisuals } from '../danmakuResolve'
 import { DanmakuOverlay, type DanmakuOverlayBullet } from '../DanmakuOverlay'
 import { registerDatingOfflineDanmakuSink } from './datingOfflineDanmakuBridge'
+import {
+  clearDatingOfflineDmSnapshot,
+  loadDatingOfflineDmSnapshot,
+  saveDatingOfflineDmSnapshot,
+  staggerDatingOfflineDmAfterRestore,
+} from './datingOfflineDanmakuStorage'
 import { isIOSWebKit } from '../../../utils/platform'
 import { useEditableKeyboardLift } from '../../../hooks/useEditableKeyboardLift'
 import { isAndroidWeb, keyboardScrollPaddingBottom } from '../../../hooks/keyboardInset'
@@ -575,7 +598,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     setOfflineDanmakuEnabled,
     setGodPerspective,
     setVnVoiceDisabled,
-    setVnCustomInputParaphrase,
+    setDirectorMode,
+    setAutoUserReaction,
     setDatingLengthTargetChars,
     sendPlayerInput,
     stageBranchChoice,
@@ -590,6 +614,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     vnRollbackLastRound,
   } = useDating()
   const [input, setInput] = useState('')
+  const vnCustomInputRef = useRef<HTMLTextAreaElement | null>(null)
   const [iosKeyboardPad, setIosKeyboardPad] = useState(0)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const composerRef = useRef<HTMLDivElement | null>(null)
@@ -622,7 +647,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     setDatingLengthTargetChars(clamped)
   }, [lengthTargetChars, setDatingLengthTargetChars])
   const [autoUserOpen, setAutoUserOpen] = useState(false)
-  const [autoUserReaction, setAutoUserReaction] = useState(false)
+  const godLocksNoInterrupt = currentArchive.godPerspective
+  const autoUserReaction = !!currentArchive.autoUserReaction
   const [initialBiasOpen, setInitialBiasOpen] = useState(false)
   const [initialBiasText, setInitialBiasText] = useState('')
   const [initialBiasDismissedFor, setInitialBiasDismissedFor] = useState<string | null>(null)
@@ -653,6 +679,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   }, [])
   const [vnCustomInput, setVnCustomInput] = useState('')
   const [vnCustomInputModalOpen, setVnCustomInputModalOpen] = useState(false)
+  const [directorModeHelpOpen, setDirectorModeHelpOpen] = useState(false)
   const [vnUserDisplayName, setVnUserDisplayName] = useState('用户')
   const [vnDanmakuModelOn, setVnDanmakuModelOn] = useState(false)
   const VN_BGM_BASE_VOLUME = 0.45
@@ -1120,11 +1147,16 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const VN_FAB_SIZE = 44
   const VN_EDGE = 8
   const VN_MENU_W = 220
-  const VN_MENU_H = 320
+  const VN_MENU_H = 360
 
   const isVn = currentArchive.modePreference === 'vn'
 
-  const plotGenBackgroundHint = loading && !isVn
+  const plotContentHintActive = useSyncExternalStore(
+    subscribeDatingPlotContentHint,
+    () => isDatingPlotContentHintActive(currentCharacter.id),
+    () => false,
+  )
+  const plotGenBackgroundHint = plotContentHintActive && !isVn
   const offlinePlotGenBlocking = !isVn && branchesLoading
   const offlinePlotGenCaption = useMemo(() => {
     if (!offlinePlotGenBlocking) return ''
@@ -1190,15 +1222,81 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   }, [storyGlobalDm, currentCharacter.id, storyPeerDmRow])
 
   const [offlineDmBullets, setOfflineDmBullets] = useState<DanmakuOverlayBullet[]>([])
+  const offlineDmBulletsRef = useRef<DanmakuOverlayBullet[]>([])
+  offlineDmBulletsRef.current = offlineDmBullets
   const offlineDmLaneBusyUntilRef = useRef<number[]>([])
+  const offlineDmEnqueueGenRef = useRef(0)
+  const offlineDmAnchorPlotCountRef = useRef(0)
+
+  /** 切换角色 / 重新进入约会页：从 KV 恢复「当前轮」弹幕；若期间已生成新 AI 回合则作废缓存 */
   useEffect(() => {
+    offlineDmEnqueueGenRef.current += 1
     setOfflineDmBullets([])
     offlineDmLaneBusyUntilRef.current = []
-  }, [currentCharacter.id])
+    let cancelled = false
+    const cid = currentCharacter.id.trim()
+    if (!cid || isVn || !currentArchive.offlineDanmakuEnabled) {
+      offlineDmAnchorPlotCountRef.current = 0
+      return () => {
+        cancelled = true
+      }
+    }
+    void (async () => {
+      try {
+        const snap = await loadDatingOfflineDmSnapshot(cid, currentArchive.plots)
+        if (cancelled) return
+        if (!snap?.bullets.length) {
+          offlineDmAnchorPlotCountRef.current = 0
+          return
+        }
+        let parsed = snap.bullets
+        try {
+          const g = await personaDb.getGlobalSettings()
+          const row = await personaDb.getCharacterDanmakuSettings(cid)
+          const eff = resolveEffectiveDanmakuVisuals(g, cid, row)
+          if (eff && !eff.skipCharacter) {
+            parsed = staggerDatingOfflineDmAfterRestore(parsed, densityToTrackCount(eff.density))
+          }
+        } catch {
+          /* 设置读失败时仍展示未错开列表 */
+        }
+        if (cancelled) return
+        offlineDmAnchorPlotCountRef.current = snap.anchorPlotCount
+        setOfflineDmBullets(parsed)
+      } catch {
+        if (!cancelled) offlineDmAnchorPlotCountRef.current = 0
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [currentCharacter.id, currentArchive.offlineDanmakuEnabled, isVn])
+
+  /** 有弹幕时 debounce 落库；不在 length===0 时写入，避免切页瞬间用空数组盖掉缓存 */
+  useEffect(() => {
+    if (isVn || !currentArchive.offlineDanmakuEnabled) return
+    if (offlineDmBulletsRef.current.length === 0) return
+    const cid = currentCharacter.id.trim()
+    if (!cid) return
+    const anchor = offlineDmAnchorPlotCountRef.current
+    const t = window.setTimeout(() => {
+      const snap = offlineDmBulletsRef.current.slice(-180)
+      if (snap.length === 0) return
+      void saveDatingOfflineDmSnapshot(cid, anchor, snap)
+    }, 320)
+    return () => window.clearTimeout(t)
+  }, [offlineDmBullets, currentCharacter.id, currentArchive.offlineDanmakuEnabled, isVn])
 
   const enqueueOfflineStoryDanmakuLines = useCallback(
     async (lines: string[]) => {
       if (!lines.length || isVn || !currentArchive.offlineDanmakuEnabled) return
+      const cid = currentCharacter.id.trim()
+      offlineDmEnqueueGenRef.current += 1
+      const gen = offlineDmEnqueueGenRef.current
+      offlineDmAnchorPlotCountRef.current = currentArchive.plots.length
+      setOfflineDmBullets([])
+      offlineDmLaneBusyUntilRef.current = []
+      if (cid) void clearDatingOfflineDmSnapshot(cid)
       let eff = effectiveStoryDm
       if (!eff) {
         try {
@@ -1224,6 +1322,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         waveAccumMs += stepMs
         const scheduleDelay = waveAccumMs
         window.setTimeout(() => {
+          if (gen !== offlineDmEnqueueGenRef.current) return
           const pickTrackWithGap = () => {
             const now = Date.now()
             const busy = offlineDmLaneBusyUntilRef.current
@@ -1240,6 +1339,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
             return { track: best, waitMs: Math.max(0, bestWait) }
           }
           const place = () => {
+            if (gen !== offlineDmEnqueueGenRef.current) return
             const { track, waitMs } = pickTrackWithGap()
             if (waitMs > 0) {
               window.setTimeout(place, waitMs)
@@ -1255,6 +1355,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 ? Math.min(92, Math.max(2, (track / Math.max(1, trackCount - 1)) * 72 + Math.random() * 6))
                 : undefined
             setOfflineDmBullets((prev) => {
+              if (gen !== offlineDmEnqueueGenRef.current) return prev
               const next: DanmakuOverlayBullet[] = [
                 ...prev,
                 {
@@ -1276,7 +1377,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         }, scheduleDelay)
       })
     },
-    [currentArchive.offlineDanmakuEnabled, currentCharacter.id, effectiveStoryDm, isVn],
+    [currentArchive.offlineDanmakuEnabled, currentArchive.plots.length, currentCharacter.id, effectiveStoryDm, isVn],
   )
 
   useEffect(() => {
@@ -1358,7 +1459,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   )
 
   const lengthLabel = `${lengthTargetChars || '500'}字`
-  const godLocksNoInterrupt = currentArchive.godPerspective
   const autoUserLabel = godLocksNoInterrupt ? '不抢话' : autoUserReaction ? '抢话' : '不抢话'
 
   useEffect(() => {
@@ -1954,6 +2054,23 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const activeSpeakerId = useMemo(() => {
     return resolveVnSpeakerId(vnBubble.speaker)
   }, [resolveVnSpeakerId, vnBubble.speaker])
+  const [activeSpeakerVoiceBound, setActiveSpeakerVoiceBound] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    const sid = String(activeSpeakerId || '').trim()
+    if (!sid || sid === '__user__') {
+      setActiveSpeakerVoiceBound(false)
+      return () => {
+        cancelled = true
+      }
+    }
+    void lookupBoundVoiceIdForCharacter(sid).then((voiceId) => {
+      if (!cancelled) setActiveSpeakerVoiceBound(!!voiceId.trim())
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeSpeakerId])
   const vnDialogName = useMemo(() => {
     const speaker = String(vnBubbleSpeaker || '').trim()
     if (!speaker) {
@@ -1977,9 +2094,9 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     const sid = String(activeSpeakerId || '').trim()
     if (!sid || sid === '__user__') return false
     // 允许「主角色 + NPC」对白语音；玩家/旁白/未知 speaker 一律禁播。
-    if (!hasBoundVoiceForSpeaker(sid)) return false
+    if (!activeSpeakerVoiceBound && !hasBoundVoiceForSpeaker(sid)) return false
     return !!String(vnBubbleText || '').trim()
-  }, [activeSpeakerId, hasBoundVoiceForSpeaker, isVn, vnBubbleIsInnerThought, vnBubbleSpeaker, vnBubbleText])
+  }, [activeSpeakerId, activeSpeakerVoiceBound, hasBoundVoiceForSpeaker, isVn, vnBubbleIsInnerThought, vnBubbleSpeaker, vnBubbleText])
   const vnVoiceCacheKey = useMemo(() => {
     const sid = String(activeSpeakerId || '').trim()
     const aiId = String(latestAi?.id || '')
@@ -2031,12 +2148,10 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       const speakerId = String(params.speakerId || '').trim()
       if (!speakerId || speakerId === '__user__') return ''
 
-      const apiKey = String(localStorage.getItem('minimax:apiKey') || '').trim()
-      const groupId = String(localStorage.getItem('minimax:groupId') || '').trim()
-      const speechModel = String(localStorage.getItem('minimax:speechModel') || 'speech-2.8-hd').trim() || 'speech-2.8-hd'
-      const map = getCharacterVoiceMap()
-      const voiceId = String(map?.[speakerId] ?? '').trim()
-      if (!apiKey || !voiceId) return ''
+      const creds = readMiniMaxCredentialsFromLocalStorage()
+      const speechModel = readMiniMaxSpeechModelFromLocalStorage()
+      const voiceId = await lookupBoundVoiceIdForCharacter(speakerId)
+      if (!creds.apiKey.trim() || !voiceId) return ''
 
       const cachedReq = vnLineTtsReqCacheRef.current.get(cacheKey)
       const req =
@@ -2061,16 +2176,18 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       }
       if (!ttsText) return ''
 
-      const blob = await createMiniMaxT2ASyncAudioBlob(
-        { apiKey, groupId },
-        { voice_id: voiceId, text: ttsText, model: speechModel, emotion },
-      )
+      const blob = await synthesizeMiniMaxVoiceAudioBlob(creds, {
+        voice_id: voiceId,
+        text: ttsText,
+        model: speechModel,
+        emotion,
+      })
       const src = await blobToDataUrl(blob)
       if (!src) return ''
       await persistVnVoiceCache(cacheKey, src)
       return src
     },
-    [blobToDataUrl, decorateVnTtsText, getCharacterVoiceMap, persistVnLineTtsReq, persistVnVoiceCache],
+    [blobToDataUrl, decorateVnTtsText, persistVnLineTtsReq, persistVnVoiceCache],
   )
   const playVnBubbleVoice = useCallback(async (): Promise<boolean> => {
     if (currentArchive.vnVoiceDisabled) {
@@ -2654,6 +2771,24 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     return { left, top }
   }, [vnFabPos.x, vnFabPos.y])
 
+  const applyMentionKeyDown = useCallback(
+    (
+      e: React.KeyboardEvent<HTMLTextAreaElement>,
+      text: string,
+      setValue: (v: string) => void,
+    ) => {
+      handleDatingNetworkMentionKeyDown(e, text, (nextText, cursor) => {
+        setValue(nextText)
+        requestAnimationFrame(() => {
+          const el = e.currentTarget
+          el.focus()
+          el.setSelectionRange(cursor, cursor)
+        })
+      })
+    },
+    [],
+  )
+
   const insertQuotePair = (open: string, close: string) => {
     const el = inputRef.current
     const v = input
@@ -2681,20 +2816,33 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     () => ({
       lengthTargetChars: lengthTargetNum,
       autoUserReaction: godLocksNoInterrupt ? false : autoUserReaction,
+      directorMode: !!currentArchive.directorMode,
       ...(styleTuning.stylePrompt.trim() ? { stylePrompt: styleTuning.stylePrompt.trim() } : {}),
       ...(styleTuning.referenceSnippet.trim() ? { referenceSnippet: styleTuning.referenceSnippet.trim() } : {}),
     }),
-    [lengthTargetNum, autoUserReaction, godLocksNoInterrupt, styleTuning.stylePrompt, styleTuning.referenceSnippet],
+    [
+      lengthTargetNum,
+      autoUserReaction,
+      godLocksNoInterrupt,
+      currentArchive.directorMode,
+      styleTuning.stylePrompt,
+      styleTuning.referenceSnippet,
+    ],
   )
   const handleVnBranchPick = useCallback(
     async (x: BranchOption) => {
       setVnSubmitting(true)
       stageBranchChoice(x)
       try {
-        const ok = await sendPlayerInput(x.content, perspective, {
-          ...narrativeGenOptions,
-          branchContinuationHint: x.nextPrompt,
-        })
+        const ok = await sendPlayerInput(
+          stripDatingNetworkMentionMarkers(x.content),
+          perspective,
+          {
+            ...narrativeGenOptions,
+            branchContinuationHint: x.nextPrompt,
+            presentNetworkCharacterIds: collectDatingNetworkMentionIds(x.content),
+          },
+        )
         if (ok) {
           setInput('')
         }
@@ -2705,13 +2853,15 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     [narrativeGenOptions, perspective, sendPlayerInput, stageBranchChoice],
   )
   const handleVnCustomGenerate = useCallback(async () => {
-    const text = vnCustomInput.trim()
-    if (!text) return
+    const raw = vnCustomInput.trim()
+    if (!raw) return
+    const plain = stripDatingNetworkMentionMarkers(raw)
+    const mentionIds = collectDatingNetworkMentionIds(raw)
     setVnSubmitting(true)
     try {
-      const ok = await sendPlayerInput(text, perspective, {
+      const ok = await sendPlayerInput(plain, perspective, {
         ...narrativeGenOptions,
-        vnCustomIntentMode: currentArchive.vnCustomInputParaphrase ? 'paraphrase' : 'canon',
+        presentNetworkCharacterIds: mentionIds,
       })
       if (ok) {
         setVnCustomInput('')
@@ -2721,7 +2871,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     } finally {
       setVnSubmitting(false)
     }
-  }, [currentArchive.vnCustomInputParaphrase, narrativeGenOptions, perspective, sendPlayerInput, vnCustomInput])
+  }, [narrativeGenOptions, perspective, sendPlayerInput, vnCustomInput])
   useEffect(() => {
     vnAutoAdvanceRef.current = () => {
       if (hasNextVnBubble) {
@@ -2775,7 +2925,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
 
   useEffect(() => {
     if (!currentArchive.godPerspective) return
-    setAutoUserReaction(false)
     setAutoUserOpen(false)
   }, [currentArchive.godPerspective])
 
@@ -3126,12 +3275,24 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   />
                   上帝视角
                 </label>
-                <span className="text-[12px] leading-snug text-[#8e8e8e]">
-                  旁白推进，不与玩家直接对话互动；开启时固定「不抢话」，避免代写玩家与视角冲突
-                </span>
+                <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[#262626]">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-stone-200 accent-neutral-800"
+                    checked={!!currentArchive.directorMode}
+                    onChange={(e) => setDirectorMode(e.target.checked)}
+                  />
+                  导演模式
+                </label>
+                <DirectorModeHelpButton onClick={() => setDirectorModeHelpOpen(true)} />
+                {currentArchive.godPerspective ? (
+                  <span className="text-[12px] leading-snug text-[#8e8e8e]">
+                    上帝视角：只写你看不见的屏外剧情，玩家不在场；不与玩家直接对话；开启时固定不抢话
+                  </span>
+                ) : null}
               </div>
               <p className="mb-2 text-[12px] leading-snug text-[#8e8e8e]">
-                旁白直接写；弯引号 / 英文引号为对白；** 为内心 OS；旁白上的轻吐槽勿用 ** 包裹，保持普通旁白即可
+                旁白直接写；弯引号 / 英文引号为对白；** 为内心 OS（NPC 默认不知）；旁白上的轻吐槽勿用 ** 包裹
               </p>
               <div className="mb-3 flex flex-wrap items-start gap-2">
                 <button
@@ -3283,12 +3444,23 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   </button>
                 </div>
               </div>
+              <DatingNetworkMentionControls
+                datingCharacterId={currentCharacter.id}
+                text={input}
+                onTextChange={setInput}
+                inputRef={inputRef}
+                disabled={loading}
+                className="mb-2"
+              />
               <textarea
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => applyMentionKeyDown(e, input, setInput)}
                 onFocus={() => scrollComposerIntoView()}
-                placeholder="输入你想说的话/剧情指令，推进约会剧情..."
+                placeholder={
+                  currentArchive.directorMode ? '输入下一段剧情走向 / 导演指令…' : '输入你想说的话或动作，推进约会剧情…'
+                }
                 rows={4}
                 enterKeyHint="send"
                 autoComplete="off"
@@ -3300,7 +3472,12 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   type="button"
                   disabled={loading}
                   onClick={async () => {
-                    const ok = await sendPlayerInput(input, perspective, narrativeGenOptions)
+                    const raw = input.trim()
+                    if (!raw) return
+                    const ok = await sendPlayerInput(stripDatingNetworkMentionMarkers(raw), perspective, {
+                      ...narrativeGenOptions,
+                      presentNetworkCharacterIds: collectDatingNetworkMentionIds(raw),
+                    })
                     if (ok) setInput('')
                   }}
                   className="rounded-xl bg-neutral-900 px-6 py-2.5 text-[15px] font-medium text-white transition-all duration-200 ease-out hover:bg-neutral-800 disabled:opacity-60"
@@ -3431,6 +3608,23 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               >
                 切回普通模式
               </button>
+              <div className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50">
+                <div className="flex items-center gap-1">
+                  <span>导演模式</span>
+                  <DirectorModeHelpButton
+                    onClick={() => {
+                      setMenuOpen(false)
+                      setDirectorModeHelpOpen(true)
+                    }}
+                  />
+                </div>
+                <VnCapsuleSwitch
+                  checked={!!currentArchive.directorMode}
+                  onToggle={() => {
+                    setDirectorMode(!currentArchive.directorMode)
+                  }}
+                />
+              </div>
               <div className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50">
                 <span>弹幕模型</span>
                 <VnCapsuleSwitch
@@ -3564,7 +3758,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                       onClick={() => setVnCustomInputModalOpen(true)}
                       className="w-full rounded-xl border border-white/60 bg-white/70 px-3 py-2.5 text-center text-[14px] leading-[1.75] text-[#1f2937] transition-all hover:bg-white"
                     >
-                      自定义输入
+                      {currentArchive.directorMode ? '自定义输入（导演模式）' : '自定义输入'}
                     </button>
                     {vnUiLoading ? (
                       <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 text-center text-[13px] text-[#4b5563]">
@@ -3709,30 +3903,24 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               </button>
             </div>
             <div className="space-y-2 px-4 py-4">
-              <p className="text-[12px] leading-relaxed text-stone-500">
-                输入剧情走向；开关「转述」决定这条输入是<strong className="font-medium text-stone-700">写作引导</strong>
-                还是<strong className="font-medium text-stone-700">既成事实</strong>（见下方说明）。
-              </p>
               <div className="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50/80 px-3 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-medium text-[#262626]">转述</p>
-                  <p className="mt-0.5 text-[11px] leading-snug text-stone-500">
-                    开：输入仅指导方向，正文须<strong>当场演出过程</strong>（尚未默认已发生）。关：输入视为<strong>已经发生</strong>，正文直接写他人反应。
-                  </p>
+                <div className="flex min-w-0 items-center gap-1">
+                  <p className="text-[13px] font-medium text-[#262626]">导演模式</p>
+                  <DirectorModeHelpButton onClick={() => setDirectorModeHelpOpen(true)} />
                 </div>
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={!!currentArchive.vnCustomInputParaphrase}
-                  title="转述：输入为剧情引导，非既成事实"
-                  onClick={() => setVnCustomInputParaphrase(!currentArchive.vnCustomInputParaphrase)}
+                  aria-checked={!!currentArchive.directorMode}
+                  aria-label="导演模式"
+                  onClick={() => setDirectorMode(!currentArchive.directorMode)}
                   className={`relative h-8 w-[52px] shrink-0 rounded-full p-1 transition-colors ${
-                    currentArchive.vnCustomInputParaphrase ? 'bg-black' : 'bg-[#cccccc]'
+                    currentArchive.directorMode ? 'bg-black' : 'bg-[#cccccc]'
                   }`}
                 >
                   <span
                     className={`block h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${
-                      currentArchive.vnCustomInputParaphrase ? 'translate-x-5' : 'translate-x-0'
+                      currentArchive.directorMode ? 'translate-x-5' : 'translate-x-0'
                     }`}
                   />
                 </button>
@@ -3765,7 +3953,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                     disabled={godLocksNoInterrupt}
                     onClick={() => {
                       if (godLocksNoInterrupt) return
-                      setAutoUserReaction((v) => !v)
+                      setAutoUserReaction(!autoUserReaction)
                     }}
                     className={`relative h-8 w-[52px] rounded-full p-1 transition-colors ${
                       godLocksNoInterrupt
@@ -3803,10 +3991,19 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   范围 {DATING_AI_LENGTH_TARGET_MIN} - {DATING_AI_LENGTH_TARGET_MAX}；失焦后写入当前角色存档。VN 下「汉字」含各气泡标签后的对白与旁白，不含语音参数 JSON。
                 </p>
               </div>
+              <DatingNetworkMentionControls
+                datingCharacterId={currentCharacter.id}
+                text={vnCustomInput}
+                onTextChange={setVnCustomInput}
+                inputRef={vnCustomInputRef}
+                disabled={loading}
+              />
               <textarea
+                ref={vnCustomInputRef}
                 value={vnCustomInput}
                 onChange={(e) => setVnCustomInput(e.target.value)}
-                placeholder="例如：让两人先冷静下来，再慢慢把误会说开。"
+                onKeyDown={(e) => applyMentionKeyDown(e, vnCustomInput, setVnCustomInput)}
+                placeholder={currentArchive.directorMode ? '输入剧情走向…' : '输入已发生的剧情…'}
                 rows={4}
                 enterKeyHint="send"
                 autoComplete="off"
@@ -4648,6 +4845,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
             document.body,
           )
         : null}
+      <DirectorModeHelpPanel open={directorModeHelpOpen} onClose={() => setDirectorModeHelpOpen(false)} />
     </div>
   )
 }

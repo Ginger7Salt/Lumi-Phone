@@ -22,12 +22,13 @@ export function PresetCard({
     <div
       className="mx-4 mt-3 rounded-2xl bg-white p-4 transition-all duration-200 ease-out"
       style={{ boxShadow: apiTheme.shadow }}
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
     >
       <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
+        <button
+          type="button"
+          className="relative z-0 min-w-0 flex-1 text-left transition-all duration-200 ease-out hover:opacity-90"
+          onClick={onClick}
+        >
           <p className="truncate text-[16px] font-medium" style={{ color: apiTheme.text }}>
             {name || '未命名预设'}
           </p>
@@ -36,19 +37,19 @@ export function PresetCard({
               {description}
             </p>
           ) : null}
-        </div>
+        </button>
         {active ? (
           <span
-            className="shrink-0 rounded-lg px-2.5 py-1 text-[12px] font-medium text-white"
+            className="relative z-0 shrink-0 rounded-lg px-2.5 py-1 text-[12px] font-medium text-white"
             style={{ background: apiTheme.accent }}
           >
             使用中
           </span>
         ) : null}
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="relative z-10 flex shrink-0 items-center gap-1">
           <button
             type="button"
-            className="rounded-lg p-2 transition-all duration-200 ease-out hover:opacity-80"
+            className="rounded-lg p-2.5 transition-all duration-200 ease-out hover:opacity-80 active:scale-95"
             onClick={(e) => {
               e.stopPropagation()
               onDuplicate()
@@ -61,7 +62,7 @@ export function PresetCard({
           </button>
           <button
             type="button"
-            className="rounded-lg p-2 transition-all duration-200 ease-out hover:opacity-80"
+            className="rounded-lg p-2.5 transition-all duration-200 ease-out hover:opacity-80 active:scale-95"
             onClick={(e) => {
               e.stopPropagation()
               onEdit()
@@ -73,7 +74,7 @@ export function PresetCard({
           </button>
           <button
             type="button"
-            className="rounded-lg p-2 transition-all duration-200 ease-out hover:opacity-80"
+            className="rounded-lg p-2.5 transition-all duration-200 ease-out hover:opacity-80 active:scale-95"
             onClick={(e) => {
               e.stopPropagation()
               onDelete()
@@ -88,4 +89,3 @@ export function PresetCard({
     </div>
   )
 }
-

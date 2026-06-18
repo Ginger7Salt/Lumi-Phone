@@ -21,6 +21,22 @@ export function userExplicitlyRequestsCharacterImage(text: string | null | undef
   return EXPLICIT_CHARACTER_IMAGE_REQUEST_PATTERNS.some((re) => re.test(t))
 }
 
+const EXPLICIT_CHARACTER_STICKER_REQUEST_PATTERNS: RegExp[] = [
+  /(?:请|帮我|给我|能|可以|要|想|再|最后)?.{0,8}(?:发|送|来|回).{0,16}表情包/u,
+  /表情包.{0,10}(?:给|让).{0,6}(?:我|你看|看看|瞧)/u,
+  /(?:发|送|来).{0,12}(?:这个|那个|同款).{0,8}表情/u,
+  /\[表情包\].{0,16}(?:看看|看一下|瞧瞧|发我)/u,
+  /(?:这个|那个|同款).{0,6}表情包.{0,8}(?:给|让|发).{0,6}(?:我|你看|看看)/u,
+]
+
+/** 用户本轮是否明确要求角色回发/展示表情包（应绕过「每轮概率」客户端拦截） */
+export function userExplicitlyRequestsCharacterSticker(text: string | null | undefined): boolean {
+  const t = String(text ?? '').trim()
+  if (!t) return false
+  if (!STICKER_HINT.test(t) && !/\[表情\]/u.test(t)) return false
+  return EXPLICIT_CHARACTER_STICKER_REQUEST_PATTERNS.some((re) => re.test(t))
+}
+
 export function buildUserExplicitCharacterImageRequestBias(explicit: boolean): string {
   if (!explicit) return ''
   return `[系统提示] 用户本轮**明确要求**你发送图片/照片/自拍（AI 配图，非换头像/封面）。

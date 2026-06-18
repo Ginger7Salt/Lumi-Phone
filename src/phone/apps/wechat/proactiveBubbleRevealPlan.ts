@@ -4,7 +4,7 @@ import { isCharacterImageGenEnabled } from '../api/imageGenPresetUtils'
 import { loadResolvedImageGenSettings } from '../api/loadResolvedImageGenSettings'
 import type { WeChatChatMessage, WeChatImageMime, WeChatVoicePayload } from './newFriendsPersona/types'
 import type { ProactiveMessageRevealBubble } from './proactiveMessageRevealBridge'
-import { parseCharacterStickerLine } from './stickers/stickerStore'
+import { parseCharacterStickerLine, ensureStickerStoreHydrated } from './stickers/stickerStore'
 import { imageGenDataUrlToPayload, parseCharacterImageGenLine } from './wechatCharacterImageGen'
 import { stickerUrlToImagePayload } from './wechatStickerImagePayload'
 import {
@@ -115,6 +115,7 @@ async function planProactiveBubbleLineAsync(
 export async function planProactiveRevealBubblesAsync(
   bubbles: ProactiveMessageRevealBubble[],
 ): Promise<PlannedProactiveBubble[]> {
+  await ensureStickerStoreHydrated()
   const imageGenSettings = await loadResolvedImageGenSettings()
   const imageGenEnabled = isCharacterImageGenEnabled(imageGenSettings)
   const imageGen = { enabled: imageGenEnabled, settings: imageGenSettings }

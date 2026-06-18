@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ChevronDown } from 'lucide-react'
 import type { MomentsImageGenSettings } from '../../../../components/moments/useMomentsSettingsStore'
+import { decodeApiPresetRouteId } from '../apiPresetRoutes'
 import { useApiSettings } from '../ApiSettingsContext'
 import { apiTheme } from '../theme'
 import { ApiConfigBlock } from '../components/ApiConfigBlock'
@@ -10,6 +11,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { ToggleSwitch } from '../components/ToggleSwitch'
 import { TopNav } from '../components/TopNav'
 import type { ApiPreset, SubApiType } from '../types'
+import { API_LINK_PREVIEW_ROUTE } from '../linkPreviewDisplayLabels'
 
 const SUB_META: Record<SubApiType, { title: string; desc: string }> = {
   xinyu: { title: '心语', desc: '用于生成约会心语内容' },
@@ -23,7 +25,7 @@ type EditTab = 'main' | 'sub' | 'imageGen'
 const EDIT_TABS: { id: EditTab; label: string }[] = [
   { id: 'main', label: '主接口' },
   { id: 'sub', label: '副接口' },
-  { id: 'imageGen', label: '生图 API' },
+  { id: 'imageGen', label: '生图' },
 ]
 
 function isEditTab(value: string | null): value is EditTab {
@@ -62,7 +64,7 @@ function PresetNameBlock({
 function EditTabBar({ activeTab, onChange }: { activeTab: EditTab; onChange: (tab: EditTab) => void }) {
   return (
     <div className="mx-4 mt-3 shrink-0 rounded-2xl bg-white p-1" style={{ boxShadow: apiTheme.shadow }}>
-      <div className="flex">
+      <div className="flex overflow-x-auto">
         {EDIT_TABS.map((tab) => {
           const active = activeTab === tab.id
           return (
@@ -70,7 +72,7 @@ function EditTabBar({ activeTab, onChange }: { activeTab: EditTab; onChange: (ta
               key={tab.id}
               type="button"
               onClick={() => onChange(tab.id)}
-              className="relative min-w-0 flex-1 rounded-xl px-2 py-2.5 text-center text-[14px] font-medium transition-colors"
+              className="relative min-w-[4.5rem] flex-1 shrink-0 rounded-xl px-1.5 py-2.5 text-center text-[13px] font-medium transition-colors"
               style={{
                 color: active ? apiTheme.text : apiTheme.subText,
                 background: active ? apiTheme.bg : 'transparent',
@@ -93,15 +95,40 @@ function EditTabBar({ activeTab, onChange }: { activeTab: EditTab; onChange: (ta
 
 export function ApiPresetEditPage() {
   const nav = useNavigate()
-  const { id } = useParams()
+  const { id: rawRouteId } = useParams()
+  const presetId = decodeApiPresetRouteId(rawRouteId)
   const [searchParams, setSearchParams] = useSearchParams()
-  const { presets, upsertPreset, createPreset } = useApiSettings()
+  const { presets, upsertPreset, createPreset, apiHydrated } = useApiSettings()
 
   const initialPreset = useMemo(() => {
-    if (id === 'new') return null
-    if (!id) return null
-    return presets.find((p) => p.id === id) ?? null
-  }, [id, presets])
+    if (!presetId || presetId === 'new') return null
+    return presets.find((p) => p.id === presetId) ?? null
+  }, [presetId, presets])
+
+  const editingExisting = Boolean(presetId && presetId !== 'new')
+
+  const [presetLookupPending, setPresetLookupPending] = useState(editingExisting)
+
+  useEffect(() => {
+    if (!apiHydrated || !editingExisting) {
+      setPresetLookupPending(false)
+      return
+    }
+    if (initialPreset) {
+      setPresetLookupPending(false)
+      return
+    }
+    setPresetLookupPending(true)
+    const t = window.setTimeout(() => {
+      setPresetLookupPending(false)
+    }, 120)
+    return () => window.clearTimeout(t)
+  }, [apiHydrated, editingExisting, initialPreset, presetId])
+
+  useEffect(() => {
+    if (!apiHydrated || !editingExisting || presetLookupPending || initialPreset) return
+    nav('/', { replace: true })
+  }, [apiHydrated, editingExisting, presetLookupPending, initialPreset, nav])
 
   const tabFromUrl = searchParams.get('tab')
   const [activeTab, setActiveTab] = useState<EditTab>(() =>
@@ -123,6 +150,12 @@ export function ApiPresetEditPage() {
   useEffect(() => {
     if (initialPreset) setDraft(clonePreset(initialPreset))
   }, [initialPreset])
+
+  useEffect(() => {
+    if (tabFromUrl === 'linkPreview') {
+      nav(API_LINK_PREVIEW_ROUTE, { replace: true })
+    }
+  }, [tabFromUrl, nav])
 
   useEffect(() => {
     if (isEditTab(tabFromUrl) && tabFromUrl !== activeTab) {
@@ -181,6 +214,20 @@ export function ApiPresetEditPage() {
   const askBack = () => {
     if (dirty) setConfirmLeave(true)
     else nav('/')
+  }
+
+  if (editingExisting && (!apiHydrated || presetLookupPending || !initialPreset)) {
+    return (
+      <div
+        className="relative flex h-full min-h-0 flex-col overflow-hidden"
+        style={{ background: apiTheme.bg, fontFamily: apiTheme.font }}
+      >
+        <TopNav title="编辑预设" onBack={() => nav('/')} />
+        <div className="flex flex-1 items-center justify-center px-6 text-center text-[14px]" style={{ color: apiTheme.subText }}>
+          {!apiHydrated || presetLookupPending ? '正在加载预设…' : '预设不存在或已删除，正在返回…'}
+        </div>
+      </div>
+    )
   }
 
   return (

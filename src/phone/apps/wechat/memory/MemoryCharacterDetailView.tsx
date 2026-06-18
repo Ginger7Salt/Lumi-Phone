@@ -1,4 +1,4 @@
-import { Link2, MoreHorizontal, Plus, Search } from 'lucide-react'
+import { Link2, MoreHorizontal, Plus, Search, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ListenNumericText } from '../../../../components/discoverListen/ListenNum'
 import type { MemoryArchiveAccountOption } from './memoryArchiveAccountScope'
@@ -25,6 +25,8 @@ export function MemoryCharacterDetailView({
   onCreate,
   onOpenTutorial,
   onAlignUser,
+  onClearAll,
+  clearAllDisabled,
   alignUserBusy,
   alignUserDisabled,
   alignUserTitle,
@@ -47,6 +49,8 @@ export function MemoryCharacterDetailView({
   onCreate: () => void
   onOpenTutorial?: () => void
   onAlignUser?: () => void
+  onClearAll?: () => void
+  clearAllDisabled?: boolean
   alignUserBusy?: boolean
   alignUserDisabled?: boolean
   alignUserTitle?: string
@@ -164,15 +168,29 @@ export function MemoryCharacterDetailView({
               ) : null}
             </div>
           </div>
-          <button
-            type="button"
-            data-memory-coach="create"
-            onClick={onCreate}
-            className="relative mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-900 py-3 text-[14px] font-semibold text-white active:opacity-90"
-          >
-            <Plus className="size-4" strokeWidth={2} />
-            刻录记忆
-          </button>
+          <div className="relative mt-4 space-y-2.5">
+            <button
+              type="button"
+              data-memory-coach="create"
+              onClick={onCreate}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-900 py-3 text-[14px] font-semibold text-white active:opacity-90"
+            >
+              <Plus className="size-4" strokeWidth={2} />
+              刻录记忆
+            </button>
+            {onClearAll ? (
+              <button
+                type="button"
+                data-memory-coach="clear-all"
+                disabled={clearAllDisabled}
+                onClick={onClearAll}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50/80 py-3 text-[14px] font-semibold text-red-600 active:bg-red-100/80 disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400"
+              >
+                <Trash2 className="size-4" strokeWidth={2} />
+                清空全部记忆
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <div

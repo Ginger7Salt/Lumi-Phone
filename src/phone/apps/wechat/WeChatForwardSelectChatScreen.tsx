@@ -6,8 +6,7 @@ import { WECHAT_LUMI_PEER_CHARACTER_ID, wechatConversationKey, wechatGroupConver
 import type { WeChatChatMessage } from './newFriendsPersona/types'
 import { personaDb } from './newFriendsPersona/idb'
 import { resolveWeChatCurrentTimeMs } from './time/wechatTimeUtils'
-
-const MERGE_FORWARD_PREFIX = '__wx_merge_forward__:' as const
+import { buildChatHistoryPayloadFromMessages } from './chatHistory/buildChatHistoryPayload'
 
 type Thread =
   | { kind: 'lumi'; name: string; avatarUrl: string; conversationKey: string; peerCharacterId: string }
@@ -43,7 +42,7 @@ export type WeChatForwardPayload = {
   mode: WeChatForwardMode
   messages: WeChatChatMessage[]
   /** 仅合并转发需要：生成聊天记录卡片标题 */
-  mergeTitle?: { userName: string; peerName: string }
+  mergeTitle?: { userName: string; peerName: string; peerCharacterId?: string }
 }
 
 function clampRecent(keys: string[], max = 12) {
@@ -63,44 +62,6 @@ function scoreMatch(hay: string, q: string): number {
   if (idx < 0) return -1
   // 越靠前越好；越短越好
   return 10_000 - idx * 100 - hay.length
-}
-
-function splitToLines(s: string, maxCharsPerLine: number): string[] {
-  const text = String(s ?? '').replace(/\s+/g, ' ').trim()
-  if (!text) return []
-  const out: string[] = []
-  let i = 0
-  while (i < text.length) {
-    out.push(text.slice(i, i + maxCharsPerLine))
-    i += maxCharsPerLine
-  }
-  return out
-}
-
-function buildMergePreviewLines(params: {
-  messages: WeChatChatMessage[]
-  userName: string
-  peerName: string
-}): string[] {
-  const lines: string[] = []
-  const { messages, userName, peerName } = params
-  const sorted = [...messages].sort((a, b) => a.timestamp - b.timestamp)
-  for (const m of sorted) {
-    const who = m.type === 'player' ? userName : peerName
-    const text = (m.content ?? '').trim() || (m.images?.length ? '[图片]' : '')
-    const prefix = `${who}：`
-    const chunks = splitToLines(text, 18)
-    if (chunks.length === 0) chunks.push('')
-    for (let i = 0; i < chunks.length; i += 1) {
-      const body = i === 0 ? `${prefix}${chunks[i]}` : `  ${chunks[i]}`
-      lines.push(body)
-      if (lines.length >= 4) {
-        lines[3] = lines[3].endsWith('…') ? lines[3] : `${lines[3]}…`
-        return lines.slice(0, 4)
-      }
-    }
-  }
-  return lines.slice(0, 4)
 }
 
 export function WeChatForwardSelectChatScreen({
@@ -265,26 +226,19 @@ export function WeChatForwardSelectChatScreen({
     } else if (forward.mode === 'multi-merge') {
       const userName = forward.mergeTitle?.userName?.trim() || '我'
       const peerName = forward.mergeTitle?.peerName?.trim() || '对方'
-      const title = `${userName} 和 ${peerName} 的聊天记录`
-      const previewLines = buildMergePreviewLines({ messages: msgs, userName, peerName })
-      const payload = {
-        title,
-        previewLines,
-        senderNames: { userId: 'self', name: userName },
-        messageList: msgs.map((m) => ({
-          id: m.id,
-          type: m.type,
-          content: m.content ?? '',
-          images: m.images,
-          timestamp: m.timestamp,
-        })),
-      }
+      const chatHistory = buildChatHistoryPayloadFromMessages({
+        messages: msgs,
+        userName,
+        peerName,
+        peerCharacterId: forward.mergeTitle?.peerCharacterId,
+      })
       await personaDb.appendWeChatChatMessage({
         id: `wxm-${now}-fwdm-${Math.random().toString(36).slice(2, 8)}`,
         characterId: peerId,
         playerIdentityId,
         type: 'player',
-        content: `${MERGE_FORWARD_PREFIX}${JSON.stringify(payload)}`,
+        content: '[聊天记录]',
+        chatHistory,
         timestamp: now,
         isRead: true,
         conversationKey,

@@ -113,6 +113,12 @@ export function hasProactiveMessageScheduleSaved(
   return (row?.proactiveMessageLastFiredAtMs ?? 0) > 0
 }
 
+/** 好感度 ≥ 此值时，可视为「较亲密」关系，久未回复时偏日常报备 */
+export const PROACTIVE_INTIMATE_AFFECTION_MIN = 60
+
+/** 用户距上次发言超过此时长（毫秒），且关系较亲密时，优先报备有趣日常 */
+export const PROACTIVE_LONG_USER_SILENCE_MS = 4 * 60 * 60 * 1000
+
 /** 主动消息与普通私聊共用的输出节奏说明（条数不设上限） */
 const PROACTIVE_OUTPUT_PARITY_HINT =
   '**发送逻辑与手动聊天完全一致**：条数不设机械上限，语境自然需要几条就几条；' +
@@ -124,7 +130,8 @@ export const PROACTIVE_INITIATION_USER_NUDGE =
   '[系统·主动消息回合] 用户此刻没有新发消息。请你以**角色本人**身份主动给用户发微信气泡（assistant 侧输出）。' +
   PROACTIVE_OUTPUT_PARITY_HINT +
   '这是**角色发给用户**，不是用户发给你，**禁止**替用户续写 user 侧台词、禁止模拟用户发消息。' +
-  '对白里「我」指角色本人，「你」指用户。'
+  '对白里「我」指角色本人，「你」指用户。' +
+  '若你们关系较亲密且用户已有一阵子没回：优先像真正在意对方那样，**报备一两件有趣日常**（吃到好吃的、路上趣事、工作小插曲、看到联想到用户的东西等），让用户感到被放心上；勿查岗、勿质问「怎么不理我」。'
 
 export const PROACTIVE_PRIVATE_MESSAGE_REPLY_BIAS = [
   '【主动消息·最高优先级】',
@@ -135,8 +142,18 @@ export const PROACTIVE_PRIVATE_MESSAGE_REPLY_BIAS = [
   '对白中的「我/我的」默认指**角色本人**；称呼用户用「你」。',
   '须结合最近对话话题、关系与人设推进或延展，**禁止**复读、换皮重发上一轮已说过的话或同义句。',
   '可分享日常、问候、接梗、轻调侃或新信息；勿机械模板「你怎么不理我」。',
-  '若用户尚未回应你上一轮发言：可**酌情**一句轻问在干嘛、忙不忙等（贴合语境即可，**非必须**）；禁止施压、质问或连环催促。',
+  '**较亲密关系 + 用户久未回复**时：优先**报备有趣日常**（刚吃到/看到的、路上小事、联想到用户的小细节），传达「惦记你、想跟你分享」；让用户感到被在意、被放心上；禁止查岗、禁止 guilt tripping。',
+  '若用户尚未回应你上一轮发言（且不属于上述亲密报备场景）：可**酌情**一句轻问在干嘛、忙不忙等（贴合语境即可，**非必须**）；禁止施压、质问或连环催促。',
   '用户可能正在忙或未看手机，语气自然有度。',
+].join('\n')
+
+const PROACTIVE_INTIMATE_DAILY_LIFE_SHARE_BIAS = [
+  '【亲密·久未回复·日常报备（优先）】',
+  '你们关系较亲密，用户已有一阵子没回消息；本轮**优先**像真正在意对方那样，主动分享一两件**具体、有趣、生活化**的日常片段。',
+  '可参考：刚吃到/喝到的好东西、路上或店里看见的趣事、工作/学习小插曲、天气或季节感、看到某样东西联想到用户、睡前/刚醒的小状态等——须贴合人设与最近聊天语境，**禁止**编造与用户已知设定冲突的细节。',
+  '目标是让用户感到**被惦记、被放心上**；分享本身即是关心，不必每轮都追问「你怎么不回」。',
+  '若结尾需要一句惦念，最多**一句**轻、软、不施压（如「忙完记得看一眼」「想到你了」）；**禁止**查岗、质问、连环催回复、道德绑架式「是不是不想理我了」。',
+  '语气像给朋友/在意的人随手发微信，自然、有温度，不要公告体或客服腔。',
 ].join('\n')
 
 /** 用户已发言但角色尚未回复时：与手动催回复同路，不再追加「主动开口」占位 user 消息 */
@@ -148,6 +165,37 @@ export const PROACTIVE_REPLY_PENDING_USER_BIAS = [
   '对白中的「我/我的」指角色本人；称呼用户用「你」。',
   '须贴合人设与语境，**禁止**复读、换皮重发同义句。',
 ].join('\n')
+
+export function computeMsSinceLastUserMessage(
+  messages: WeChatChatMessage[],
+  nowMs: number = Date.now(),
+): number | null {
+  const userMessages = messages
+    .filter((m) => !m.isRecalled && m.type === 'player')
+    .sort((a, b) => a.timestamp - b.timestamp)
+  const lastUser = userMessages[userMessages.length - 1]
+  if (!lastUser) return null
+  return Math.max(0, nowMs - lastUser.timestamp)
+}
+
+function formatProactiveSilenceDuration(ms: number): string {
+  if (ms < 60 * 60 * 1000) {
+    const minutes = Math.max(1, Math.round(ms / 60_000))
+    return `约 ${minutes} 分钟`
+  }
+  if (ms < 24 * 60 * 60 * 1000) {
+    const hours = Math.max(1, Math.round(ms / 3_600_000))
+    return `约 ${hours} 小时`
+  }
+  const days = Math.max(1, Math.round(ms / 86_400_000))
+  return days >= 2 ? `约 ${days} 天` : '约 1 天'
+}
+
+export type ProactivePrivateMessageReplyBiasContext = {
+  msSinceLastUserMessage?: number | null
+  affection?: number | null
+  relationshipDef?: string | null
+}
 
 export function hasPendingUserMessageWithoutReply(messages: WeChatChatMessage[]): boolean {
   const sorted = [...messages].filter((m) => !m.isRecalled).sort((a, b) => a.timestamp - b.timestamp)
@@ -173,11 +221,23 @@ export function resolveProactiveMessageAiRound(messages: WeChatChatMessage[]): {
   }
 }
 
-/** 根据最近聊天记录追加「勿复读 / 可轻追问 / 待回复用户」偏向 */
-export function buildProactivePrivateMessageReplyBias(messages: WeChatChatMessage[]): string {
+function shouldPreferIntimateDailyLifeShare(ctx: ProactivePrivateMessageReplyBiasContext): boolean {
+  const affection = ctx.affection
+  const silenceMs = ctx.msSinceLastUserMessage
+  if (typeof affection !== 'number' || !Number.isFinite(affection)) return false
+  if (typeof silenceMs !== 'number' || !Number.isFinite(silenceMs)) return false
+  return affection >= PROACTIVE_INTIMATE_AFFECTION_MIN && silenceMs >= PROACTIVE_LONG_USER_SILENCE_MS
+}
+
+/** 根据最近聊天记录追加「勿复读 / 亲密报备 / 可轻追问 / 待回复用户」偏向 */
+export function buildProactivePrivateMessageReplyBias(
+  messages: WeChatChatMessage[],
+  ctx: ProactivePrivateMessageReplyBiasContext = {},
+): string {
   const allSorted = [...messages].filter((m) => !m.isRecalled).sort((a, b) => a.timestamp - b.timestamp)
   const lastOverall = allSorted[allSorted.length - 1]
   const pendingUserReply = hasPendingUserMessageWithoutReply(messages)
+  const preferIntimateDailyShare = !pendingUserReply && shouldPreferIntimateDailyLifeShare(ctx)
 
   const lines: string[] = [
     pendingUserReply ? PROACTIVE_REPLY_PENDING_USER_BIAS : PROACTIVE_PRIVATE_MESSAGE_REPLY_BIAS,
@@ -209,7 +269,17 @@ export function buildProactivePrivateMessageReplyBias(messages: WeChatChatMessag
     )
   }
 
-  if (userHasNotRepliedSince) {
+  if (preferIntimateDailyShare) {
+    const silenceMs = ctx.msSinceLastUserMessage!
+    const relHint =
+      typeof ctx.relationshipDef === 'string' && ctx.relationshipDef.trim()
+        ? ctx.relationshipDef.trim()
+        : `好感度约 ${Math.round(ctx.affection!)}`
+    lines.push(
+      PROACTIVE_INTIMATE_DAILY_LIFE_SHARE_BIAS,
+      `【关系与沉默时长】${relHint}；用户距上次发言已 ${formatProactiveSilenceDuration(silenceMs)}。`,
+    )
+  } else if (userHasNotRepliedSince) {
     lines.push(
       '【用户尚未回应你上一轮】可结合语境酌情轻问一句在干嘛、忙不忙等（非必须）；语气贴合人设，勿质问、勿连环催回复。',
     )

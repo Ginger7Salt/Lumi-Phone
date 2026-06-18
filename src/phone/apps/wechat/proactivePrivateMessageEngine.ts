@@ -48,8 +48,10 @@ import {
   normalizeWeChatTimeConfig,
   resolveWeChatCurrentTimeMs,
 } from './time/wechatTimeUtils'
+import { loadCharacterPsycheState } from './characterPsyche/characterPsycheStore'
 import {
   buildProactivePrivateMessageReplyBias,
+  computeMsSinceLastUserMessage,
   hasProactiveMessageScheduleSaved,
   resolveProactiveMessageAiRound,
 } from './proactivePrivateMessageTypes'
@@ -252,7 +254,27 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
       if (block.trim()) worldBackgroundPrompt = block
     }
 
-    const replyBias = buildProactivePrivateMessageReplyBias(messages)
+    const msSinceLastUserMessage = computeMsSinceLastUserMessage(messages, now)
+    let affection: number | null = null
+    let relationshipDef: string | null = null
+    try {
+      const psyche = await loadCharacterPsycheState({
+        conversationCharacterId: characterId,
+        playerIdentityId,
+        personaCharacterId: characterId,
+        characterFullName: character.name?.trim() || 'TA',
+      })
+      affection = psyche.state?.affection ?? null
+      relationshipDef = psyche.state?.relationshipDef ?? null
+    } catch {
+      // 体征未生成时仍可走通用主动消息偏向
+    }
+
+    const replyBias = buildProactivePrivateMessageReplyBias(messages, {
+      msSinceLastUserMessage,
+      affection,
+      relationshipDef,
+    })
     const aiRound = resolveProactiveMessageAiRound(messages)
 
     const pack = await buildFriendRequestPrivatePromptPack({

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useWechatStore } from '../../useWechatStore'
-import { loadAccountsBundle } from '../../wechatAccountPersistence'
+import { findAccountById, loadAccountsBundle } from '../../wechatAccountPersistence'
 import { personaDb } from '../idb'
 import type { Character, PlayerIdentity } from '../types'
 import {
@@ -10,7 +10,11 @@ import {
   repairCharacterSlotPrimaryBindingFromLinked,
 } from '../../wechatCharacterPlayerIdentity'
 import { characterAccessibleToWechatAccount } from '../../wechatAccountScope'
-import { isMainCharacter } from './personaRosterTypes'
+import {
+  buildWechatSelfContactExclusionContext,
+  isCharacterUserAccountSelf,
+} from '../../wechatPersonaContactsSelfFilter'
+import { isMainCharacter, isPersonaRosterMainCharacter } from './personaRosterTypes'
 
 export function usePersonaRoster(linkedCharacterIds: readonly string[]) {
   const { currentAccountId } = useWechatStore()
@@ -64,6 +68,15 @@ export function usePersonaRoster(linkedCharacterIds: readonly string[]) {
         roots = await personaDb.listRootCharactersAccessibleToWechatAccount(acc, [...linkedCharacterIds])
       }
 
+      const bundle = await loadAccountsBundle()
+      const account = bundle ? findAccountById(bundle, acc) : null
+      const selfExclusion = account ? await buildWechatSelfContactExclusionContext(account) : null
+      roots = roots.filter(
+        (c) =>
+          isPersonaRosterMainCharacter(c) &&
+          (!selfExclusion || !isCharacterUserAccountSelf(c, selfExclusion)),
+      )
+
       const allChars = await personaDb.listCharactersForWechatAccount(acc)
       const npcs = allChars.filter(
         (c) =>
@@ -78,7 +91,7 @@ export function usePersonaRoster(linkedCharacterIds: readonly string[]) {
       setNpcCharacters(npcs)
       setIdentityList(idents)
       setIdentityNameById(await buildIdentityDisplayNameMapForCharacters(acc, [...roots, ...npcs]))
-      setAccountsBundle(await loadAccountsBundle())
+      setAccountsBundle(bundle)
     } catch (e) {
       console.warn('[persona-roster] refresh failed', e)
       window.alert(e instanceof Error ? e.message : '加载人物名册失败，请稍后重试')

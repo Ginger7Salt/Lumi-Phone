@@ -11,7 +11,7 @@ import {
   resolveAccountSessionIdentityId,
 } from '../wechatAccountPersistence'
 import type { WechatAccountsBundle } from '../wechatAccountTypes'
-import { resolvePrivateChatSessionPlayerIdentityId } from '../wechatCharacterPlayerIdentity'
+import { resolveActivePrivateChatSessionPlayerIdentityId } from '../wechatCharacterPlayerIdentity'
 import {
   groupMemoryBucketCharacterId,
   resolveGroupWeChatStorageConversationKey,
@@ -150,8 +150,7 @@ export async function loadWechatMemorySummaryProgress(params: {
 }): Promise<WechatMemorySummaryProgressRow[]> {
   const settings = await personaDb.getMemorySettings()
   const autoSummaryEnabled = settings.autoSummaryEnabled !== false
-  const datingCountsTowardRounds =
-    autoSummaryEnabled && settings.datingAutoSummaryEnabled !== false
+  const datingCountsTowardRounds = autoSummaryEnabled
   const roundMap = settings.aiRoundCountByConversation ?? {}
   const summaryCursorMap = settings.summaryCursorTimestampByConversation ?? {}
 
@@ -168,7 +167,11 @@ export async function loadWechatMemorySummaryProgress(params: {
     try {
       const chRow = await personaDb.getCharacter(charId).catch(() => null)
       displayName = chRow?.name?.trim() || contact.remarkName?.trim() || '未命名'
-      const sessionPid = resolvePrivateChatSessionPlayerIdentityId(chRow, appHint)
+      const sessionPid = await resolveActivePrivateChatSessionPlayerIdentityId({
+        characterId: charId,
+        wechatAccountId,
+        appPlayerIdentityId: appHint,
+      })
       const conversationKey = resolvePrivateWeChatStorageConversationKey(
         charId,
         wechatAccountId,

@@ -17,10 +17,12 @@ export function TextField({
 }) {
   return (
     <label className="block">
-      <p className="text-[14px]" style={{ color: apiTheme.subText }}>
-        {label}
-      </p>
-      <div className="relative mt-2">
+      {label.trim() ? (
+        <p className="text-[14px]" style={{ color: apiTheme.subText }}>
+          {label}
+        </p>
+      ) : null}
+      <div className={label.trim() ? 'relative mt-2' : 'relative'}>
         <input
           value={value}
           type={type}

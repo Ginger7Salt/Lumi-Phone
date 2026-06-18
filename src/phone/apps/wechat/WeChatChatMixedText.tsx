@@ -14,12 +14,49 @@ export const WECHAT_CHAT_LATIN_NUM_STYLE: CSSProperties = {
   fontWeight: 300,
 }
 
+const URL_INLINE_RE = /https?:\/\/[^\s<>"')\]}，。；、]+/gi
+
+const URL_SPAN_STYLE: CSSProperties = {
+  ...WECHAT_CHAT_LATIN_NUM_STYLE,
+  wordBreak: 'break-all',
+  overflowWrap: 'anywhere',
+}
+
+function splitTextAndUrls(text: string): Array<{ kind: 'url' | 'text'; value: string }> {
+  const out: Array<{ kind: 'url' | 'text'; value: string }> = []
+  let last = 0
+  for (const m of text.matchAll(URL_INLINE_RE)) {
+    const idx = m.index ?? 0
+    if (idx > last) out.push({ kind: 'text', value: text.slice(last, idx) })
+    const url = String(m[0] ?? '').trim()
+    if (url) out.push({ kind: 'url', value: url })
+    last = idx + m[0]!.length
+  }
+  if (last < text.length) out.push({ kind: 'text', value: text.slice(last) })
+  if (!out.length) out.push({ kind: 'text', value: text })
+  return out
+}
+
+function renderMixedChunk(chunk: string, keyPrefix: string) {
+  const parts = splitPhoneMixedLatinNumText(chunk)
+  return parts.map((part, index) => {
+    if (isPhoneDigitTextToken(part) || isPhoneLatinTextToken(part)) {
+      return (
+        <span key={`${keyPrefix}-${index}`} style={WECHAT_CHAT_LATIN_NUM_STYLE}>
+          {part}
+        </span>
+      )
+    }
+    return <span key={`${keyPrefix}-${index}`}>{part}</span>
+  })
+}
+
 /** 原生输入框：仅数字 0–9 → Corbel Light（@font-face unicode-range）；中文/英文仍 --wx-font */
 export const wechatChatComposerFontStyle: CSSProperties = {
   fontFamily: '"WeChatChatComposerDigits", var(--wx-font)',
 }
 
-/** 混排文案：拉丁字母与数字 → Corbel Light；中文等其余字符保持父级字体 */
+/** 混排文案：拉丁字母与数字 → Corbel Light；https 链接整段渲染避免拆成数百 span */
 export function WeChatChatMixedText({
   text,
   className,
@@ -29,18 +66,18 @@ export function WeChatChatMixedText({
   className?: string
   style?: CSSProperties
 }) {
-  const parts = splitPhoneMixedLatinNumText(text)
+  const segments = splitTextAndUrls(String(text ?? ''))
   return (
     <span className={className} style={style}>
-      {parts.map((part, index) => {
-        if (isPhoneDigitTextToken(part) || isPhoneLatinTextToken(part)) {
+      {segments.map((seg, index) => {
+        if (seg.kind === 'url') {
           return (
-            <span key={index} style={WECHAT_CHAT_LATIN_NUM_STYLE}>
-              {part}
+            <span key={`url-${index}`} style={URL_SPAN_STYLE}>
+              {seg.value}
             </span>
           )
         }
-        return <span key={index}>{part}</span>
+        return <span key={`txt-${index}`}>{renderMixedChunk(seg.value, `txt-${index}`)}</span>
       })}
     </span>
   )

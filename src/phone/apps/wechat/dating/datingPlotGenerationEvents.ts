@@ -16,15 +16,33 @@ export type DatingPlotGenerationErrorDetail = {
 }
 
 const pendingByChar = new Map<string, number>()
+const contentHintChars = new Set<string>()
 const genListeners = new Set<() => void>()
+const contentHintListeners = new Set<() => void>()
 
 function emitGenChange() {
   for (const fn of genListeners) fn()
 }
 
+function emitContentHintChange() {
+  for (const fn of contentHintListeners) fn()
+}
+
 export function subscribeDatingPlotGeneration(onStoreChange: () => void): () => void {
   genListeners.add(onStoreChange)
   return () => genListeners.delete(onStoreChange)
+}
+
+/** 剧情正文已写入 feed 前：底部「后台生成中」提示 */
+export function subscribeDatingPlotContentHint(onStoreChange: () => void): () => void {
+  contentHintListeners.add(onStoreChange)
+  return () => contentHintListeners.delete(onStoreChange)
+}
+
+export function isDatingPlotContentHintActive(characterId: string): boolean {
+  const id = characterId.trim()
+  if (!id) return false
+  return contentHintChars.has(id)
 }
 
 export function isDatingPlotGenerating(characterId: string): boolean {
@@ -55,6 +73,21 @@ export function endDatingPlotGeneration(characterId: string): void {
   if (next <= 0) pendingByChar.delete(id)
   else pendingByChar.set(id, next)
   emitGenChange()
+}
+
+export function beginDatingPlotContentHint(characterId: string): void {
+  const id = characterId.trim()
+  if (!id) return
+  contentHintChars.add(id)
+  emitContentHintChange()
+}
+
+/** 剧情正文已展示或任务失败时调用；可重复调用。 */
+export function endDatingPlotContentHint(characterId: string): void {
+  const id = characterId.trim()
+  if (!id) return
+  if (!contentHintChars.delete(id)) return
+  emitContentHintChange()
 }
 
 export function dispatchDatingPlotGenerationComplete(detail: DatingPlotGenerationCompleteDetail) {

@@ -5,7 +5,6 @@ export type MemoryEngineCoachTargetId =
   | 'summary-interval'
   | 'trigger-mode'
   | 'linked-summary'
-  | 'dating-summary'
   | 'summary-api'
   | 'vector-recall'
   | 'extra-api'
@@ -27,7 +26,6 @@ export function memoryEngineCoachTargetSubTab(
     target === 'summary-interval' ||
     target === 'trigger-mode' ||
     target === 'linked-summary' ||
-    target === 'dating-summary' ||
     target === 'engine-tutorial'
   ) {
     return 'summary'
@@ -59,17 +57,12 @@ export const MEMORY_ENGINE_COACH_STEPS: MemoryCoachStep[] = [
   {
     target: 'summary-interval',
     title: '总结间隔',
-    body: '可选全局统一或按角色单独配置；与该角色私聊每满 N 轮 AI 回复后触发一次合并总结。数字可在 1～100 之间调整，失焦后自动保存。',
+    body: '可选全局统一或按角色单独配置；与该角色私聊或约会剧情每满 N 轮 AI 回复后触发一次合并总结。数字可在 1～100 之间调整，失焦后自动保存。',
   },
   {
     target: 'linked-summary',
     title: '关联记忆总结',
     body: '开启后：约会推剧情时，相关人脉配角会自动收到「关联记忆」摘录，之后私聊该配角时单独注入。关闭后：主角自有约会记忆不受影响，但配角不会自动知晓线下剧情，需手动刻录。玩约会+人脉网建议开启；只要主角私聊记忆可关闭。',
-  },
-  {
-    target: 'dating-summary',
-    title: '约会剧情计入总结轮数',
-    body: '与私聊共用「总结间隔」：开启后约会 AI 回复也计轮，满间隔时把微信 + 线下剧情合并入库；关闭则只在微信私聊里计轮。',
   },
   {
     target: 'summary-api',

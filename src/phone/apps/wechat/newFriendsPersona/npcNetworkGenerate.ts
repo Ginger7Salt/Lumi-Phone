@@ -1,3 +1,4 @@
+import { buildOpenAiChatCompletionsEndpoint } from '../../api/openAiCompatibleEndpoints'
 import type { ApiConfig } from '../../api/types'
 import { bumpLumiSysTokensFromChatResponse } from './ai'
 import type { Character, Gender, PlayerIdentity, PlayerNetworkLink, Relationship, WorldBook, WorldBookItem } from './types'
@@ -13,8 +14,7 @@ import {
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
 async function openAiCompatibleChat(cfg: ApiConfig, messages: ChatMessage[]): Promise<string> {
-  const base = cfg.apiUrl.trim().replace(/\/+$/, '')
-  const endpoint = /\/v1$/i.test(base) ? `${base}/chat/completions` : /\/v1\/chat\/completions$/i.test(base) ? base : `${base}/v1/chat/completions`
+  const endpoint = buildOpenAiChatCompletionsEndpoint(cfg.apiUrl)
   const resp = await fetch(endpoint, {
     method: 'POST',
     headers: {

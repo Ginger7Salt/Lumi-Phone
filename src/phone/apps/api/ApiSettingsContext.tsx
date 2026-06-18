@@ -3,10 +3,16 @@ import { flushSync } from 'react-dom'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../wechat/newFriendsPersona/idb'
 import { createEmptyApiConfig, createEmptyPreset, newPresetId } from './mock'
 import { migrateLegacyImageGenIntoStore, normalizeImageGenSettings } from './imageGenPresetUtils'
+import {
+  API_STORE_STORAGE_KEY,
+  createEmptyLinkPreviewSettings,
+  mergeApiStoreLinkPreview,
+  normalizeLinkPreviewSettings,
+} from './linkPreviewSettingsUtils'
 import { SILICONFLOW_ASR_DEFAULT_BASE_URL } from '../wechat/voiceCall/siliconflowAsr'
-import type { ApiConfig, ApiPreset, ApiStore, SubApiType } from './types'
+import type { ApiConfig, ApiPreset, ApiStore, LinkPreviewSettings, SubApiType } from './types'
 
-const STORAGE_KEY = 'ai-api-presets-v1'
+const STORAGE_KEY = API_STORE_STORAGE_KEY
 
 function normalizeApiConfig(raw: unknown): ApiConfig {
   const r = (raw ?? {}) as Partial<ApiConfig>
@@ -75,9 +81,13 @@ function parseApiStore(raw: unknown): ApiStore {
       typeof parsed.currentPresetId === 'string' && presets.some((p) => p.id === parsed.currentPresetId)
         ? parsed.currentPresetId
         : presets[0]?.id ?? ''
-    return migrateLegacyImageGenIntoStore({ presets, currentPresetId })
+    return migrateLegacyImageGenIntoStore({
+      presets,
+      currentPresetId,
+      ...mergeApiStoreLinkPreview(parsed),
+    })
   } catch {
-    return { presets: [], currentPresetId: '' }
+    return { presets: [], currentPresetId: '', linkPreview: createEmptyLinkPreviewSettings() }
   }
 }
 
@@ -85,7 +95,13 @@ type Ctx = {
   presets: ApiPreset[]
   currentPresetId: string
   currentPreset: ApiPreset | null
+  linkPreview: LinkPreviewSettings
+  /** IndexedDB / localStorage 是否已加载完成 */
+  apiHydrated: boolean
+  /** 从持久化存储重新拉取（打开 API 设置页时同步最新数据） */
+  reloadFromStorage: () => Promise<void>
   setCurrentPresetId: (id: string) => void
+  setLinkPreviewSettings: (next: LinkPreviewSettings | ((prev: LinkPreviewSettings) => LinkPreviewSettings)) => void
   createPreset: () => ApiPreset
   upsertPreset: (preset: ApiPreset) => void
   deletePreset: (id: string) => void
@@ -98,7 +114,11 @@ type Ctx = {
 const ApiSettingsContext = createContext<Ctx | null>(null)
 
 export function ApiSettingsProvider({ children }: { children: ReactNode }) {
-  const [store, setStore] = useState<ApiStore>({ presets: [], currentPresetId: '' })
+  const [store, setStore] = useState<ApiStore>(() => ({
+    presets: [],
+    currentPresetId: '',
+    linkPreview: createEmptyLinkPreviewSettings(),
+  }))
   const [apiHydrated, setApiHydrated] = useState(false)
 
   useEffect(() => {
@@ -120,6 +140,18 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
     })()
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  const reloadFromStorage = useCallback(async () => {
+    try {
+      const raw = await pullPhoneKvWithLocalStorageLegacy(STORAGE_KEY, [STORAGE_KEY])
+      if (raw == null) return
+      flushSync(() => {
+        setStore(parseApiStore(raw))
+      })
+    } catch {
+      // ignore
     }
   }, [])
 
@@ -149,6 +181,16 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
     setStore((s) => ({ ...s, currentPresetId: id }))
   }, [])
 
+  const setLinkPreviewSettings = useCallback(
+    (next: LinkPreviewSettings | ((prev: LinkPreviewSettings) => LinkPreviewSettings)) => {
+      setStore((s) => ({
+        ...s,
+        linkPreview: typeof next === 'function' ? next(normalizeLinkPreviewSettings(s.linkPreview)) : normalizeLinkPreviewSettings(next),
+      }))
+    },
+    [],
+  )
+
   const createPreset = useCallback(() => createEmptyPreset(), [])
 
   const upsertPreset = useCallback((preset: ApiPreset) => {
@@ -170,18 +212,20 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
 
   const duplicatePreset = useCallback((sourceId: string): string | null => {
     let outId: string | null = null
-    setStore((s) => {
-      const src = s.presets.find((p) => p.id === sourceId)
-      if (!src) return s
-      const now = Date.now()
-      const clone = JSON.parse(JSON.stringify(src)) as ApiPreset
-      clone.id = newPresetId()
-      const baseName = src.name.trim() || '未命名预设'
-      clone.name = `${baseName}（副本）`
-      clone.createdAt = now
-      clone.updatedAt = now
-      outId = clone.id
-      return { ...s, presets: [clone, ...s.presets], currentPresetId: clone.id }
+    flushSync(() => {
+      setStore((s) => {
+        const src = s.presets.find((p) => p.id === sourceId)
+        if (!src) return s
+        const now = Date.now()
+        const clone = JSON.parse(JSON.stringify(src)) as ApiPreset
+        clone.id = newPresetId()
+        const baseName = src.name.trim() || '未命名预设'
+        clone.name = `${baseName}（副本）`
+        clone.createdAt = now
+        clone.updatedAt = now
+        outId = clone.id
+        return { ...s, presets: [clone, ...s.presets], currentPresetId: clone.id }
+      })
     })
     return outId
   }, [])
@@ -215,7 +259,11 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
     presets,
     currentPresetId: store.currentPresetId,
     currentPreset,
+    linkPreview: normalizeLinkPreviewSettings(store.linkPreview),
+    apiHydrated,
+    reloadFromStorage,
     setCurrentPresetId,
+    setLinkPreviewSettings,
     createPreset,
     upsertPreset,
     deletePreset,

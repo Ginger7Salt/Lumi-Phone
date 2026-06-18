@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterMemory } from '../newFriendsPersona/types'
 import type { WeChatContactRow } from '../../../../components/WeChatContactsInstagram'
-import { ListenNumericText, ListenPlainNum } from '../../../../components/discoverListen/ListenNum'
+import { ListenNumericText } from '../../../../components/discoverListen/ListenNum'
 import { loadAccountsBundle } from '../wechatAccountPersistence'
 import { ARCHIVE_BG } from './memoryArchiveTheme'
 import {
@@ -111,9 +111,6 @@ function ProgressMetricCard({
   memoryCountLabel,
   interval,
   roundsSinceLastSummary,
-  roundsUntilNext,
-  autoSummaryEnabled,
-  ready,
   badges,
 }: {
   displayName: string
@@ -122,9 +119,6 @@ function ProgressMetricCard({
   memoryCountLabel: string
   interval: number
   roundsSinceLastSummary: number
-  roundsUntilNext: number
-  autoSummaryEnabled: boolean
-  ready: boolean
   badges: Array<{ key: string; label: string; className: string }>
 }) {
   const pct =
@@ -151,11 +145,6 @@ function ProgressMetricCard({
                 <ListenNumericText text={memoryCountLabel} />
               </p>
             </div>
-            {ready ? (
-              <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                下轮可触发
-              </span>
-            ) : null}
           </div>
 
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-gray-100">
@@ -167,29 +156,7 @@ function ProgressMetricCard({
             />
           </div>
 
-          <p className="mt-2.5 text-[13px] leading-relaxed text-gray-600">
-            {!autoSummaryEnabled ? (
-              <span className="text-gray-400">自动总结已关闭（请在「配置」页开启）</span>
-            ) : roundsUntilNext <= 0 ? (
-              <>
-                已达间隔阈值，<span className="font-medium text-gray-900">下一次 AI 回复</span>将尝试写入记忆
-              </>
-            ) : (
-              <>
-                还需 <ListenPlainNum className="font-semibold text-gray-900">{roundsUntilNext}</ListenPlainNum> 轮 AI 回复触发总结
-                <span className="text-gray-400">
-                  {' '}
-                  （
-                  <ListenPlainNum>
-                    {roundsSinceLastSummary}/{interval}
-                  </ListenPlainNum>
-                  ）
-                </span>
-              </>
-            )}
-          </p>
-
-          {autoSummaryEnabled && badges.length ? (
+          {badges.length ? (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {badges.map((b) => (
                 <span key={b.key} className={`rounded-md px-2 py-0.5 text-[10px] ${b.className}`}>
@@ -205,14 +172,15 @@ function ProgressMetricCard({
 }
 
 function PrivateProgressRowCard({ row }: { row: WechatMemorySummaryProgressRow }) {
-  const ready = row.autoSummaryEnabled && row.roundsUntilNext <= 1
   const hasPending = row.hasPendingChat || row.hasPendingOfflinePlot
   const badges: Array<{ key: string; label: string; className: string }> = []
 
-  if (row.datingCountsTowardRounds) {
-    badges.push({ key: 'dating', label: '微信 + 约会计轮', className: 'bg-gray-100 text-gray-600' })
-  } else {
-    badges.push({ key: 'chat-only', label: '仅微信计轮', className: 'bg-gray-100 text-gray-600' })
+  if (row.autoSummaryEnabled) {
+    badges.push({
+      key: 'rounds',
+      label: `计轮 ${row.roundsSinceLastSummary}/${row.interval}`,
+      className: 'bg-gray-100 text-gray-600',
+    })
   }
   if (row.hasPendingChat) {
     badges.push({ key: 'chat', label: '有待总结私聊', className: 'bg-emerald-50 text-emerald-800' })
@@ -232,30 +200,24 @@ function PrivateProgressRowCard({ row }: { row: WechatMemorySummaryProgressRow }
       memoryCountLabel={row.memoryCount > 0 ? `已收录 ${row.memoryCount} 条角色记忆` : '尚无角色记忆'}
       interval={row.interval}
       roundsSinceLastSummary={row.roundsSinceLastSummary}
-      roundsUntilNext={row.roundsUntilNext}
-      autoSummaryEnabled={row.autoSummaryEnabled}
-      ready={ready}
       badges={badges}
     />
   )
 }
 
 function GroupProgressRowCard({ row }: { row: WechatGroupMemorySummaryProgressRow }) {
-  const ready = row.autoSummaryEnabled && row.roundsUntilNext <= 1
-  const badges: Array<{ key: string; label: string; className: string }> = [
-    { key: 'group', label: '群聊计轮', className: 'bg-orange-50 text-orange-800' },
-  ]
+  const badges: Array<{ key: string; label: string; className: string }> = []
+  if (row.autoSummaryEnabled) {
+    badges.push({
+      key: 'rounds',
+      label: `计轮 ${row.roundsSinceLastSummary}/${row.interval}`,
+      className: 'bg-orange-50 text-orange-800',
+    })
+  }
   if (row.hasPendingChat) {
     badges.push({ key: 'chat', label: '有待总结群消息', className: 'bg-emerald-50 text-emerald-800' })
   } else {
     badges.push({ key: 'none', label: '暂无待总结摘录', className: 'bg-gray-50 text-gray-400' })
-  }
-  if (row.memberCount > 0) {
-    badges.push({
-      key: 'members',
-      label: `${row.memberCount} 名成员`,
-      className: 'bg-gray-100 text-gray-600',
-    })
   }
 
   return (
@@ -266,9 +228,6 @@ function GroupProgressRowCard({ row }: { row: WechatGroupMemorySummaryProgressRo
       memoryCountLabel={row.memoryCount > 0 ? `已收录 ${row.memoryCount} 条群聊记忆` : '尚无群聊记忆'}
       interval={row.interval}
       roundsSinceLastSummary={row.roundsSinceLastSummary}
-      roundsUntilNext={row.roundsUntilNext}
-      autoSummaryEnabled={row.autoSummaryEnabled}
-      ready={ready}
       badges={badges}
     />
   )
@@ -285,10 +244,6 @@ export function MemorySummaryProgressPanel({
   const [privateRows, setPrivateRows] = useState<WechatMemorySummaryProgressRow[]>([])
   const [groupRows, setGroupRows] = useState<WechatGroupMemorySummaryProgressRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [interval, setInterval] = useState(10)
-  const [intervalScope, setIntervalScope] = useState<'global' | 'per_character'>('global')
-  const [autoSummaryEnabled, setAutoSummaryEnabled] = useState(true)
-  const [datingCountsTowardRounds, setDatingCountsTowardRounds] = useState(true)
   const [accountScope, setAccountScope] = useState<MemoryProgressAccountScope>('main')
   const [progressKind, setProgressKind] = useState<ProgressKind>('private')
   const [hasSubAccounts, setHasSubAccounts] = useState(false)
@@ -320,19 +275,11 @@ export function MemorySummaryProgressPanel({
     setLoading(true)
 
     try {
-      const [settings, allMemories, accountContexts] = await Promise.all([
-        personaDb.getMemorySettings(),
+      const [allMemories, accountContexts] = await Promise.all([
         personaDb.listAllCharacterMemories(),
         resolveMemoryProgressAccountsForScope(accountScope, contacts, currentWechatAccountId),
       ])
       if (seq !== reloadSeqRef.current) return
-
-      const intervalN = Math.max(1, Math.floor(settings.autoSummaryInterval))
-      const autoOn = settings.autoSummaryEnabled !== false
-      setInterval(intervalN)
-      setIntervalScope(settings.autoSummaryIntervalScope === 'per_character' ? 'per_character' : 'global')
-      setAutoSummaryEnabled(autoOn)
-      setDatingCountsTowardRounds(autoOn && settings.datingAutoSummaryEnabled !== false)
 
       const memoriesByChar = new Map<string, CharacterMemory[]>()
       const memoriesByGroupBucket = new Map<string, CharacterMemory[]>()
@@ -398,17 +345,6 @@ export function MemorySummaryProgressPanel({
   }, [reload])
 
   const activeRows = progressKind === 'private' ? privateRows : groupRows
-  const readyCount = useMemo(
-    () => activeRows.filter((r) => r.autoSummaryEnabled && r.roundsUntilNext <= 1).length,
-    [activeRows],
-  )
-
-  const introText =
-    progressKind === 'private'
-      ? intervalScope === 'per_character'
-        ? `每完成一轮 AI 回复（微信私聊${datingCountsTowardRounds ? '或约会剧情' : ''}）计 1 轮；满各角色在配置页设定的间隔轮数后，合并写入长期记忆。`
-        : `每完成一轮 AI 回复（微信私聊${datingCountsTowardRounds ? '或约会剧情' : ''}）计 1 轮；满 ${interval} 轮后合并写入长期记忆。`
-      : `群聊每完成一轮 NPC AI 回复计 1 轮；满 ${interval} 轮后为各成员写入群聊长期记忆。`
 
   const emptyHint =
     progressKind === 'private'
@@ -428,21 +364,6 @@ export function MemorySummaryProgressPanel({
         <ScopeTabs value={accountScope} onChange={setAccountScope} showSub={hasSubAccounts} />
         <KindTabs value={progressKind} onChange={setProgressKind} />
       </div>
-
-      <p className="mt-4 text-center text-[12px] leading-relaxed text-gray-500">
-        <ListenNumericText text={`${introText}下方按${accountScope === 'main' ? '主号' : '小号'}分别统计，不与其它马甲混计。`} />
-        {!autoSummaryEnabled ? (
-          <span className="mt-1 block text-red-700/80">当前自动总结已关闭，进度仅作参考。</span>
-        ) : null}
-      </p>
-
-      {readyCount > 0 && autoSummaryEnabled ? (
-        <p className="mt-3 text-center text-[11px] font-medium tracking-wide text-amber-800">
-          <ListenNumericText
-            text={`${readyCount} ${progressKind === 'private' ? '位角色' : '个群聊'} · 下一条 AI 回复可能触发总结`}
-          />
-        </p>
-      ) : null}
 
       {loading || !scopeBootstrapped ? (
         <p className="py-16 text-center text-[13px] text-gray-400">正在读取总结进度…</p>

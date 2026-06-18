@@ -3,6 +3,7 @@ import { Plus, MoreHorizontal } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
+import { ListenNumericText } from '../../../../components/discoverListen/ListenNum'
 import { useCustomization } from '../../../CustomizationContext'
 import type { StickerGroup, StickerItem } from './stickerStore'
 import { StickerUploadSheet } from './StickerUploadSheet'
@@ -48,8 +49,13 @@ export function StickerDetail({
         <p className="text-[11px] tracking-[0.22em] text-gray-700">COLLECTIONS</p>
         <div className="mt-2 flex items-center justify-between">
           <div>
-            <h3 className="text-[22px] font-semibold text-black">{group.name}</h3>
-            <p className="text-[12px] text-gray-700">{group.items.length} 张表情</p>
+            <h3 className="text-[22px] font-semibold text-black">
+              <ListenNumericText text={group.name} />
+            </h3>
+            <p className="text-[12px] text-gray-700">
+              <ListenNumericText text={String(group.items.length)} />
+              {' 张表情'}
+            </p>
           </div>
           {readonly ? (
             <span className="rounded-full border border-white/60 bg-white/34 px-4 py-2 text-[12px] text-gray-700 backdrop-blur-[8px]">

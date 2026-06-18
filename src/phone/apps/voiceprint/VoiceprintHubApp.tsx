@@ -1246,7 +1246,7 @@ function CastingTab() {
       if (!raw) continue
       const canon = (await resolveCanonicalCharacterId(raw)) || raw
       if (!ids.has(canon)) continue
-      if (!byCanon.has(canon)) byCanon.set(canon, ch)
+      if (!byCanon.has(canon)) byCanon.set(canon, { ...ch, id: canon })
     }
     setCharacters([...byCanon.values()])
   }, [pruneCharacterVoiceMappingsToAllowed, state.wechatPersonaContacts])

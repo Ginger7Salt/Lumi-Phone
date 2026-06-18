@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { MiniMaxApiRegion, MiniMaxVoiceInfo } from './services/minimaxApi'
 import {
   CHARACTER_VOICE_MAP_LS_KEY,
+  normalizeCharacterVoiceMapKeys,
   pruneCharacterVoiceMappings as pruneCharacterVoiceMappingsInStorage,
   pruneCharacterVoiceMappingsToAllowed as pruneCharacterVoiceMappingsToAllowedInStorage,
   readCharacterVoiceMapFromStorage,
@@ -51,6 +52,17 @@ export function VoiceStoreProvider({ children }: { children: ReactNode }) {
   const [characterVoiceMap, setCharacterVoiceMap] = useState<CharacterVoiceMap>(() =>
     readCharacterVoiceMapFromStorage(),
   )
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const normalized = await normalizeCharacterVoiceMapKeys()
+      if (!cancelled) setCharacterVoiceMap(normalized)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const setApiKey = useCallback((v: string) => setApiKeyState(v), [])
   const setGroupId = useCallback((v: string) => setGroupIdState(v), [])

@@ -1,3 +1,4 @@
+import { buildOpenAiEmbeddingsEndpoint } from '../../api/openAiCompatibleEndpoints'
 import type { ApiConfig } from '../../api/types'
 import type { MemorySettingsRow } from '../newFriendsPersona/types'
 
@@ -24,13 +25,6 @@ export function resolveEmbeddingApiCredentials(
   return { apiUrl: url, apiKey: key }
 }
 
-function embeddingsEndpoint(apiUrl: string): string {
-  const base = apiUrl.trim().replace(/\/+$/, '')
-  if (/\/v1$/i.test(base)) return `${base}/embeddings`
-  if (/\/v1\/embeddings$/i.test(base)) return base
-  return `${base}/v1/embeddings`
-}
-
 function normalizeEmbeddingArray(raw: unknown): number[] | null {
   if (!Array.isArray(raw) || !raw.length) return null
   const out: number[] = []
@@ -50,7 +44,7 @@ export async function fetchEmbeddingVector(
 ): Promise<number[]> {
   const t = String(text ?? '').trim()
   if (!t) throw new Error('embedding_empty_text')
-  const url = embeddingsEndpoint(cfg.apiUrl)
+  const url = buildOpenAiEmbeddingsEndpoint(cfg.apiUrl)
   const resp = await fetch(url, {
     method: 'POST',
     headers: {
@@ -87,7 +81,7 @@ export async function fetchEmbeddingVectorsBatch(
 ): Promise<number[][]> {
   const trimmed = texts.map((s) => String(s ?? '').trim().slice(0, 12000))
   if (!trimmed.length) return []
-  const url = embeddingsEndpoint(cfg.apiUrl)
+  const url = buildOpenAiEmbeddingsEndpoint(cfg.apiUrl)
   const resp = await fetch(url, {
     method: 'POST',
     headers: {

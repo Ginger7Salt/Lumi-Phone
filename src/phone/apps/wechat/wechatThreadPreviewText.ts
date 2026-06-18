@@ -36,6 +36,8 @@ type NotifyPreviewMessage = {
   transfer?: unknown | null
   musicSync?: unknown | null
   listenCommentShare?: unknown | null
+  sharedRecord?: unknown | null
+  chatHistory?: unknown | null
 }
 
 /** 微信「信息」会话列表末条预览（与通知摘要规则一致） */
@@ -58,6 +60,8 @@ export function formatWeChatNotifyPreviewFromStoredMessage(msg: NotifyPreviewMes
   }
   if (msg.transfer) return '[转账]'
   if (msg.listenCommentShare) return '[分享评论]'
+  if (msg.sharedRecord) return '[收藏]'
+  if (msg.chatHistory) return '[聊天记录]'
   if (msg.musicSync) return '[音乐]'
   if (msg.redPacket) return '[红包]'
   if (isWeChatStickerPreviewContent(msg.content)) return '[动画表情]'

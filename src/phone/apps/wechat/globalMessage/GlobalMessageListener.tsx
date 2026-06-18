@@ -1,5 +1,6 @@
 import { AnimatePresence, LayoutGroup } from 'framer-motion'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { PHONE_DISMISS_OVERLAYS_EVENT } from '../../../phoneDismissOverlays'
 import { GlobalMessageToast } from './GlobalMessageToast'
 import { QuickReplyModal } from './QuickReplyModal'
 import {
@@ -129,6 +130,17 @@ export function GlobalMessageListener({
     setQuickReplyOpen(false)
     setToast(null)
   }, [])
+
+  useEffect(() => {
+    const onDismiss = () => {
+      clearHideTimer()
+      clearCoalesceTimer()
+      pendingToastRef.current = null
+      closeQuickReply()
+    }
+    window.addEventListener(PHONE_DISMISS_OVERLAYS_EVENT, onDismiss)
+    return () => window.removeEventListener(PHONE_DISMISS_OVERLAYS_EVENT, onDismiss)
+  }, [clearHideTimer, clearCoalesceTimer, closeQuickReply])
 
   const expandToFullChat = useCallback(
     (conversationKey: string) => {

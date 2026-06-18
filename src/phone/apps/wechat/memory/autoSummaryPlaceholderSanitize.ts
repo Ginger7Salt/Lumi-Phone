@@ -16,6 +16,10 @@ import {
 import { WECHAT_GROUP_BOT_CHARACTER_ID, WECHAT_GROUP_USER_CHAR_ID } from '../wechatConversationKey'
 import { normalizeMemorySummaryBodyAfterModel } from './memorySummaryContentNormalize'
 import { repairMemorySummaryBodyFromModel } from './memorySummarySchemaLeakRepair'
+import {
+  normalizeMemoryIdPlaceholderSyntax,
+  replaceBareTokenOutsidePlaceholders,
+} from './memoryIdPlaceholderNormalize'
 import { listAllLinkedMemoryEligibleCharacters } from './linkedMemoryEligiblePeers'
 
 const MIN_TOKEN_LEN = 2
@@ -67,6 +71,41 @@ function pushCharRules(out: Array<{ token: string; ph: string }>, ch: Character 
   for (const t of displayTokensForCharacter(ch)) out.push({ token: t, ph })
 }
 
+/** 模型偶发把 UUID 简码（如前 8 位 hex）写入正文时，替换为 {{id:…}} 占位符。 */
+function repairBareCharacterIdFragmentsInBody(
+  body: string,
+  idRows: Array<{ id: string; ph: string }>,
+): string {
+  let s = normalizeMemoryIdPlaceholderSyntax(body)
+  for (const { id, ph } of idRows) {
+    const nid = id.trim()
+    if (!nid) continue
+    const alreadyWrapped = s.includes(ph)
+    if (!alreadyWrapped && s.includes(nid)) {
+      s = replaceBareTokenOutsidePlaceholders(s, nid, ph)
+    }
+    const compact = nid.replace(/-/g, '')
+    if (compact.length >= 8 && /^[a-f0-9]+$/i.test(compact)) {
+      const short = compact.slice(0, 8)
+      if (!s.includes(ph)) {
+        s = s.replace(new RegExp(`(?<!\\{)${short}(?!\\})`, 'gi'), ph)
+      }
+    }
+  }
+  return normalizeMemoryIdPlaceholderSyntax(s)
+}
+
+function pushCharacterIdPlaceholderRow(
+  out: Array<{ id: string; ph: string }>,
+  characterId: string,
+  placeholder: string,
+) {
+  const nid = characterId.trim()
+  if (!nid) return
+  if (out.some((r) => r.id === nid)) return
+  out.push({ id: nid, ph: placeholder })
+}
+
 function isUsableUserDisplayName(name: string | null | undefined): boolean {
   const n = String(name ?? '').trim()
   return !!n && n !== '未命名身份' && n !== '微信账号槽位' && n !== '用户'
@@ -95,6 +134,7 @@ export async function sanitizeUnifiedPrimaryMemoryBody(
   peerCharacterId: string,
   archiveRootId: string,
   userBindCtx?: WorldBookUserInsertContext | null,
+  extraCharacterIds?: readonly string[],
 ): Promise<SanitizedMemoryBody> {
   const peer = peerCharacterId.trim()
   const arch = (archiveRootId.trim() || peer).trim()
@@ -102,9 +142,12 @@ export async function sanitizeUnifiedPrimaryMemoryBody(
     return { content: body, userPlaceholderBindings: [] }
   }
 
-  let text = normalizeMemorySummaryBodyAfterModel(repairMemorySummaryBodyFromModel(body))
+  let text = normalizeMemoryIdPlaceholderSyntax(
+    normalizeMemorySummaryBodyAfterModel(repairMemorySummaryBodyFromModel(body)),
+  )
 
   const ordered: Array<{ token: string; ph: string }> = []
+  const idRows: Array<{ id: string; ph: string }> = []
   if (userBindCtx) {
     const dn = userBindCtx.displayName?.trim()
     if (dn.length >= MIN_TOKEN_LEN) ordered.push({ token: dn, ph: '{{user}}' })
@@ -112,8 +155,10 @@ export async function sanitizeUnifiedPrimaryMemoryBody(
     pushCharRules(ordered, await loadPlayerIdentityForPeer(peer), '{{user}}')
   }
   pushCharRules(ordered, await personaDb.getCharacter(peer), '{{char}}')
+  pushCharacterIdPlaceholderRow(idRows, peer, '{{char}}')
   if (arch && arch !== peer) {
     pushCharRules(ordered, await personaDb.getCharacter(arch), '{{archive_char}}')
+    pushCharacterIdPlaceholderRow(idRows, arch, '{{archive_char}}')
   }
   let eligiblePeers: Character[] = []
   try {
@@ -125,8 +170,22 @@ export async function sanitizeUnifiedPrimaryMemoryBody(
     const nid = n.id.trim()
     if (!nid || nid === peer) continue
     pushCharRules(ordered, n, `{{id:${nid}}}`)
+    pushCharacterIdPlaceholderRow(idRows, nid, `{{id:${nid}}}`)
   }
-  const content = applyRules(text, mergeRules(ordered))
+  for (const extraId of extraCharacterIds ?? []) {
+    const nid = extraId.trim()
+    if (!nid || nid === peer) continue
+    let ch: Character | null = null
+    try {
+      ch = await personaDb.getCharacter(nid)
+    } catch {
+      ch = null
+    }
+    pushCharRules(ordered, ch, `{{id:${nid}}}`)
+    pushCharacterIdPlaceholderRow(idRows, nid, `{{id:${nid}}}`)
+  }
+  text = repairBareCharacterIdFragmentsInBody(text, idRows)
+  const content = normalizeMemoryIdPlaceholderSyntax(applyRules(text, mergeRules(ordered)))
   return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx ?? null)
 }
 
@@ -146,7 +205,9 @@ export async function sanitizeUnifiedLinkedMemoryBody(
     return { content: body, userPlaceholderBindings: [] }
   }
 
-  let text = normalizeMemorySummaryBodyAfterModel(repairMemorySummaryBodyFromModel(body))
+  let text = normalizeMemoryIdPlaceholderSyntax(
+    normalizeMemorySummaryBodyAfterModel(repairMemorySummaryBodyFromModel(body)),
+  )
 
   let bindCtx = userBindCtx ?? null
   if (!hasMemoryUserPlaceholderBindIds(bindCtx)) {
@@ -195,6 +256,7 @@ export async function sanitizeGroupMemorySummaryBody(
   group: GroupChatRow | null,
   playerIdentityId: string,
   userBindCtx?: WorldBookUserInsertContext | null,
+  extraCharacterIds?: readonly string[],
 ): Promise<SanitizedMemoryBody> {
   if (!String(body ?? '').trim() || !group?.members?.length) {
     return { content: body, userPlaceholderBindings: [] }
@@ -203,6 +265,7 @@ export async function sanitizeGroupMemorySummaryBody(
   let text = normalizeMemorySummaryBodyAfterModel(body)
 
   const ordered: Array<{ token: string; ph: string }> = []
+  const idRows: Array<{ id: string; ph: string }> = []
   if (userBindCtx) {
     const dn = userBindCtx.displayName?.trim()
     if (dn.length >= MIN_TOKEN_LEN) ordered.push({ token: dn, ph: '{{user}}' })
@@ -238,8 +301,23 @@ export async function sanitizeGroupMemorySummaryBody(
     const gn = (mem.groupNickname || '').trim()
     if (gn.length >= MIN_TOKEN_LEN) ordered.push({ token: gn, ph: `{{id:${cid}}}` })
     pushCharRules(ordered, ch, `{{id:${cid}}}`)
+    pushCharacterIdPlaceholderRow(idRows, cid, `{{id:${cid}}}`)
   }
-  const content = applyRules(text, mergeRules(ordered))
+  for (const extraId of extraCharacterIds ?? []) {
+    const nid = extraId.trim()
+    if (!nid) continue
+    if (idRows.some((r) => r.id === nid)) continue
+    let ch: Character | null = null
+    try {
+      ch = await personaDb.getCharacter(nid)
+    } catch {
+      ch = null
+    }
+    pushCharRules(ordered, ch, `{{id:${nid}}}`)
+    pushCharacterIdPlaceholderRow(idRows, nid, `{{id:${nid}}}`)
+  }
+  text = repairBareCharacterIdFragmentsInBody(text, idRows)
+  const content = normalizeMemoryIdPlaceholderSyntax(applyRules(text, mergeRules(ordered)))
   return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx ?? null)
 }
 

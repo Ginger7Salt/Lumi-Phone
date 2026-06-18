@@ -13,9 +13,10 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { AtSign, ChevronDown, PhoneCall, X } from 'lucide-react'
+import { AtSign, ChevronDown, PhoneCall, Share2, Trash2, X } from 'lucide-react'
 
 import { useCustomization } from '../../CustomizationContext'
+import { Pressable } from '../../components/Pressable'
 import { setBackgroundNotifyPendingWork } from '../backgroundNotify/backgroundNotifyPendingWork'
 import { registerProactiveMessageRevealHandler } from './proactiveMessageRevealBridge'
 import { planProactiveRevealBubblesAsync, repairStoredMediaMessageRow, repairStoredVoiceMessageRow } from './proactiveBubbleRevealPlan'
@@ -25,6 +26,11 @@ import {
   resetProactiveMessageCountdown,
   subscribeProactiveMessageInFlight,
 } from './proactivePrivateMessageEngine'
+import {
+  isWechatAiReplyPipelineActive,
+  setWechatAiReplyPipelineActive,
+  subscribeWechatAiReplyPipelineActive,
+} from './wechatAiReplyInFlight'
 import { hasProactiveMessageScheduleSaved } from './proactivePrivateMessageTypes'
 import {
   drawProactiveVariableIntervalSeconds,
@@ -33,7 +39,7 @@ import {
 import { ProactiveMessageCountdownBar } from './ProactiveMessageCountdownBar'
 import { useProactiveMessageCountdown } from './useProactiveMessageCountdown'
 import { resolveCharacterAvatarUrl } from '../../utils/characterAvatarUrl'
-import { Pressable } from '../../components/Pressable'
+import { PHONE_DISMISS_OVERLAYS_EVENT } from '../../phoneDismissOverlays'
 import type { WeChatBubbleTheme, WeChatTheme } from '../../types'
 import { wechatBubbleThemesEqual } from '../../types'
 import { useCurrentApiConfig } from '../api/ApiSettingsContext'
@@ -120,8 +126,11 @@ import type {
   WeChatTransferPayload,
   WeChatMusicSyncPayload,
   WeChatListenCommentSharePayload,
+  WeChatSharedRecordPayload,
+  WeChatChatHistoryPayload,
   WeChatMusicSyncInvitePayload,
   WeChatReplyToMeta,
+  ScheduleTable,
 } from './newFriendsPersona/types'
 import {
   parseStoredRoundTriggerPercent,
@@ -141,7 +150,9 @@ import {
 import {
   buildUserExplicitCharacterImageRequestBias,
   userExplicitlyRequestsCharacterImage,
+  userExplicitlyRequestsCharacterSticker,
 } from './wechatCharacterImageRequestDetect'
+import { logConsole } from './consoleLogger'
 import {
   requestWeChatHeartWhisper,
   requestWeChatCharacterPsyche,
@@ -163,6 +174,7 @@ import {
   type BusyRuntimeContext,
   type ChatTranscriptTurn,
   type WeChatPeerReplyResult,
+  type WeChatPeerReplyOrderedSegment,
   type WeChatGroupMultiSpeakerMemberPrompt,
 } from './wechatChatAi'
 import type { WeChatGroupMetaAction, WeChatGroupMultiSpeakerOrderedItem } from './groupChatModelMeta'
@@ -279,6 +291,31 @@ import type { CharacterPsycheMetricsSnapshot, CharacterPsycheState } from './cha
 import { RedPacketChatRow } from './redPacket/RedPacketChatRow'
 import { MusicInviteChatRow } from './musicSync/MusicInviteChatRow'
 import { ListenCommentShareChatRow } from './musicSync/ListenCommentShareChatRow'
+import { SharedRecordChatRow } from './favorites/SharedRecordChatRow'
+import { ShareContactSheet } from './favorites/ShareContactSheet'
+import { ChatHistoryChatRow } from './chatHistory/ChatHistoryChatRow'
+import { resolveParticipantAvatarMap } from './chatHistory/buildParticipantAvatarMap'
+import {
+  resolveChatHistoryFromStoredMessage,
+} from './chatHistory/buildChatHistoryPayload'
+import {
+  forwardMessagesItemByItemToContact,
+  forwardMessagesMergedToContact,
+} from './chatHistory/forwardMessagesToContact'
+import { MultiSelectAvatarSlot, composeMultiSelectLeading } from './chatHistory/MultiSelectAvatarSlot'
+import { buildSharedRecordReplyBias } from './favorites/buildSharedRecordPromptBias'
+import { buildChatHistoryReplyBias } from './chatHistory/buildChatHistoryPromptBias'
+import { buildCharacterForwardHistorySituationBias, detectForwardHistoryEvidenceSituation } from './chatHistory/wechatForwardHistorySituation'
+import { findLatestSelfChatHistoryInBurst } from './chatHistory/findLatestSelfChatHistoryInBurst'
+import { enrichCharacterForwardHistoryPayload } from './chatHistory/enrichCharacterForwardHistoryPayload'
+import { formatChatHistoryForAiTranscript } from './chatHistory/formatChatHistoryForMemorySummary'
+import { findLatestSelfSharedRecordInBurst } from './favorites/findLatestSelfSharedRecordInBurst'
+import { buildLinkPreviewPromptBlockFromTexts } from './linkPreview/formatLinkPreviewPromptBlock'
+import { WeChatChatRenderErrorBoundary } from './WeChatChatRenderErrorBoundary'
+import { ChatRoomFavoritesPicker } from './favorites/ChatRoomFavoritesPicker'
+import { buildSharedRecordPayloadFromFavorite } from './favorites/buildSharedRecordPayload'
+import type { FavoriteItem } from './favorites/favoriteItemTypes'
+import { sendSharedRecordToContact } from './favorites/sendSharedRecord'
 import { requestOpenListenCommentShareCard } from '../../../components/discoverListen/listenTogetherCommentNavigation'
 import {
   adjudicateMusicSyncFromCharacterText,
@@ -317,12 +354,17 @@ import { VoiceCallActionSheet } from './voiceCall/VoiceCallActionSheet'
 import { VoiceCallPanel } from './voiceCall/VoiceCallPanel'
 import { requestSiliconflowTranscription } from './voiceCall/siliconflowAsr'
 import { StickerPickerPanel } from './stickers/StickerPickerPanel'
-import { parseCharacterStickerLine } from './stickers/stickerStore'
+import { ensureStickerStoreHydrated, parseCharacterStickerLine } from './stickers/stickerStore'
 import { stickerUrlToImagePayload, arrayBufferToBase64ForMedia } from './wechatStickerImagePayload'
 import { ChatInputBar } from './voiceInput/ChatInputBar'
 import { VoiceOverlay, type VoiceGestureZone } from './voiceInput/VoiceOverlay'
 import { VoiceMessageBubble } from './VoiceMessageBubble'
-import { createMiniMaxT2ASyncAudioBlob } from '../voiceprint/services/minimaxApi'
+import {
+  readMiniMaxCredentialsFromLocalStorage,
+  readMiniMaxSpeechModelFromLocalStorage,
+  synthesizeMiniMaxVoiceAudioBlob,
+} from '../voiceprint/services/minimaxApi'
+import { lookupBoundVoiceIdForCharacter } from '../voiceprint/characterVoiceMapStorage'
 import {
   groupNoticeMemberNickname,
   isWechatGroupEventNoticeContent,
@@ -345,6 +387,8 @@ const LUMI_DEFAULT_OPENING_BUBBLES = [
 ]
 const ENTER_DOUBLE_TAP_WINDOW_MS = 220
 const ENTER_SINGLE_COMMIT_DELAY_MS = 80
+const SEND_DEDUPE_WINDOW_MS = 600
+const EMPTY_PERSONA_CONTACTS: readonly import('../../types').WeChatPersonaContact[] = []
 const CHAT_VISIBLE_MSG_INITIAL = 30
 const CHAT_VISIBLE_MSG_STEP = 30
 
@@ -473,6 +517,30 @@ function itemsToTranscript(items: ChatItem[], opts?: { groupSpeakerLabel?: (m: C
           speakerLabel,
         }
       }
+      if (m.sharedRecord) {
+        const sr = m.sharedRecord
+        const typeLabel =
+          sr.recordType === 'voice' ? '语音收藏' : sr.recordType === 'image' ? '图片收藏' : '文字收藏'
+        return {
+          id: m.id,
+          from: m.from,
+          text: `（用户向你转发一条【收藏】；正文非当前对话原句）类型：${typeLabel}；内容：${sr.contentSummary}`,
+          replyTo: m.replyTo,
+          speakerLabel,
+        }
+      }
+      if (m.chatHistory) {
+        return {
+          id: m.id,
+          from: m.from,
+          text: formatChatHistoryForAiTranscript({
+            payload: m.chatHistory,
+            from: m.from,
+          }),
+          replyTo: m.replyTo,
+          speakerLabel,
+        }
+      }
       const text = m.text?.trim()
       if (text) return { id: m.id, from: m.from, text, replyTo: m.replyTo, speakerLabel }
       if (m.images?.length)
@@ -559,6 +627,7 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
         voice: m.voice,
         musicSync: m.musicSync,
         listenCommentShare: m.listenCommentShare,
+        sharedRecord: m.sharedRecord,
         originalText: m.originalContent,
         isRecalled: m.isRecalled,
         recallTimestamp: m.recallTimestamp,
@@ -579,11 +648,12 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
     ) {
       bodyText = normalizeGroupSmartBotBubblePlaintext(m.content, null)
     }
+    const resolvedChatHistory = m.chatHistory ?? resolveChatHistoryFromStoredMessage(m) ?? undefined
     mapped.push({
       id: m.id,
       kind: 'msg',
       from: m.type === 'player' ? 'self' : 'other',
-      text: bodyText,
+      text: resolvedChatHistory ? '[聊天记录]' : bodyText,
       thinking: m.thinking,
       timestamp: m.timestamp,
       replyTo: m.replyTo,
@@ -594,6 +664,8 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
       voice: m.voice,
       musicSync: m.musicSync,
       listenCommentShare: m.listenCommentShare,
+      sharedRecord: m.sharedRecord,
+      chatHistory: resolvedChatHistory,
       originalText: m.originalContent,
       isRecalled: m.isRecalled,
       recallTimestamp: m.recallTimestamp,
@@ -652,7 +724,7 @@ function rebuildChatItemsWithTimestamps(msgs: ChatMsg[], formatWxTimeLabel: (ts:
 function messagePlainPreview(
   msg: Pick<
     ChatMsg,
-    'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'listenCommentShare' | 'isRecalled' | 'isGroupEventStrip'
+    'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'listenCommentShare' | 'sharedRecord' | 'chatHistory' | 'isRecalled' | 'isGroupEventStrip'
   >,
 ): string {
   if (msg.isGroupEventStrip && msg.text?.trim()) return msg.text.trim()
@@ -665,6 +737,8 @@ function messagePlainPreview(
   if (ms?.kind === 'music_accept') return '[频率已接轨]'
   if (ms?.kind === 'music_decline') return '[错失的波段]'
   if (msg.listenCommentShare) return `[分享评论] ${msg.listenCommentShare.targetTitle}`
+  if (msg.sharedRecord) return '[收藏]'
+  if (msg.chatHistory) return '[聊天记录]'
   const rp = msg.redPacket
   if (rp) {
     const r = rp.remark?.trim()
@@ -1174,34 +1248,6 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
   return `data:${mime};base64,${base64}`
 }
 
-function MultiSelectCheck({ checked }: { checked: boolean }) {
-  return (
-    <span
-      className="flex h-6 w-6 items-center justify-center rounded-full border"
-      style={{
-        borderColor: checked ? '#000000' : '#c7c7cc',
-        backgroundColor: checked ? '#000000' : 'transparent',
-      }}
-      aria-hidden
-    >
-      {checked ? (
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#ffffff"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M20 6 9 17l-5-5" />
-        </svg>
-      ) : null}
-    </span>
-  )
-}
-
 type MsgStatus = 'sending' | 'sent' | 'failed'
 
 type ChatMsg = {
@@ -1232,6 +1278,8 @@ type ChatMsg = {
   }
   musicSync?: WeChatMusicSyncPayload
   listenCommentShare?: WeChatListenCommentSharePayload
+  sharedRecord?: WeChatSharedRecordPayload
+  chatHistory?: WeChatChatHistoryPayload
   status?: MsgStatus
   /** 为 true 时播放对方消息入场动效 */
   otherAnimated?: boolean
@@ -1265,6 +1313,17 @@ function compareChatMsgByRevealOrder(a: ChatMsg, b: ChatMsg): number {
   return a.id.localeCompare(b.id)
 }
 
+function dedupeChatMsgsById(msgs: ChatMsg[]): ChatMsg[] {
+  const seen = new Set<string>()
+  const out: ChatMsg[] = []
+  for (const m of msgs) {
+    if (seen.has(m.id)) continue
+    seen.add(m.id)
+    out.push(m)
+  }
+  return out
+}
+
 /** 对方消息异步露出队列任务（延迟后并入 `items` 并落库） */
 type OpponentRevealJob = {
   /** 入队时所属会话；与 {@link conversationKeyLiveRef} 不一致时只落库、不并入当前聊天列表 */
@@ -1283,6 +1342,7 @@ type OpponentRevealJob = {
 
 /** AI 对方消息逐条露出前的动态间隔（毫秒）：短句偏快，长句偏慢；语音按时长。 */
 function computeOpponentStaggerDelayMs(msg: ChatMsg): number {
+  if (msg.chatHistory) return 120
   const dur = msg.voice?.durationSec
   if (typeof dur === 'number' && dur > 0) {
     return Math.max(200, Math.min(30_000, Math.round(dur * 1000)))
@@ -1629,7 +1689,10 @@ export function ChatRoom({
   scrollToMessageId = null,
   onScrollToMessageConsumed,
   onRequestForwardMessage,
-  onRequestForwardMessages,
+  onRequestForwardMessages: _onRequestForwardMessages,
+  onMultiSelectModeChange,
+  multiSelectExitSignal = 0,
+  onOpenChatHistoryViewer,
   onOpenSendRedPacket,
   onNavigateRedPacketDetail,
   onOpenLumiTransfer,
@@ -1673,7 +1736,19 @@ export function ChatRoom({
   onRequestForwardMessages?: (payload: {
     mode: 'multi-item' | 'multi-merge'
     messageIds: string[]
-    mergeTitle: { userName: string; peerName: string }
+    mergeTitle: { userName: string; peerName: string; peerCharacterId?: string }
+  }) => void
+  onMultiSelectModeChange?: (active: boolean) => void
+  multiSelectExitSignal?: number
+  /** 打开全屏聊天记录阅读器（由 WeChatApp 顶层渲染，覆盖顶栏） */
+  onOpenChatHistoryViewer?: (payload: {
+    data: WeChatChatHistoryPayload
+    participantAvatars: Record<string, string | undefined>
+    avatarRadiusPx?: number
+    recipientCharacterId?: string
+    userDisplayName?: string
+    personaContacts?: readonly import('../../types').WeChatPersonaContact[]
+    cardSenderCharacterId?: string
   }) => void
   /** 发红包：由 WeChatApp 切到 `red-packet-send` 路由 */
   onOpenSendRedPacket?: () => void
@@ -1711,6 +1786,10 @@ export function ChatRoom({
   // `ChatRoom` 顶栏由上层承载，这里仅保留引用以避免未使用告警
   useEffect(() => {}, [_onBack, _onOpenGroupInfo])
   const { state, setUi, replaceWeChatPersonaContacts } = useCustomization()
+  const personaContactsList = useMemo(
+    () => state.wechatPersonaContacts ?? EMPTY_PERSONA_CONTACTS,
+    [state.wechatPersonaContacts],
+  )
   const { wechatTheme } = state
   const { chatTheme } = useChatTheme()
   const apiConfig = useCurrentApiConfig('chatCard')
@@ -1915,27 +1994,32 @@ export function ChatRoom({
   const mergeAvatarGroup = bubble.mergeConsecutiveAvatarGroup
 
   const synthCharacterVoiceAudioUrl = useCallback(
-    async (ttsScript: string, emotion?: (typeof VOICE_ALLOWED_EMOTIONS)[number]): Promise<string> => {
+    async (
+      voiceCharacterId: string,
+      ttsScript: string,
+      emotion?: (typeof VOICE_ALLOWED_EMOTIONS)[number],
+    ): Promise<string> => {
       try {
-        const apiKey = String(localStorage.getItem('minimax:apiKey') || '').trim()
-        if (!apiKey) return ''
-        const groupId = String(localStorage.getItem('minimax:groupId') || '').trim()
-        const speechModel = String(localStorage.getItem('minimax:speechModel') || 'speech-2.8-hd').trim() || 'speech-2.8-hd'
-        const rawMap = localStorage.getItem('minimax:characterVoiceMap') || '{}'
-        const map = JSON.parse(rawMap) as Record<string, unknown>
-        const voiceId = String(map?.[conversationCharacterId] ?? '').trim()
+        const cid = voiceCharacterId.trim()
+        if (!cid) return ''
+        const creds = readMiniMaxCredentialsFromLocalStorage()
+        if (!creds.apiKey.trim()) return ''
+        const speechModel = readMiniMaxSpeechModelFromLocalStorage()
+        const voiceId = await lookupBoundVoiceIdForCharacter(cid)
         if (!voiceId) return ''
-        const blob = await createMiniMaxT2ASyncAudioBlob(
-          { apiKey, groupId },
-          { voice_id: voiceId, text: ttsScript, model: speechModel, emotion },
-        )
+        const blob = await synthesizeMiniMaxVoiceAudioBlob(creds, {
+          voice_id: voiceId,
+          text: ttsScript,
+          model: speechModel,
+          emotion,
+        })
         return await blobToDataUrl(blob)
       } catch (e) {
         logger.log('error', `角色语音合成失败: ${e instanceof Error ? e.message : String(e)}`)
         return ''
       }
     },
-    [conversationCharacterId, logger],
+    [logger],
   )
   const voiceSynthesisPromiseRef = useRef(new Map<string, Promise<string>>())
 
@@ -2184,8 +2268,27 @@ export function ChatRoom({
     }
     return trimChatItemsToAiTurnAnchor(items)
   }, [extractMessages, groupId, rebuildWithCurrentTime, roomType])
+  const resolveVoiceSynthCharacterId = useCallback(
+    (msg: ChatMsg): string => {
+      if (roomType === 'group') {
+        const sid = msg.senderCharacterId?.trim()
+        if (sid && sid !== WECHAT_GROUP_BOT_CHARACTER_ID) return sid
+        return ''
+      }
+      if (useLumiProjectAssistantPrompt) {
+        return personaCharacterId?.trim() || ''
+      }
+      return (personaCharacterId?.trim() || conversationCharacterId.trim()) || ''
+    },
+    [conversationCharacterId, personaCharacterId, roomType, useLumiProjectAssistantPrompt],
+  )
+
   const ensureVoiceMessageAudio = useCallback(
-    async (messageId: string, voice?: ChatMsg['voice'], opts?: { forceResynthesize?: boolean }): Promise<string> => {
+    async (
+      messageId: string,
+      voice?: ChatMsg['voice'],
+      opts?: { forceResynthesize?: boolean; voiceCharacterId?: string },
+    ): Promise<string> => {
       const msgId = messageId.trim()
       if (!msgId || !voice) return ''
       const forceResynthesize = opts?.forceResynthesize === true
@@ -2196,11 +2299,13 @@ export function ChatRoom({
       if (pending) return pending
 
       const task = (async () => {
+        const voiceCharacterId = opts?.voiceCharacterId?.trim() || ''
         const rawScript = String(voice.ttsScript || '').trim()
         const emotion = pickVoiceEmotionForTts(rawScript)
         const playableScript = stripEmotionTagsForTts(rawScript)
         if (!playableScript) return ''
-        const synthesizedAudioUrl = await synthCharacterVoiceAudioUrl(playableScript, emotion)
+        if (!voiceCharacterId) return ''
+        const synthesizedAudioUrl = await synthCharacterVoiceAudioUrl(voiceCharacterId, playableScript, emotion)
         if (!synthesizedAudioUrl) return ''
 
         setItems((prev) => {
@@ -2225,6 +2330,11 @@ export function ChatRoom({
           await personaDb.patchWeChatChatMessageById(msgId, {
             voice: { audioUrl: synthesizedAudioUrl },
           })
+          try {
+            await personaDb.syncFavoriteVoiceAudioFromMessage(msgId, synthesizedAudioUrl)
+          } catch {
+            /* 收藏同步失败不影响聊天播放 */
+          }
         } catch (e) {
           logger.log('error', `角色语音缓存落库失败 id=${msgId} err=${e instanceof Error ? e.message : String(e)}`)
         }
@@ -2953,6 +3063,7 @@ export function ChatRoom({
         : msgsForWeChat
       aiContextDbMessagesRef.current = msgsForWeChat
 
+      await ensureStickerStoreHydrated()
       const repairedDisplayMsgs: WeChatChatMessage[] = []
       for (const m of displayMsgs) {
         const repaired = await repairStoredMediaMessageRow(m)
@@ -3000,7 +3111,7 @@ export function ChatRoom({
         const dbIds = new Set(msgsForWeChat.map((m) => m.id))
         const pending = extractMessages(itemsRef.current).filter((m) => !dbIds.has(m.id))
         if (pending.length) {
-          const mergedMsgs = [...dbMsgs, ...pending].sort(compareChatMsgByRevealOrder)
+          const mergedMsgs = dedupeChatMsgsById([...dbMsgs, ...pending].sort(compareChatMsgByRevealOrder))
           let mergedItems = rebuildWithCurrentTime(mergedMsgs)
           if (roomType === 'group' && groupId?.trim()) {
             mergedItems = filterGroupChatItemsHideModeratorOnlyBubbles(
@@ -3144,6 +3255,7 @@ export function ChatRoom({
 
     if (isStorageKeyMigration) {
       void hydrateMessagesRef.current(false)
+      syncAiReplyPipelineActiveRef.current(nextKey)
       return
     }
 
@@ -3161,6 +3273,7 @@ export function ChatRoom({
      */
     opponentQueueStopRef.current = true
     pendingAiRepliesRef.current = 0
+    setWechatAiReplyPipelineActive(prevKey, false)
     setAwaitingAiKick(false)
     setTypingVisible(false)
     onOpponentRevealQueueActiveRef.current?.(false)
@@ -3409,6 +3522,8 @@ export function ChatRoom({
   const [retryReplyBiasDraft, setRetryReplyBiasDraft] = useState('')
   const [cameraOpen, setCameraOpen] = useState(false)
   const [photoPickerOpen, setPhotoPickerOpen] = useState(false)
+  const [favoritesPickerOpen, setFavoritesPickerOpen] = useState(false)
+  const [favoriteShareSending, setFavoriteShareSending] = useState(false)
   const [heartWhisperOpen, setHeartWhisperOpen] = useState(false)
   const [callSheetOpen, setCallSheetOpen] = useState(false)
   const [callingOpen, setCallingOpen] = useState(false)
@@ -3495,6 +3610,30 @@ export function ChatRoom({
     }, 1500)
   }, [])
 
+  const requestVoiceMessageAudio = useCallback(
+    async (msg: ChatMsg): Promise<string> => {
+      const voiceCharacterId = resolveVoiceSynthCharacterId(msg)
+      if (!voiceCharacterId) {
+        showCenterToast(roomType === 'group' ? '该群成员未绑定声纹' : '该角色未绑定声纹')
+        return ''
+      }
+      const apiKey = String(localStorage.getItem('minimax:apiKey') || '').trim()
+      if (!apiKey) {
+        showCenterToast('请先在「声纹档案」配置 MiniMax API Key')
+        return ''
+      }
+      const voiceId = await lookupBoundVoiceIdForCharacter(voiceCharacterId)
+      if (!voiceId) {
+        showCenterToast('该角色尚未绑定声纹，请打开「声纹档案」→ 角色声带映射')
+        return ''
+      }
+      const url = await ensureVoiceMessageAudio(msg.id, msg.voice, { voiceCharacterId })
+      if (!url) showCenterToast('语音合成失败，请检查声纹档案中的 API 与音色配置')
+      return url
+    },
+    [ensureVoiceMessageAudio, resolveVoiceSynthCharacterId, roomType, showCenterToast],
+  )
+
   const requestVoiceResynthesizeConfirm = useCallback((messageId: string) => {
     const id = messageId.trim()
     if (!id) return
@@ -3542,7 +3681,7 @@ export function ChatRoom({
           ...target.voice,
           audioUrl: '',
         },
-        { forceResynthesize: true },
+        { forceResynthesize: true, voiceCharacterId: resolveVoiceSynthCharacterId(target) },
       )
       if (!nextUrl) showCenterToast('重新合成失败，请稍后重试')
       else showCenterToast('已重新合成语音')
@@ -3555,6 +3694,7 @@ export function ChatRoom({
     extractMessages,
     logger,
     rebuildWithCurrentTime,
+    resolveVoiceSynthCharacterId,
     showCenterToast,
     voiceResynthesizeConfirmId,
     voiceResynthesizing,
@@ -3586,6 +3726,9 @@ export function ChatRoom({
   const voiceStreamRef = useRef<MediaStream | null>(null)
   const voiceChunksRef = useRef<Blob[]>([])
   const [forwardModeSheetOpen, setForwardModeSheetOpen] = useState(false)
+  const [shareHistorySheetOpen, setShareHistorySheetOpen] = useState(false)
+  const [shareHistorySending, setShareHistorySending] = useState(false)
+  const [shareForwardMode, setShareForwardMode] = useState<'multi-item' | 'multi-merge'>('multi-merge')
   const [checkPhoneOpen, setCheckPhoneOpen] = useState(false)
 
   const openHeartWhisperPanel = useCallback(() => {
@@ -3599,7 +3742,49 @@ export function ChatRoom({
     setSelectedMessageIds([])
     setMultiDeleteConfirmOpen(false)
     setForwardModeSheetOpen(false)
+    setShareHistorySheetOpen(false)
   }, [])
+
+  useEffect(() => {
+    onMultiSelectModeChange?.(isMultiSelectMode)
+  }, [isMultiSelectMode, onMultiSelectModeChange])
+
+  useEffect(() => {
+    if (!multiSelectExitSignal) return
+    exitMultiSelect()
+  }, [multiSelectExitSignal, exitMultiSelect])
+
+  const openChatHistoryViewer = useCallback(
+    (
+      historyData: WeChatChatHistoryPayload,
+      options?: { cardSenderCharacterId?: string },
+    ) => {
+      void (async () => {
+        const avatars = await resolveParticipantAvatarMap({
+          data: historyData,
+          userDisplayName: playerDisplayName.trim() || '我',
+          userAvatarUrl: playerAvatarUrl?.trim() || undefined,
+          personaContacts: personaContactsList,
+          cardSenderCharacterId: options?.cardSenderCharacterId,
+        })
+        onOpenChatHistoryViewer?.({
+          data: historyData,
+          participantAvatars: avatars,
+          avatarRadiusPx: bubble.avatarRadiusPx,
+          userDisplayName: playerDisplayName.trim() || '我',
+          personaContacts: personaContactsList,
+          cardSenderCharacterId: options?.cardSenderCharacterId,
+        })
+      })()
+    },
+    [
+      playerDisplayName,
+      playerAvatarUrl,
+      state.wechatPersonaContacts,
+      onOpenChatHistoryViewer,
+      bubble.avatarRadiusPx,
+    ],
+  )
 
   const toggleSelect = useCallback(
     (id: string) => {
@@ -3769,10 +3954,6 @@ export function ChatRoom({
     })
   }, [])
 
-  useEffect(() => {
-    onOtherTypingChange?.(typingVisible)
-  }, [typingVisible, onOtherTypingChange])
-
   /** 主动消息生成中：顶栏「对方正在输入」与普通 AI 回复同一套 persist + onOtherTypingChange */
   useEffect(() => {
     if (!proactiveCountdownEnabled) return
@@ -3789,7 +3970,8 @@ export function ChatRoom({
         flushAiRepliesBusyRef.current ||
         aiCallingRef.current ||
         pendingAiRepliesRef.current > 0 ||
-        opponentRevealJobsRef.current.length > 0
+        opponentRevealJobsRef.current.length > 0 ||
+        isWechatAiReplyPipelineActive(ck)
       if (!normalAiActive) setTypingVisible(false)
     }
 
@@ -3806,8 +3988,14 @@ export function ChatRoom({
     }
     const recover = readTypingInterruptRecover(ck)
     setTypingFooterInterrupt(recover)
-    if (readChatAwaitingAiTyping(ck) || recover || isProactiveMessageInFlight(ck)) setTypingVisible(true)
-    else setTypingVisible(false)
+    if (
+      readChatAwaitingAiTyping(ck) ||
+      recover ||
+      isProactiveMessageInFlight(ck) ||
+      isWechatAiReplyPipelineActive(ck)
+    ) {
+      setTypingVisible(true)
+    } else setTypingVisible(false)
   }, [conversationKey, setTypingVisible])
 
   /** 中断恢复：hydrate 已从 DB 合并列表后，清顶栏/底部「正在输入」占位 */
@@ -3820,6 +4008,7 @@ export function ChatRoom({
   }, [items, conversationKey, setTypingVisible])
 
   const opponentRevealJobsRef = useRef<OpponentRevealJob[]>([])
+  const syncAiReplyPipelineActiveRef = useRef<(ck?: string) => boolean>(() => false)
   const [pendingQueue, setPendingQueue] = useState<ChatMsg[]>([])
 
   const persistOpponentRevealJobOnly = useCallback((j: OpponentRevealJob) => {
@@ -3891,6 +4080,7 @@ export function ChatRoom({
     for (const j of stale) persistOpponentRevealJobOnly(j)
     if (forUi.length === 0) {
       onOpponentRevealQueueActive?.(false)
+      syncAiReplyPipelineActiveRef.current(conversationKeyLiveRef.current.trim())
       return
     }
     const needsFlushTransferEmit = forUi.some((j) => j.opponentRevealFlushSync)
@@ -3915,6 +4105,7 @@ export function ChatRoom({
     persistTypingInterruptRecover(conversationKey, false)
     onOpponentRevealQueueActive?.(false)
     setBackgroundNotifyPendingWork({ wechatRevealPending: false })
+    syncAiReplyPipelineActiveRef.current(conversationKeyLiveRef.current.trim())
   }, [
     cancelOpponentRevealTimer,
     conversationKey,
@@ -3931,6 +4122,7 @@ export function ChatRoom({
       if (q.length === 0) {
         onOpponentRevealQueueActive?.(false)
         setBackgroundNotifyPendingWork({ wechatRevealPending: false })
+        syncAiReplyPipelineActiveRef.current(conversationKeyLiveRef.current.trim())
         return
       }
       const head = q[0]!
@@ -4037,6 +4229,7 @@ export function ChatRoom({
       syncPendingQueueFromRef()
       onOpponentRevealQueueActive?.(true)
       setBackgroundNotifyPendingWork({ wechatRevealPending: true })
+      syncAiReplyPipelineActiveRef.current(liveConvKey)
       kickOpponentRevealProcessor()
     },
     [
@@ -4162,6 +4355,7 @@ export function ChatRoom({
     }
     if (bumpTransferUi) emitLumiTransferChanged()
     onOpponentRevealQueueActiveRef.current?.(false)
+    syncAiReplyPipelineActiveRef.current(conversationKeyLiveRef.current.trim())
   }, [conversationKey, cancelOpponentRevealTimer])
 
   /** 离开聊天室（去发红包页等）：立即落库未露出的对方气泡，避免队列随卸载丢失；session 标记便于回聊天室恢复顶栏/底部「正在输入」直至 hydrate */
@@ -4199,6 +4393,7 @@ export function ChatRoom({
       if (ck) {
         persistChatAwaitingAiTyping(ck, true)
         persistTypingInterruptRecover(ck, true)
+        if (jobs.length > 0) setWechatAiReplyPipelineActive(ck, true)
       }
       emitWeChatStorageChanged()
     }
@@ -4436,6 +4631,17 @@ export function ChatRoom({
   )
 
   useEffect(() => {
+    const onDismiss = () => {
+      closeActionPanel()
+      setMessageEditModal(null)
+      setMessageEditDraft('')
+      setMockVoiceInputOpen(false)
+    }
+    window.addEventListener(PHONE_DISMISS_OVERLAYS_EVENT, onDismiss)
+    return () => window.removeEventListener(PHONE_DISMISS_OVERLAYS_EVENT, onDismiss)
+  }, [closeActionPanel])
+
+  useEffect(() => {
     if (!actionPanelOpen) return
     const onDown = () => {
       // 面板内会 stopPropagation；confirm 弹窗打开时不关闭面板（微信一致）
@@ -4580,16 +4786,63 @@ export function ChatRoom({
 
   const sendQueueRef = useRef<Array<{ text: string; triggerAi: boolean }>>([])
   const processingSendRef = useRef(false)
+  const lastSendFingerprintRef = useRef<{ text: string; at: number } | null>(null)
 
   const [flushUiBusy, setFlushUiBusy] = useState(false)
   const [awaitingAiKick, setAwaitingAiKick] = useState(false)
   const pendingAiRepliesRef = useRef(0)
 
+  const syncAiReplyPipelineActive = useCallback((ck?: string) => {
+    const key = (ck ?? conversationKeyLiveRef.current).trim()
+    if (!key) return false
+    const active =
+      flushAiRepliesBusyRef.current ||
+      aiCallingRef.current ||
+      pendingAiRepliesRef.current > 0 ||
+      opponentRevealJobsRef.current.length > 0 ||
+      opponentRevealTimerRef.current != null
+    setWechatAiReplyPipelineActive(key, active)
+    if (active) persistChatAwaitingAiTyping(key, true)
+    return active
+  }, [])
+  syncAiReplyPipelineActiveRef.current = syncAiReplyPipelineActive
+
+  const [aiReplyPipelineActive, setAiReplyPipelineActive] = useState(() =>
+    isWechatAiReplyPipelineActive(conversationKey),
+  )
+
+  useEffect(() => {
+    const ck = conversationKey.trim()
+    const sync = () => {
+      if (ck !== conversationKeyLiveRef.current.trim()) return
+      setAiReplyPipelineActive(isWechatAiReplyPipelineActive(ck))
+    }
+    sync()
+    const unsubPipeline = subscribeWechatAiReplyPipelineActive(sync)
+    const unsubProactive = subscribeProactiveMessageInFlight(sync)
+    return () => {
+      unsubPipeline()
+      unsubProactive()
+    }
+  }, [conversationKey])
+
+  const peerTypingForHeader = aiReplyPipelineActive || typingVisible || pendingQueue.length > 0 || typingFooterInterrupt
+
+  useEffect(() => {
+    onOtherTypingChange?.(peerTypingForHeader)
+  }, [peerTypingForHeader, onOtherTypingChange])
+
+  useEffect(() => {
+    const ck = conversationKey.trim()
+    if (!ck) return
+    persistChatAwaitingAiTyping(ck, peerTypingForHeader)
+  }, [conversationKey, peerTypingForHeader])
+
   useEffect(() => {
     setBackgroundNotifyPendingWork({
-      wechatTyping: typingVisible || awaitingAiKick,
+      wechatTyping: peerTypingForHeader || awaitingAiKick,
     })
-  }, [typingVisible, awaitingAiKick])
+  }, [peerTypingForHeader, awaitingAiKick])
 
   const skipBusyBypassRef = useRef(false)
   const skipBusyLastTriggerMsRef = useRef(0)
@@ -5207,6 +5460,8 @@ export function ChatRoom({
     markProactiveMessageConversationAiBusy(flushConversationKey, true)
     setAwaitingAiKick(false)
     setFlushUiBusy(true)
+    setTypingVisible(true)
+    syncAiReplyPipelineActive(flushConversationKey)
     if (roomType === 'group' && groupId?.trim() && pendingAiRepliesRef.current > 1) {
       pendingAiRepliesRef.current = 1
     }
@@ -5480,6 +5735,7 @@ export function ChatRoom({
         let resolvedImageGenSettings = DEFAULT_IMAGE_GEN_SETTINGS
         let characterImageGenEnabled = false
         let roundUserExplicitImageRequest = false
+        let roundUserExplicitStickerRequest = false
         let roundImageAllowed = false
         let roundImageCountTarget = 0
         let roundUserImageForProfile: { base64: string; mime: WeChatImageMime } | null = null
@@ -5603,8 +5859,63 @@ export function ChatRoom({
                 })
                 traceReplyBias = [traceReplyBias, msBias].filter((x) => x.trim()).join('\n\n')
               }
+              const pendingSharedRecord = findLatestSelfSharedRecordInBurst(reversed)
+              if (pendingSharedRecord) {
+                const srBias = await buildSharedRecordReplyBias({
+                  recipientCharacterId: personaCharacterId,
+                  recipientDisplayName: notifyPeerRound,
+                  payload: pendingSharedRecord,
+                })
+                traceReplyBias = [traceReplyBias, srBias].filter((x) => x.trim()).join('\n\n')
+              }
+              const pendingChatHistory = findLatestSelfChatHistoryInBurst(reversed)
+              if (pendingChatHistory) {
+                const chBias = await buildChatHistoryReplyBias({
+                  recipientCharacterId: personaCharacterId,
+                  recipientDisplayName: notifyPeerRound,
+                  payload: pendingChatHistory,
+                  userDisplayName: playerDisplayName.trim() || '我',
+                  personaContacts: personaContactsList,
+                })
+                traceReplyBias = [traceReplyBias, chBias].filter((x) => x.trim()).join('\n\n')
+              }
+              const lastUserSelfTextForFh = [...transcript]
+                .reverse()
+                .find((t) => t.from === 'self')?.text
+              const fhSituation = detectForwardHistoryEvidenceSituation(lastUserSelfTextForFh)
+              const fhBias = buildCharacterForwardHistorySituationBias({
+                situation: fhSituation,
+                userForwardedHistoryTitle: pendingChatHistory?.title,
+              })
+              if (fhBias.trim()) {
+                traceReplyBias = [traceReplyBias, fhBias].filter((x) => x.trim()).join('\n\n')
+              }
             }
             pendingRecalledUserTextRef.current = null
+            let sharedLinkPreviewBlock = ''
+            try {
+              const userTextsForLink = [...transcript]
+                .reverse()
+                .filter((t) => t.from === 'self')
+                .slice(0, 5)
+                .map((t) => t.text ?? '')
+              const linkPreviewPack = await buildLinkPreviewPromptBlockFromTexts(userTextsForLink)
+              sharedLinkPreviewBlock = linkPreviewPack.block
+              const linkNotice = linkPreviewPack.userNotice.trim()
+              if (linkNotice) {
+                if (toastTimerRef.current != null) window.clearTimeout(toastTimerRef.current)
+                setComposerToast(linkNotice)
+                toastTimerRef.current = window.setTimeout(() => {
+                  setComposerToast(null)
+                  toastTimerRef.current = null
+                }, 4500)
+              }
+            } catch {
+              sharedLinkPreviewBlock = ''
+            }
+            const linkPreviewExtras = sharedLinkPreviewBlock.trim()
+              ? { sharedLinkPreviewBlock: sharedLinkPreviewBlock.trim() }
+              : {}
             const isPrivatePersonaRound =
               roomType !== 'group' && !lumiAssistantChat && !!personaCharacterId?.trim()
             if (isPrivatePersonaRound) {
@@ -5712,6 +6023,7 @@ export function ChatRoom({
               }
               const lastUserSelfText = [...transcript].reverse().find((t) => t.from === 'self')?.text
               roundUserExplicitImageRequest = userExplicitlyRequestsCharacterImage(lastUserSelfText)
+              roundUserExplicitStickerRequest = userExplicitlyRequestsCharacterSticker(lastUserSelfText)
               peerMediaFreqExtras = {
                 ...(sticker !== undefined ? { stickerRoundTriggerPercent: sticker } : {}),
                 ...(voice !== undefined ? { voiceRoundTriggerPercent: voice } : {}),
@@ -5995,6 +6307,7 @@ export function ChatRoom({
                   relationshipRomanceProfile: relRomanceProfile || undefined,
                   privateChatDigest: privateDigest || undefined,
                   unsummarizedPrivateNotes: unsPrivMember || undefined,
+                  schedule: (ch?.schedule as ScheduleTable | undefined) ?? null,
                 })
                 if (offlinePlotForMember) {
                   const gn = (m.groupNickname || '').trim() || ch?.name?.trim() || m.charId
@@ -6084,11 +6397,13 @@ export function ChatRoom({
                 groupUnsummarized: groupUnsummarizedBlock.trim(),
                 firstNpcWorldBg: (memberPromptRows[0]?.worldBackground || '').trim(),
               }
+              await ensureStickerStoreHydrated()
               let systemContentFinal = buildWeChatGroupMultiSpeakerSystem({
                 groupName: gChat?.name?.trim() || '群聊',
                 groupId: groupId.trim(),
                 members: memberPromptRows,
                 playerSection: piBlock,
+                playerSchedule: (identityForGroupPrompt?.schedule as ScheduleTable | undefined) ?? null,
                 replyBias: traceReplyBias || undefined,
                 offlinePlotsCombined: offlineCombined.trim() || undefined,
                 groupUnsummarizedNotes: groupUnsummarizedBlock || undefined,
@@ -6108,6 +6423,9 @@ export function ChatRoom({
               }
               if (characterImageGenEnabled) {
                 systemContentFinal += `\n\n${buildCharacterImageGenPromptBlock(characterImageGenStyleHint)}`
+              }
+              if (sharedLinkPreviewBlock.trim()) {
+                systemContentFinal += `\n\n---\n${sharedLinkPreviewBlock.trim()}\n`
               }
               traceGroupChatAfterSection = grpWbExtra
               traceGroupChatAfterPatchRules = groupMemberCharactersForWbPatch.some((c) => hasChatAfterWorldBookItems(c))
@@ -6170,6 +6488,7 @@ export function ChatRoom({
                   promptMode: pm,
                   ...meetWechatAiExtras,
                   ...altExtras,
+                  ...linkPreviewExtras,
                   ...peerMediaFreqExtras,
                   ...characterImageGenExtras,
                   ...characterPersonaSelfServiceExtras,
@@ -6209,6 +6528,7 @@ export function ChatRoom({
                   userImageIsSticker,
                   ...meetWechatAiExtras,
                   ...altExtras,
+                  ...linkPreviewExtras,
                   ...peerMediaFreqExtras,
                   ...characterImageGenExtras,
                   ...characterPersonaSelfServiceExtras,
@@ -6258,6 +6578,7 @@ export function ChatRoom({
                 promptMode: pm,
                 ...meetWechatAiExtras,
                 ...altExtras,
+                ...linkPreviewExtras,
                 ...peerMediaFreqExtras,
                 ...characterImageGenExtras,
                 ...characterPersonaSelfServiceExtras,
@@ -6391,7 +6712,30 @@ export function ChatRoom({
           continue
         }
 
+        let forwardHistoryEmittedThisRound = false
+
         let bubbles = aiReply.bubbles ?? []
+        let orderedSegments: WeChatPeerReplyOrderedSegment[] = aiReply.orderedSegments?.length
+          ? aiReply.orderedSegments.map((s) => ({ ...s }))
+          : (() => {
+              const segs: WeChatPeerReplyOrderedSegment[] = []
+              if (aiReply.forwardHistory?.messages?.length) {
+                segs.push({ kind: 'forward_history', forwardHistory: aiReply.forwardHistory })
+              }
+              for (const t of aiReply.bubbles ?? []) {
+                const text = String(t ?? '').trim()
+                if (text) segs.push({ kind: 'bubble', text })
+              }
+              return segs
+            })()
+        const rebuildOrderedSegmentsFromBubbles = (filtered: string[]) => {
+          let i = 0
+          orderedSegments = orderedSegments
+            .map((seg) =>
+              seg.kind === 'bubble' ? { kind: 'bubble' as const, text: filtered[i++] ?? '' } : seg,
+            )
+            .filter((seg) => seg.kind !== 'bubble' || seg.text.trim())
+        }
         if (
           roomType !== 'group' &&
           !lumiAssistantChat &&
@@ -6580,6 +6924,12 @@ export function ChatRoom({
         let bubbleRuns: Array<
           | { kind: 'meta'; action: WeChatGroupMetaAction }
           | { kind: 'messages'; characterId: string; notifyTitle: string; bubbles: string[] }
+          | {
+              kind: 'forward_history'
+              characterId: string
+              notifyTitle: string
+              payload: WeChatChatHistoryPayload
+            }
         > = []
         if (roomType === 'group' && groupId?.trim() && groupMultiOrderedItems?.length) {
           for (const it of groupMultiOrderedItems) {
@@ -6606,14 +6956,37 @@ export function ChatRoom({
             b = ['我回来了，刚刚忙完。']
           }
           b = dedupeBubbleLines(b)
-          bubbleRuns = [
-            {
+          rebuildOrderedSegmentsFromBubbles(b)
+          bubbles = orderedSegments
+            .filter(
+              (s): s is Extract<WeChatPeerReplyOrderedSegment, { kind: 'bubble' }> => s.kind === 'bubble',
+            )
+            .map((s) => s.text)
+          let pendingBatch: string[] = []
+          const flushBatch = () => {
+            if (!pendingBatch.length) return
+            bubbleRuns.push({
               kind: 'messages',
               characterId: persistCharacterId,
               notifyTitle: notifyPeerRound,
-              bubbles: b,
-            },
-          ]
+              bubbles: [...pendingBatch],
+            })
+            pendingBatch = []
+          }
+          for (const seg of orderedSegments) {
+            if (seg.kind === 'forward_history') {
+              flushBatch()
+              bubbleRuns.push({
+                kind: 'forward_history',
+                characterId: persistCharacterId,
+                notifyTitle: notifyPeerRound,
+                payload: seg.forwardHistory,
+              })
+            } else if (seg.text.trim()) {
+              pendingBatch.push(seg.text.trim())
+            }
+          }
+          flushBatch()
         }
 
         if (!bubbleRuns.length) continue
@@ -6632,6 +7005,49 @@ export function ChatRoom({
               })
             }
             if (opponentQueueStopRef.current) break bubbleRunLoop
+            continue
+          }
+          if (br.kind === 'forward_history') {
+            if (opponentQueueStopRef.current) break bubbleRunLoop
+            persistCharacterId = br.characterId
+            notifyPeerRound = br.notifyTitle
+            if (!forwardHistoryEmittedThisRound && br.payload?.messages?.length) {
+              forwardHistoryEmittedThisRound = true
+              const historyPayload = await enrichCharacterForwardHistoryPayload(
+                br.payload,
+                persistCharacterId,
+                personaContactsList,
+                { anchorMs: getCurrentTimeMs() },
+              )
+              const ts = getCurrentTimeMs()
+              const historyId = `wxm-${ts}-fhist-${Math.random().toString(36).slice(2, 8)}`
+              const historyRow: WeChatChatMessage = {
+                id: historyId,
+                characterId: persistCharacterId,
+                playerIdentityId,
+                type: 'character',
+                content: '[聊天记录]',
+                chatHistory: historyPayload,
+                timestamp: ts,
+                isRead: true,
+                conversationKey,
+              }
+              const mappedHistory = mapWeChatMessagesToChatItems([historyRow])[0]
+              if (mappedHistory) {
+                setTypingVisible(false)
+                enqueueOpponentMessagesSequential([
+                  {
+                    forConversationKey: conversationKey,
+                    msg: { ...mappedHistory, otherAnimated: true },
+                    persist: () => {
+                      void personaDb.appendWeChatChatMessage(historyRow).catch(() => {})
+                    },
+                  },
+                ])
+              } else {
+                void personaDb.appendWeChatChatMessage(historyRow).catch(() => {})
+              }
+            }
             continue
           }
           persistCharacterId = br.characterId
@@ -7105,7 +7521,10 @@ export function ChatRoom({
                         /* ignore */
                       })
                   },
-                  afterReveal: voiceGroupBump,
+                  afterReveal: () => {
+                    voiceGroupBump?.()
+                    void ensureVoiceMessageAudio(oid, voice, { voiceCharacterId: persistCharacterId })
+                  },
                 },
               ]
               enqueueOpponentMessagesSequential(voiceJobs)
@@ -7417,8 +7836,13 @@ export function ChatRoom({
                   roomType,
                   convMediaFreqRef.current.sticker,
                   roundStickerAllowed,
+                  roundUserExplicitStickerRequest,
                 )
               ) {
+                logConsole(
+                  'ai',
+                  `表情包已拦截：会话设为不发表情包(0%)；行=${currentLine.trim().slice(0, 80)}`,
+                )
                 continue
               }
               const url = charSticker.url
@@ -7501,7 +7925,12 @@ export function ChatRoom({
                   },
                 ])
               } catch (e) {
-                logger.log('error', `角色表情包发送失败: ${e instanceof Error ? e.message : String(e)}`)
+                const errMsg = e instanceof Error ? e.message : String(e)
+                logger.log('error', `角色表情包发送失败: ${errMsg}`)
+                logConsole(
+                  'ai',
+                  `表情包加载失败(界面不显示)：${errMsg}；引用=${currentLine.trim().slice(0, 96)}`,
+                )
               }
               continue
             }
@@ -7843,7 +8272,8 @@ export function ChatRoom({
       markProactiveMessageConversationAiBusy(flushConversationKey, false)
       setFlushUiBusy(false)
       const stillThisConversation = conversationKeyLiveRef.current.trim() === flushConversationKey
-      if (stillThisConversation) {
+      const pipelineStillActive = syncAiReplyPipelineActive(flushConversationKey)
+      if (stillThisConversation && !pipelineStillActive) {
         setTypingVisible(false)
       }
       aiCallingRef.current = stillThisConversation && pendingAiRepliesRef.current > 0
@@ -7882,6 +8312,7 @@ export function ChatRoom({
     peerBusyRow?.maxDuration,
     peerBusyRow?.customScenarios,
     mergeIncomingMessage,
+    mergeOtherIncomingForRoom,
     getCurrentTimeMs,
     roomType,
     groupId,
@@ -7897,6 +8328,8 @@ export function ChatRoom({
     createCharacterTransferReturnedAckRevealJob,
     createMusicSyncAcceptRevealJob,
     createMusicSyncDeclineRevealJob,
+    ensureVoiceMessageAudio,
+    syncAiReplyPipelineActive,
   ])
 
   /** 群聊主回复（含 <<GROUP_SET_…>> 等）单次 completion：pending 恒为 1，避免连发/重叠触发多次模型调用。 */
@@ -7915,11 +8348,22 @@ export function ChatRoom({
 
   /** 空输入点纸飞机 / 回车等方式手动催回复：顺带重置主动消息倒计时，避免与角色回复撞车。 */
   const triggerManualCharacterReply = useCallback(() => {
+    const ck = conversationKey.trim()
+    if (ck && (isWechatAiReplyPipelineActive(ck) || flushAiRepliesBusyRef.current || pendingAiRepliesRef.current > 0)) {
+      return
+    }
     manualAiPauseRef.current = false
     deferResetProactiveMessageCountdown()
     bumpPendingAiRepliesForReply()
+    syncAiReplyPipelineActive(ck)
     void flushAiReplies()
-  }, [deferResetProactiveMessageCountdown, bumpPendingAiRepliesForReply, flushAiReplies])
+  }, [
+    conversationKey,
+    deferResetProactiveMessageCountdown,
+    bumpPendingAiRepliesForReply,
+    flushAiReplies,
+    syncAiReplyPipelineActive,
+  ])
 
   const busyExpireHandledEndRef = useRef(0)
   useEffect(() => {
@@ -7978,6 +8422,11 @@ export function ChatRoom({
     (raw: string, triggerAi: boolean) => {
       const text = raw.trim()
       if (!text) return
+
+      const nowFp = Date.now()
+      const lastFp = lastSendFingerprintRef.current
+      if (lastFp && lastFp.text === text && nowFp - lastFp.at < SEND_DEDUPE_WINDOW_MS) return
+      lastSendFingerprintRef.current = { text, at: nowFp }
 
       if (roomType === 'group' && groupLive && textMentionsGroupEveryone(text)) {
         if (!userCanAccessGroupAdminLevelInClient(groupLive)) {
@@ -8167,8 +8616,9 @@ export function ChatRoom({
               }
             })()
             setItems((prev) => {
+              const base = extractMessages(prev).filter((m) => m.id !== id)
               const next = rebuildWithCurrentTime([
-                ...extractMessages(prev),
+                ...base,
                 { id, kind: 'msg', from: 'self', text, timestamp: ts, replyTo, status: 'sent', selfAnimated: true },
               ])
               itemsRef.current = next
@@ -8207,6 +8657,7 @@ export function ChatRoom({
           aiCallingRef.current = true
           lastUserAiTriggerTsRef.current = ts
           setAwaitingAiKick(true)
+          syncAiReplyPipelineActive(conversationKey)
           queueMicrotask(() => {
             void (async () => {
               opponentQueueStopRef.current = false
@@ -8300,10 +8751,62 @@ export function ChatRoom({
       personaCharacterId,
       useLumiProjectAssistantPrompt,
       isSelfMemoChat,
+      syncAiReplyPipelineActive,
     ],
   )
 
   commitSendRef.current = commitSend
+
+  const commitSendFavoriteSharedRecord = useCallback(
+    async (item: FavoriteItem) => {
+      if (favoriteShareSending) return
+      if (roomType !== 'private' || useLumiProjectAssistantPrompt || isSelfMemoChat) {
+        showComposerToast('请在角色私聊中使用收藏转发')
+        return
+      }
+      const peerId = conversationCharacterId.trim()
+      if (!peerId) {
+        showComposerToast('当前会话无效')
+        return
+      }
+      setFavoriteShareSending(true)
+      try {
+        const payload = await buildSharedRecordPayloadFromFavorite(item)
+        const result = await sendSharedRecordToContact(peerId, payload)
+        const stored = await personaDb.getWeChatChatMessageById(result.messageId)
+        if (stored) {
+          const mapped = mapWeChatMessagesToChatItems([stored])
+          const ui = mapped[0]
+          if (ui) {
+            setItems((prev) => {
+              const next = mergeIncomingMessage(prev, { ...ui, selfAnimated: true })
+              itemsRef.current = next
+              return next
+            })
+          }
+        }
+        setFavoritesPickerOpen(false)
+        setPlusMenuOpen(false)
+        setStubPanel(null)
+        scrollToBottomSmooth()
+        showComposerToast('已发送收藏')
+      } catch (err) {
+        showComposerToast(err instanceof Error ? err.message : '发送失败')
+      } finally {
+        setFavoriteShareSending(false)
+      }
+    },
+    [
+      conversationCharacterId,
+      favoriteShareSending,
+      isSelfMemoChat,
+      mergeIncomingMessage,
+      roomType,
+      scrollToBottomSmooth,
+      showComposerToast,
+      useLumiProjectAssistantPrompt,
+    ],
+  )
 
   useEffect(() => {
     if (embedMode !== 'quick-reply' || !onEmbedSendReady) return
@@ -8520,6 +9023,7 @@ export function ChatRoom({
         aiCallingRef.current = true
         lastUserAiTriggerTsRef.current = ts
         setAwaitingAiKick(true)
+        syncAiReplyPipelineActive(conversationKey)
         queueMicrotask(() => {
           void (async () => {
             opponentQueueStopRef.current = false
@@ -8638,6 +9142,7 @@ export function ChatRoom({
         aiCallingRef.current = true
         lastUserAiTriggerTsRef.current = tsBase
         setAwaitingAiKick(true)
+        syncAiReplyPipelineActive(conversationKey)
         queueMicrotask(() => {
           void (async () => {
             opponentQueueStopRef.current = false
@@ -8668,6 +9173,7 @@ export function ChatRoom({
       groupId,
       bumpPendingAiRepliesForReply,
       deferResetProactiveMessageCountdown,
+      syncAiReplyPipelineActive,
     ],
   )
 
@@ -8689,9 +9195,21 @@ export function ChatRoom({
           !sendBusy &&
           !typingVisible &&
           !flushUiBusy &&
-          !awaitingAiKick,
+          !awaitingAiKick &&
+          !aiReplyPipelineActive &&
+          pendingQueue.length === 0,
       ),
-    [messageEditModal, lastChatMsg, draft, sendBusy, typingVisible, flushUiBusy, awaitingAiKick],
+    [
+      messageEditModal,
+      lastChatMsg,
+      draft,
+      sendBusy,
+      typingVisible,
+      flushUiBusy,
+      awaitingAiKick,
+      aiReplyPipelineActive,
+      pendingQueue.length,
+    ],
   )
 
   const planeCanAct = Boolean(draft.trim() || canNudgeAiReply)
@@ -9068,7 +9586,13 @@ export function ChatRoom({
           }
           break
         case 'favorite':
-          stub('收藏')
+          if (roomType !== 'private' || useLumiProjectAssistantPrompt || isSelfMemoChat) {
+            showComposerToast('请在角色私聊中使用收藏转发')
+            break
+          }
+          setStubPanel(null)
+          setPlusMenuOpen(false)
+          setFavoritesPickerOpen(true)
           break
         case 'contact':
           stub('个人名片')
@@ -9121,12 +9645,15 @@ export function ChatRoom({
     },
     [
       conversationCharacterId,
+      isSelfMemoChat,
       logger,
       onOpenLumiTransfer,
       onOpenSendRedPacket,
       openConsole,
+      roomType,
       showComposerToast,
       triggerManualCharacterReply,
+      useLumiProjectAssistantPrompt,
     ],
   )
 
@@ -9360,7 +9887,6 @@ export function ChatRoom({
     [bubble, showAvatar, showBubbleTail, playerAvatarUrl, peerAvatarResolved, openHeartWhisperPanel, roomType, showGroupMemberNicknameInChat],
   )
 
-  const MERGE_FORWARD_PREFIX = '__wx_merge_forward__:' as const
   const msgById = useMemo(() => {
     const map = new Map<string, ChatMsg>()
     for (const it of items) {
@@ -9644,9 +10170,14 @@ export function ChatRoom({
       return null
     }
     return visibleItems.map((m, i) => {
+      const effectiveShowAvatar = showAvatar || isMultiSelectMode
       const gap = messageBlockSpacing(visibleItems, i)
-      const showAvatarColumnOther = !mergeAvatarGroup || !consecutiveSameSpeaker(visibleItems, i, roomType === 'group')
-      const showAvatarColumnSelf = !mergeAvatarGroup || !consecutiveSameSpeaker(visibleItems, i, roomType === 'group')
+      const showAvatarColumnOther =
+        !mergeAvatarGroup ||
+        !consecutiveSameSpeaker(visibleItems, i, roomType === 'group')
+      const showAvatarColumnSelf =
+        !mergeAvatarGroup ||
+        !consecutiveSameSpeaker(visibleItems, i, roomType === 'group')
       if (m.kind === 'time') {
         if (!showTimestamp) return null
         const parts = m.text.split(' ')
@@ -9881,15 +10412,9 @@ export function ChatRoom({
               toggleSelect(m.id)
             }}
           >
-            <div className={`relative ${isSelf ? '' : 'pl-[44px]'}`}>
-              {/* 统一对齐到页面左侧的勾选列 */}
-              <div className="absolute left-3 top-1/2 -translate-y-1/2">
-                <MultiSelectCheck checked={isSelected} />
-              </div>
-              {thinkingNode}
-              {node}
-              {replyNode}
-            </div>
+            {thinkingNode}
+            {node}
+            {replyNode}
           </div>
         )
       }
@@ -9904,40 +10429,56 @@ export function ChatRoom({
               : groupAvatarByCharId[resolvedOtherSenderId] ?? sharedMsgProps.chatOtherAvatarUrl
             : sharedMsgProps.chatOtherAvatarUrl,
       }
+      const msAvatar = isMultiSelectMode ? <MultiSelectAvatarSlot checked={isSelected} /> : undefined
 
-      // 合并转发卡片消息（自发）
-      if (isSelf && typeof m.text === 'string' && m.text.startsWith(MERGE_FORWARD_PREFIX)) {
-        let title = '聊天记录'
-        let previewLines: string[] = []
-        try {
-          const raw = m.text.slice(MERGE_FORWARD_PREFIX.length)
-          const parsed = JSON.parse(raw) as { title?: unknown; previewLines?: unknown }
-          title = typeof parsed?.title === 'string' ? parsed.title : title
-          previewLines = Array.isArray(parsed?.previewLines)
-            ? parsed.previewLines.filter((x): x is string => typeof x === 'string').slice(0, 4)
-            : []
-        } catch {
-          /* ignore */
-        }
-        const card = (
-          <div className="flex w-full max-w-full shrink-0 items-end justify-end gap-[4px] overflow-x-hidden">
-            <div className="mr-[24px] ml-auto min-w-0">
-              <Pressable
-                type="button"
-                className="max-w-[calc(100%-24px-24px-80px)] rounded-[12px] border border-[#e5e5e5] bg-white px-3 py-2 text-left active:bg-[#f5f5f5]"
-                onClick={() => showCenterToast('查看聊天记录（预留）')}
-              >
-                <div className="text-[15px] font-semibold text-black">{title}</div>
-                <div className="mt-1 space-y-[2px] text-[12px] leading-snug text-[#666]">
-                  {previewLines.length ? previewLines.map((ln, idx) => <div key={idx} className="truncate">{ln}</div>) : (
-                    <div className="truncate">…</div>
-                  )}
-                </div>
-              </Pressable>
-            </div>
-          </div>
+      if (m.chatHistory) {
+        const historyData = m.chatHistory
+        const rowInner = (
+          <ChatHistoryChatRow
+            id={m.id}
+            isSelf={isSelf}
+            data={historyData}
+            bubble={bubble}
+            showAvatar={effectiveShowAvatar}
+            showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
+            chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
+            chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
+            chatOtherSenderNickname={chatOtherSenderNickname}
+            chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
+            chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
+            groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+            onOpen={() =>
+              openChatHistoryViewer(historyData, {
+                cardSenderCharacterId: isSelf
+                  ? undefined
+                  : resolvedOtherSenderId ||
+                    personaCharacterId?.trim() ||
+                    conversationCharacterId.trim() ||
+                    undefined,
+              })
+            }
+            multiSelectAvatar={msAvatar}
+            userDisplayName={playerDisplayName.trim() || '我'}
+            personaContacts={personaContactsList}
+            cardSenderCharacterId={
+              isSelf
+                ? undefined
+                : resolvedOtherSenderId ||
+                  personaCharacterId?.trim() ||
+                  conversationCharacterId.trim() ||
+                  undefined
+            }
+          />
         )
-        return wrap(card)
+        const rowWrapped =
+          !isSelf && m.otherAnimated ? (
+            <ChatMessageEnter isSelf={false}>{rowInner}</ChatMessageEnter>
+          ) : isSelf && m.selfAnimated ? (
+            <ChatMessageEnter isSelf>{rowInner}</ChatMessageEnter>
+          ) : (
+            rowInner
+          )
+        return wrap(rowWrapped, renderDetachedReply(m, isSelf))
       }
 
       if (m.voice) {
@@ -9978,18 +10519,24 @@ export function ChatRoom({
             aria-hidden
           />
         )
+        const voiceShowAvatarColumn = isSelf ? showAvatarColumnSelf : showAvatarColumnOther
         const wrapVoiceRankOnAvatar = (node: ReactNode) => {
+          if (msAvatar) return composeMultiSelectLeading(msAvatar, node, voiceShowAvatarColumn)
           if (rankBesideNick || !voiceRankBadge) return node
           return <ChatGroupSpeakerRankOnAvatar rankBadge={voiceRankBadge}>{node}</ChatGroupSpeakerRankOnAvatar>
         }
-        const avatarPlaceholder = <div className="h-10 w-10 shrink-0" aria-hidden />
+        const avatarPlaceholder = composeMultiSelectLeading(
+          msAvatar,
+          <div className="h-10 w-10 shrink-0" aria-hidden />,
+          voiceShowAvatarColumn,
+        )
         const bubbleNode = (
           <VoiceMessageBubble
             isUser={isSelf}
             duration={d}
             audioUrl={m.voice.audioUrl || ''}
             transcriptText={m.voice.transcriptText || '（暂未生成转写文本）'}
-            onRequestAudio={isSelf ? undefined : () => ensureVoiceMessageAudio(m.id, m.voice)}
+            onRequestAudio={isSelf ? undefined : () => requestVoiceMessageAudio(m)}
             onLongPress={
               isMultiSelectMode
                 ? undefined
@@ -10016,9 +10563,9 @@ export function ChatRoom({
         const voiceRow = (
           isSelf ? (
             <div className="flex w-full max-w-full shrink-0 items-end justify-end overflow-x-visible">
-              {!showAvatar ? (
+              {!effectiveShowAvatar && !msAvatar ? (
                 <div className="mr-[24px] ml-auto min-w-0">{bubbleNode}</div>
-              ) : showAvatarVisual ? (
+              ) : showAvatarVisual || msAvatar ? (
                 <div className="mr-[24px] ml-auto flex max-w-full flex-row items-start gap-[12px]">
                   {bubbleNode}
                   {wrapVoiceRankOnAvatar(sharedMsgProps.chatSelfAvatarUrl ? avatarNodeRaw : selfGrayAvatar)}
@@ -10034,9 +10581,9 @@ export function ChatRoom({
             </div>
           ) : (
             <div className="w-full max-w-full shrink-0 overflow-x-visible">
-              {!showAvatar ? (
+              {!effectiveShowAvatar && !msAvatar ? (
                 <div className="ml-[24px] mr-auto min-w-0">{bubbleNode}</div>
-              ) : showAvatarVisual ? (
+              ) : showAvatarVisual || msAvatar ? (
                 <div className="ml-[24px] mr-auto flex max-w-full flex-row items-start gap-[12px]">
                   {wrapVoiceRankOnAvatar(sharedRowProps.chatOtherAvatarUrl ? avatarNodeRaw : otherGrayAvatar)}
                   <div className="flex min-w-0 flex-1 flex-col items-start gap-[3px]">
@@ -10078,7 +10625,7 @@ export function ChatRoom({
             data={m.musicSync}
             inviteCoverUrl={inviteCoverUrl}
             bubble={bubble}
-            showAvatar={showAvatar}
+            showAvatar={effectiveShowAvatar}
             showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
             chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
             chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
@@ -10107,7 +10654,7 @@ export function ChatRoom({
             isSelf={isSelf}
             data={shareData}
             bubble={bubble}
-            showAvatar={showAvatar}
+            showAvatar={effectiveShowAvatar}
             showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
             chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
             chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
@@ -10116,6 +10663,38 @@ export function ChatRoom({
             chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
             groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
             onOpen={() => requestOpenListenCommentShareCard(shareData)}
+          />
+        )
+        const rowWrapped =
+          !isSelf && m.otherAnimated ? (
+            <ChatMessageEnter isSelf={false}>{rowInner}</ChatMessageEnter>
+          ) : isSelf && m.selfAnimated ? (
+            <ChatMessageEnter isSelf>{rowInner}</ChatMessageEnter>
+          ) : (
+            rowInner
+          )
+        return wrap(rowWrapped, renderDetachedReply(m, isSelf))
+      }
+
+      if (m.sharedRecord) {
+        const shareData = m.sharedRecord
+        const rowInner = (
+          <SharedRecordChatRow
+            id={m.id}
+            isSelf={isSelf}
+            data={shareData}
+            bubble={bubble}
+            showAvatar={effectiveShowAvatar}
+            showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
+            chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
+            chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
+            chatOtherSenderNickname={chatOtherSenderNickname}
+            chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
+            chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
+            groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+            multiSelectAvatar={msAvatar}
+            personaContacts={personaContactsList}
+            playerDisplayName={playerDisplayName.trim() || '我'}
           />
         )
         const rowWrapped =
@@ -10142,7 +10721,7 @@ export function ChatRoom({
               expired: rp.expired === true,
             }}
             bubble={bubble}
-            showAvatar={showAvatar}
+            showAvatar={effectiveShowAvatar}
             showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
             chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
             chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
@@ -10237,7 +10816,7 @@ export function ChatRoom({
             transferBubblePerspective={transferBubblePerspective}
             getCurrentTime={getCurrentTimeMs}
             bubble={bubble}
-            showAvatar={showAvatar}
+            showAvatar={effectiveShowAvatar}
             showAvatarColumn={transferShowAvatarColumn}
             chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
             chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
@@ -10286,7 +10865,7 @@ export function ChatRoom({
             messagePrefixIcon={<PhoneCall className="size-[14px]" strokeWidth={1.9} aria-hidden />}
             isSelf={isSelf}
             bubble={bubble}
-            showAvatar={showAvatar}
+            showAvatar={effectiveShowAvatar}
             showBubbleTail={showBubbleTail}
             variant="chat"
             showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
@@ -10296,6 +10875,7 @@ export function ChatRoom({
             chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
             chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
             groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+            multiSelectAvatar={msAvatar}
           />
         )
         const rowWrapped =
@@ -10325,7 +10905,7 @@ export function ChatRoom({
               src={src}
               isSticker={isSticker}
               bubble={bubble}
-              showAvatar={showAvatar}
+              showAvatar={effectiveShowAvatar}
               showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
               chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
               chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
@@ -10334,6 +10914,7 @@ export function ChatRoom({
               chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
               groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
               onOtherAvatarClick={sharedRowProps.onOtherAvatarClick}
+              multiSelectAvatar={msAvatar}
               selected={actionPanelOpen && actionMessageId === m.id}
               onLongPress={
                 isMultiSelectMode
@@ -10359,7 +10940,7 @@ export function ChatRoom({
               luxuryDarkAdminBubble={!!sharedRowProps.luxuryDarkAdminBubble}
               isSelf={false}
               bubble={bubble}
-              showAvatar={showAvatar}
+              showAvatar={effectiveShowAvatar}
               showBubbleTail={showBubbleTail}
               variant="chat"
               avatarTapMotion
@@ -10375,6 +10956,7 @@ export function ChatRoom({
                   ? undefined
                   : (rect) => openActionPanelFor({ id: m.id, isSelf: false, text: messagePlainPreview(m), ts: m.timestamp, anchorRect: rect })
               }
+              multiSelectAvatar={msAvatar}
             />,
           renderDetachedReply(m, false),
         )
@@ -10386,7 +10968,7 @@ export function ChatRoom({
             messageText={m.text}
             isSelf
             bubble={bubble}
-            showAvatar={showAvatar}
+            showAvatar={effectiveShowAvatar}
             showBubbleTail={showBubbleTail}
             variant="chat"
             showAvatarColumn={showAvatarColumnSelf}
@@ -10401,6 +10983,7 @@ export function ChatRoom({
                 ? undefined
                 : (rect) => openActionPanelFor({ id: m.id, isSelf: true, text: messagePlainPreview(m), ts: m.timestamp, anchorRect: rect })
             }
+            multiSelectAvatar={msAvatar}
           />,
         renderDetachedReply(m, true),
       )
@@ -10436,7 +11019,7 @@ export function ChatRoom({
     expandedThinkingIds,
     toggleThinkingFold,
     recallAnimatingIds,
-    ensureVoiceMessageAudio,
+    requestVoiceMessageAudio,
     scrollToBottomSmooth,
     roomType,
     groupLive,
@@ -10555,7 +11138,15 @@ export function ChatRoom({
           </div>
         ) : null}
         <div className="relative z-[1] flex w-full max-w-full flex-col">
-          {messagesView}
+          {messagesView ? (
+            <WeChatChatRenderErrorBoundary
+              onRetry={() => {
+                setItems((prev) => [...prev])
+              }}
+            >
+              {messagesView}
+            </WeChatChatRenderErrorBoundary>
+          ) : null}
           {pendingQueue.length > 0 || typingFooterInterrupt ? (
             <div
               className="mt-4 flex w-full max-w-full shrink-0 justify-start overflow-x-hidden pl-[24px] pr-[24px]"
@@ -10612,71 +11203,42 @@ export function ChatRoom({
       </div>
 
       {isMultiSelectMode ? (
-        <div
-          className="relative z-10 w-full max-w-full shrink-0 border-t border-[#e5e5e5] bg-white"
+        <motion.div
+          className="relative z-10 w-full max-w-full shrink-0 border-t border-gray-200/60 bg-white/90 backdrop-blur-xl"
+          initial={{ y: 24, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: 24, opacity: 0 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
           style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}
         >
-          <div className="flex items-center justify-between px-4 py-2">
-            <div className="text-[12px] text-[#8e8e8e]">已选中 {selectedMessageIds.length} 条</div>
-            <Pressable
-              type="button"
-              className="rounded-[10px] px-2 py-1 text-[13px] text-black active:bg-[#f5f5f5]"
-              onClick={exitMultiSelect}
-            >
-              取消
-            </Pressable>
-          </div>
-          <div className="flex h-[50px] items-center justify-around px-6">
+          <div className="flex h-[56px] items-center justify-center gap-16 px-8">
             {(() => {
               const enabled = selectedMessageIds.length > 0
-              const color = enabled ? '#000000' : '#8e8e8e'
               return (
                 <>
                   <Pressable
                     type="button"
                     disabled={!enabled}
-                    className="text-[15px] disabled:opacity-100"
-                    style={{ color }}
+                    aria-label="删除"
+                    className="flex h-11 w-11 items-center justify-center rounded-full disabled:opacity-35"
                     onClick={() => setMultiDeleteConfirmOpen(true)}
                   >
-                    删除
+                    <Trash2 size={20} strokeWidth={1.75} color={enabled ? '#111111' : '#8e8e8e'} aria-hidden />
                   </Pressable>
                   <Pressable
                     type="button"
                     disabled={!enabled}
-                    className="text-[15px] disabled:opacity-100"
-                    style={{ color }}
-                    onClick={() => {
-                      void (async () => {
-                        const ids = [...selectedMessageIds]
-                        let ok = 0
-                        for (const id of ids) {
-                          const msg = await personaDb.getWeChatChatMessageById(id)
-                          if (!msg) continue
-                          await personaDb.addFavoriteFromWeChatMessage(msg)
-                          await personaDb.setWeChatChatMessageFavorite(id, true)
-                          ok += 1
-                        }
-                        if (ok > 0) showCenterToast(`已收藏${ok}条消息`)
-                      })()
-                    }}
-                  >
-                    收藏
-                  </Pressable>
-                  <Pressable
-                    type="button"
-                    disabled={!enabled}
-                    className="text-[15px] font-medium disabled:opacity-100"
-                    style={{ color: enabled ? '#000000' : '#8e8e8e' }}
+                    aria-label="转发"
+                    className="flex h-11 w-11 items-center justify-center rounded-full disabled:opacity-35"
                     onClick={() => setForwardModeSheetOpen(true)}
                   >
-                    转发
+                    <Share2 size={20} strokeWidth={1.75} color={enabled ? '#111111' : '#8e8e8e'} aria-hidden />
                   </Pressable>
                 </>
               )
             })()}
           </div>
-        </div>
+        </motion.div>
       ) : (
         <>
           {pendingNewCount > 0 ? (
@@ -10983,6 +11545,17 @@ export function ChatRoom({
           setPhotoPickerOpen(false)
           commitSendImages(payloads, false)
         }}
+      />
+
+      <ChatRoomFavoritesPicker
+        open={favoritesPickerOpen}
+        sending={favoriteShareSending}
+        onClose={() => {
+          if (favoriteShareSending) return
+          setFavoritesPickerOpen(false)
+        }}
+        onPick={(item) => void commitSendFavoriteSharedRecord(item)}
+        personaContacts={personaContactsList}
       />
 
       <AnimatePresence>
@@ -11608,14 +12181,10 @@ export function ChatRoom({
                 type="button"
                 className="flex w-full items-center justify-between rounded-[12px] px-3 py-3 text-left active:bg-[#f5f5f5]"
                 onClick={() => {
-                  const ids = [...selectedMessageIds]
+                  if (!selectedMessageIds.length) return
+                  setShareForwardMode('multi-merge')
                   setForwardModeSheetOpen(false)
-                  if (!ids.length) return
-                  onRequestForwardMessages?.({
-                    mode: 'multi-merge',
-                    messageIds: ids,
-                    mergeTitle: { userName: playerDisplayName.trim() || '我', peerName: peerNotifyTitle.trim() || '对方' },
-                  })
+                  setShareHistorySheetOpen(true)
                 }}
               >
                 <span className="text-[15px] text-black">合并转发</span>
@@ -11625,18 +12194,14 @@ export function ChatRoom({
                 type="button"
                 className="mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-3 text-left active:bg-[#f5f5f5]"
                 onClick={() => {
-                  const ids = [...selectedMessageIds]
+                  if (!selectedMessageIds.length) return
+                  setShareForwardMode('multi-item')
                   setForwardModeSheetOpen(false)
-                  if (!ids.length) return
-                  onRequestForwardMessages?.({
-                    mode: 'multi-item',
-                    messageIds: ids,
-                    mergeTitle: { userName: playerDisplayName.trim() || '我', peerName: peerNotifyTitle.trim() || '对方' },
-                  })
+                  setShareHistorySheetOpen(true)
                 }}
               >
                 <span className="text-[15px] text-black">逐条转发</span>
-                <span className="text-[12px] text-[#8e8e8e]">按原顺序发送</span>
+                <span className="text-[12px] text-[#8e8e8e]">按原顺序发送普通消息</span>
               </Pressable>
               <Pressable
                 type="button"
@@ -11649,6 +12214,46 @@ export function ChatRoom({
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      <ShareContactSheet
+        open={shareHistorySheetOpen}
+        sending={shareHistorySending}
+        onClose={() => {
+          if (shareHistorySending) return
+          setShareHistorySheetOpen(false)
+        }}
+        onConfirm={async (characterId) => {
+          const ids = [...selectedMessageIds]
+          if (!ids.length) return
+          setShareHistorySending(true)
+          try {
+            const rows = (
+              await Promise.all(ids.map((id) => personaDb.getWeChatChatMessageById(id)))
+            ).filter((x): x is WeChatChatMessage => !!x)
+            if (!rows.length) {
+              showCenterToast('所选消息不存在或已被删除')
+              return
+            }
+            if (shareForwardMode === 'multi-item') {
+              await forwardMessagesItemByItemToContact(characterId, rows)
+              showCenterToast(`已逐条转发 ${rows.length} 条消息`)
+            } else {
+              await forwardMessagesMergedToContact(characterId, rows, {
+                userName: playerDisplayName.trim() || '我',
+                peerName: peerNotifyTitle.trim() || '对方',
+                peerCharacterId: personaCharacterId?.trim() || conversationCharacterId.trim() || undefined,
+              })
+              showCenterToast('已转发聊天记录')
+            }
+            setShareHistorySheetOpen(false)
+            exitMultiSelect()
+          } catch (e) {
+            showCenterToast(e instanceof Error ? e.message : '转发失败')
+          } finally {
+            setShareHistorySending(false)
+          }
+        }}
+      />
 
     </div>
   )

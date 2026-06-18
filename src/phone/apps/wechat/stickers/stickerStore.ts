@@ -156,9 +156,8 @@ if (typeof window !== 'undefined') {
 
 /** 角色发图 / 校验模型输出 URL：仅允许资源库内地址（含默认包与用户表情包中心） */
 export function getKnownStickerUrlSet(): Set<string> {
-  const state = readState()
   const s = new Set<string>()
-  for (const g of [...DEFAULT_GROUPS, ...state.groups]) {
+  for (const g of allStickerGroups()) {
     for (const it of g.items) {
       const u = it.url.trim()
       if (u) s.add(u)
@@ -211,11 +210,19 @@ export type StickerCatalogEntry = {
   description: string
   groupName: string
   groupTag: string
+  /** 用户在「表情包中心」自建分组（非默认只读包） */
+  isUserCustom: boolean
 }
 
 function allStickerGroups(): StickerGroup[] {
   const state = readState()
-  return [...DEFAULT_GROUPS, ...state.groups]
+  /** 自定义分组优先：注入 AI 目录与解析匹配时，避免被默认大包截断 */
+  return [...state.groups, ...DEFAULT_GROUPS]
+}
+
+/** 发 AI 请求 / 解析角色 `[表情包]` 行前须 await，确保自定义包已从 IndexedDB 载入 */
+export function ensureStickerStoreHydrated(): Promise<void> {
+  return hydrateStateFromDb().then(() => undefined)
 }
 
 /**
@@ -244,8 +251,30 @@ export function getStickerCatalogEntries(): StickerCatalogEntry[] {
       description: desc,
       groupName: g.name,
       groupTag,
+      isUserCustom: !g.readonly,
     }
   })
+}
+
+function buildStickerCatalogLines(
+  entries: StickerCatalogEntry[],
+  maxLines: number,
+  maxChars: number,
+): string[] {
+  const custom = entries.filter((e) => e.isUserCustom && e.url)
+  const builtin = entries.filter((e) => !e.isUserCustom && e.url)
+  const lines: string[] = []
+  let chars = 0
+  const push = (e: StickerCatalogEntry) => {
+    const line = `- 「${e.groupTag}」${e.description} → 发送时单独一行输出：[表情包]${e.ref}`
+    if (lines.length >= maxLines) return
+    if (chars + line.length > maxChars && lines.length > 0) return
+    lines.push(line)
+    chars += line.length + 1
+  }
+  for (const e of custom) push(e)
+  for (const e of builtin) push(e)
+  return lines
 }
 
 /**
@@ -374,18 +403,20 @@ export function parseCharacterStickerLine(line: string): { url: string } | null 
  */
 export function buildStickerCatalogPromptBlock(maxLines = 96, maxChars = 9500): string {
   const entries = getStickerCatalogEntries()
-  const lines: string[] = []
-  for (const e of entries) {
-    if (!e.url) continue
-    lines.push(`- 「${e.groupTag}」${e.description} → 发送时单独一行输出：[表情包]${e.ref}`)
-    if (lines.length >= maxLines) break
-  }
+  const lines = buildStickerCatalogLines(entries, maxLines, maxChars)
   if (!lines.length) {
     return `---------------------\n【表情包资源】\n---------------------\n当前库中无可用表情条目。请勿输出 [表情包] 行；用户发图仍按「表情包消息」规则接话即可。\n`
   }
   let body = lines.join('\n')
-  if (body.length > maxChars) body = `${body.slice(0, maxChars)}\n…（目录过长已截断，请只用上方已列出的引用名）`
-  return `---------------------\n【表情包资源（仅允许使用下列「引用名」）】\n---------------------\n${body}\n`
+  const customCount = entries.filter((e) => e.isUserCustom && e.url).length
+  const builtinCount = entries.filter((e) => !e.isUserCustom && e.url).length
+  const truncated =
+    lines.length < customCount + builtinCount
+      ? '\n…（目录过长已截断：已优先保留用户在「表情包中心」自建分组；请只用上方已列出的引用名）'
+      : ''
+  if (body.length > maxChars) body = `${body.slice(0, maxChars)}${truncated || '\n…（目录过长已截断，请只用上方已列出的引用名）'}`
+  else if (truncated) body = `${body}${truncated}`
+  return `---------------------\n【表情包资源（含默认包与用户自建分组；日常回复可主动选用，不限于用户刚发表情时才能用）】\n---------------------\n${body}\n`
 }
 
 function writeState(next: StickerState) {

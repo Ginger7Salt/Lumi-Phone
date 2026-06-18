@@ -65,9 +65,19 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(binary)
 }
 
-function loadImageElement(src: string): Promise<HTMLImageElement> {
+function resolveFetchUrl(raw: string): string {
+  const t = raw.trim()
+  if (/^https?:\/\//i.test(t) || t.startsWith('blob:') || t.startsWith('data:')) return t
+  if (typeof window !== 'undefined' && t.startsWith('/')) {
+    return new URL(t, window.location.origin).href
+  }
+  return t
+}
+
+function loadImageElement(src: string, crossOrigin = false): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image()
+    if (crossOrigin) img.crossOrigin = 'anonymous'
     img.onload = () => resolve(img)
     img.onerror = () => reject(new Error('image_load_failed'))
     img.src = src
@@ -75,60 +85,40 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
 }
 
 async function fetchStickerBytes(url: string): Promise<{ base64: string; mime: WeChatImageMime }> {
+  const resolved = resolveFetchUrl(url)
   let resp: Response
   try {
-    resp = await fetch(url, { mode: 'cors' })
+    resp = await fetch(resolved, { mode: 'cors' })
   } catch {
-    resp = await fetch(url)
+    resp = await fetch(resolved)
   }
   if (!resp.ok) throw new Error(`sticker_fetch_failed:${resp.status}`)
   const buf = await resp.arrayBuffer()
-  const mime = resolveStickerMime(resp.headers.get('content-type') ?? '', url, buf)
+  const mime = resolveStickerMime(resp.headers.get('content-type') ?? '', resolved, buf)
   if (!mime) throw new Error('unsupported_sticker_mime')
   return { base64: arrayBufferToBase64(buf), mime }
 }
 
-export async function stickerUrlToImagePayload(url: string): Promise<{ base64: string; mime: WeChatImageMime }> {
-  const raw = url.trim()
-  if (!raw) throw new Error('empty_sticker_url')
-  const parsed = parseDataUrlParts(raw)
-  if (parsed?.base64) {
-    if (isSupportedStickerMime(parsed.mime)) {
-      return { base64: parsed.base64, mime: parsed.mime }
-    }
-    const sniffed = sniffStickerMimeFromBase64(parsed.base64)
-    if (sniffed) return { base64: parsed.base64, mime: sniffed }
-  }
-  if (!parsed) {
-    try {
-      const fetched = await fetchStickerBytes(raw)
-      if (fetched.mime === 'image/gif' || fetched.mime === 'image/webp') return fetched
-      if (isSupportedStickerMime(fetched.mime)) return fetched
-    } catch {
-      // 非 URL 资源或 fetch 失败时，再尝试静态图 rasterize
-    }
-  }
-
-  const guessed = guessStickerMimeFromUrl(raw)
-  if (guessed === 'image/gif' || guessed === 'image/webp') {
-    throw new Error('sticker_animated_fetch_failed')
-  }
-
-  let src = raw
+async function rasterizeStaticImageToJpeg(src: string): Promise<{ base64: string; mime: 'image/jpeg' }> {
   let revokeUrl: string | null = null
+  let loadSrc = src
   try {
-    if (!parsed) {
-      const resp = await fetch(raw)
-      if (!resp.ok) throw new Error(`sticker_fetch_failed:${resp.status}`)
-      const buf = await resp.arrayBuffer()
-      const sniffed = resolveStickerMime(resp.headers.get('content-type') ?? '', raw, buf)
-      if (sniffed === 'image/gif' || sniffed === 'image/webp') {
-        return { base64: arrayBufferToBase64(buf), mime: sniffed }
+    if (!src.startsWith('data:') && !src.startsWith('blob:')) {
+      try {
+        const fetched = await fetchStickerBytes(src)
+        const buf = Uint8Array.from(atob(fetched.base64), (c) => c.charCodeAt(0))
+        loadSrc = URL.createObjectURL(new Blob([buf], { type: fetched.mime }))
+        revokeUrl = loadSrc
+      } catch {
+        loadSrc = resolveFetchUrl(src)
       }
-      src = URL.createObjectURL(new Blob([buf]))
-      revokeUrl = src
     }
-    const img = await loadImageElement(src)
+    let img: HTMLImageElement
+    try {
+      img = await loadImageElement(loadSrc, true)
+    } catch {
+      img = await loadImageElement(loadSrc, false)
+    }
     const width = Math.max(1, img.naturalWidth || img.width || 1)
     const height = Math.max(1, img.naturalHeight || img.height || 1)
     const canvas = document.createElement('canvas')
@@ -144,6 +134,53 @@ export async function stickerUrlToImagePayload(url: string): Promise<{ base64: s
   } finally {
     if (revokeUrl) URL.revokeObjectURL(revokeUrl)
   }
+}
+
+export async function stickerUrlToImagePayload(url: string): Promise<{ base64: string; mime: WeChatImageMime }> {
+  const raw = url.trim()
+  if (!raw) throw new Error('empty_sticker_url')
+
+  if (raw.startsWith('blob:')) {
+    return fetchStickerBytes(raw)
+  }
+
+  const parsed = parseDataUrlParts(raw)
+  if (parsed?.base64) {
+    if (isSupportedStickerMime(parsed.mime)) {
+      return { base64: parsed.base64, mime: parsed.mime }
+    }
+    const sniffed = sniffStickerMimeFromBase64(parsed.base64)
+    if (sniffed) return { base64: parsed.base64, mime: sniffed }
+  }
+
+  if (/^https?:\/\//i.test(raw) || raw.startsWith('/')) {
+    try {
+      const fetched = await fetchStickerBytes(raw)
+      if (fetched.mime === 'image/gif' || fetched.mime === 'image/webp') return fetched
+      if (isSupportedStickerMime(fetched.mime)) return fetched
+    } catch {
+      // 外链无 CORS 时改走 Image 栅格化
+    }
+  }
+
+  const guessed = guessStickerMimeFromUrl(raw)
+  if (guessed === 'image/gif' || guessed === 'image/webp') {
+    try {
+      return await fetchStickerBytes(raw)
+    } catch {
+      throw new Error('sticker_animated_fetch_failed')
+    }
+  }
+
+  if (parsed?.base64) {
+    try {
+      return await rasterizeStaticImageToJpeg(raw)
+    } catch {
+      throw new Error('sticker_data_url_decode_failed')
+    }
+  }
+
+  return rasterizeStaticImageToJpeg(raw)
 }
 
 export function arrayBufferToBase64ForMedia(buf: ArrayBuffer): string {

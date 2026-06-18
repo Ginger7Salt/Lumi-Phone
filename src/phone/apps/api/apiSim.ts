@@ -1,24 +1,8 @@
+import { buildOpenAiModelsEndpoint } from './openAiCompatibleEndpoints'
 import type { ApiConfig } from './types'
 
 export type ModelFetchResult = { ok: true; models: string[] } | { ok: false; error: string }
 export type TestResult = { ok: true } | { ok: false; error: string }
-
-function normalizeBase(apiUrl: string) {
-  const u = apiUrl.trim().replace(/\/+$/, '')
-  if (!u) return ''
-  // 如果用户填了 .../v1 或 .../v1/，直接拼 /models；否则按 OpenAI 风格补 /v1/models
-  if (/(\/v1)$/i.test(u)) return u
-  return u
-}
-
-function buildModelsEndpoint(apiUrl: string) {
-  const base = normalizeBase(apiUrl)
-  if (!base) return ''
-  if (/\/v1$/i.test(base)) return `${base}/models`
-  // 既支持用户直接填根域，也支持填到 /v1/models（这时避免重复拼）
-  if (/\/v1\/models$/i.test(base)) return base
-  return `${base}/v1/models`
-}
 
 function pickErrorMessage(payload: unknown, fallback: string) {
   if (!payload || typeof payload !== 'object') return fallback
@@ -39,7 +23,7 @@ export async function fetchModels(cfg: ApiConfig): Promise<ModelFetchResult> {
   if (!url) return { ok: false, error: '请先填写 API URL' }
   if (!key) return { ok: false, error: '请先填写 API Key' }
   if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'API URL 格式不正确（需以 http/https 开头）' }
-  const endpoint = buildModelsEndpoint(url)
+  const endpoint = buildOpenAiModelsEndpoint(url)
   if (!endpoint) return { ok: false, error: 'API URL 无效' }
 
   try {

@@ -3,6 +3,7 @@ import { ChevronLeft } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import walletBg from '../../../../../image/钱包页背景图.png'
+import { ListenNumericText } from '../../../../components/discoverListen/ListenNum'
 import { Pressable } from '../../../components/Pressable'
 import { useCustomization } from '../../../CustomizationContext'
 import { CreateGroupModal } from './CreateGroupModal'
@@ -48,7 +49,7 @@ export function StickerCenterPage({ onBack }: Props) {
             返回
           </Pressable>
           <h2 className="text-[17px] font-semibold text-black">
-            {activeGroup ? activeGroup.name : '表情包中心'}
+            {activeGroup ? <ListenNumericText text={activeGroup.name} /> : '表情包中心'}
           </h2>
         </div>
       </header>

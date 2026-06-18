@@ -23,6 +23,7 @@ import { LumiMeetProvider } from './apps/lumiMeet/LumiMeetStore'
 import { WorldbookLoreProvider } from './worldbook/worldbookLoreStore'
 import type { AppSlot } from './types'
 import { ListenTogetherPlayerBootstrap } from '../components/discoverListen/ListenTogetherPlayerBootstrap'
+import { dispatchPhoneDismissOverlays } from './phoneDismissOverlays'
 
 type Route =
   | { name: 'home' }
@@ -108,6 +109,12 @@ export function PhoneApp() {
       // ignore
     }
   }, [])
+
+  useEffect(() => {
+    if (route.name === 'app' && route.id !== 'wechat') {
+      dispatchPhoneDismissOverlays()
+    }
+  }, [route])
 
   useEffect(() => {
     const run = () => void personaDb.purgeExpiredIndexedTrash()

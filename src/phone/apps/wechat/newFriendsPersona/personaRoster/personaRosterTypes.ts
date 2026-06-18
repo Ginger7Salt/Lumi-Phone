@@ -25,3 +25,10 @@ export function isNpcCharacter(ch: Pick<Character, 'generatedForCharacterId'>): 
 export function isMainCharacter(ch: Pick<Character, 'generatedForCharacterId'>): boolean {
   return !isNpcCharacter(ch)
 }
+
+/** 名册「主要角色」Tab：排除玩家身份行、人脉 NPC */
+export function isPersonaRosterMainCharacter(
+  ch: Pick<Character, 'generatedForCharacterId' | 'isPlayerIdentity'>,
+): boolean {
+  return isMainCharacter(ch) && !ch.isPlayerIdentity
+}

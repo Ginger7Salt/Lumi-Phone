@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
-import { Plus } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 
+import { ListenNumericText } from '../../../../components/discoverListen/ListenNum'
 import { Pressable } from '../../../components/Pressable'
 import type { StickerGroup } from './stickerStore'
 
@@ -28,38 +29,46 @@ export function StickerHub({ groups, onCreate, onOpenGroup, onRequestDeleteGroup
 
         {groups.map((g) => (
           <motion.div key={g.id} layout>
-            <div className="w-full overflow-hidden rounded-[22px] border border-white/45 bg-white/30 text-left backdrop-blur-[12px] shadow-sm">
+            <div className="relative w-full overflow-hidden rounded-[22px] border border-white/45 bg-white/30 text-left backdrop-blur-[12px] shadow-sm">
+              {!g.readonly ? (
+                <Pressable
+                  type="button"
+                  aria-label={`删除分组 ${g.name}`}
+                  onClick={() => onRequestDeleteGroup(g)}
+                  className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-white/60 bg-white/75 text-gray-700 shadow-sm backdrop-blur-[8px]"
+                >
+                  <Trash2 className="size-3.5" strokeWidth={1.75} />
+                </Pressable>
+              ) : null}
               <Pressable
                 type="button"
                 onClick={() => onOpenGroup(g.id)}
                 className="w-full"
               >
                 <div className="aspect-[1.05] bg-white/20">
-                  {g.coverUrl ? <img src={g.coverUrl} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-[12px] text-gray-100">No Cover</div>}
+                  {g.coverUrl ? (
+                    <img src={g.coverUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-[12px] text-gray-100">No Cover</div>
+                  )}
                 </div>
                 <div className="px-3 py-3">
                   <div className="flex items-center gap-1.5">
-                    <p className="truncate text-[15px] font-medium text-gray-950">{g.name}</p>
+                    <p className="truncate text-[15px] font-medium text-gray-950">
+                      <ListenNumericText text={g.name} />
+                    </p>
                     {g.readonly ? (
                       <span className="shrink-0 rounded-full border border-white/55 bg-white/40 px-1.5 py-0.5 text-[10px] text-gray-800">
                         默认
                       </span>
                     ) : null}
                   </div>
-                  <p className="mt-1 text-[11px] text-gray-700">{g.items.length} expressions</p>
+                  <p className="mt-1 text-[11px] text-gray-700">
+                    <ListenNumericText text={String(g.items.length)} />
+                    {' expressions'}
+                  </p>
                 </div>
               </Pressable>
-              {!g.readonly ? (
-                <div className="flex justify-end px-3 pb-3">
-                  <Pressable
-                    type="button"
-                    onClick={() => onRequestDeleteGroup(g)}
-                    className="inline-flex h-8 items-center justify-center rounded-full border border-white/60 bg-white/35 px-3 text-[11px] text-gray-800 backdrop-blur-[8px]"
-                  >
-                    删除分组
-                  </Pressable>
-                </div>
-              ) : null}
             </div>
           </motion.div>
         ))}

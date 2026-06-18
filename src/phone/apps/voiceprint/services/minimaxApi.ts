@@ -388,7 +388,6 @@ const hexToBytes = (hex: string): Uint8Array => {
   return new Uint8Array(pairs.map((h) => Number.parseInt(h, 16)))
 }
 
-/** 同步语音合成，与官方 `POST /v1/t2a_v2`（stream:false）一致，参见 https://platform.minimaxi.com/docs/api-reference/speech-t2a-http */
 export async function createMiniMaxT2ASyncAudioBlob(
   creds: MiniMaxCredentials,
   params: {
@@ -436,6 +435,125 @@ export async function createMiniMaxT2ASyncAudioBlob(
   if (!bytes.length) throw new Error('同步合成音频数据格式无效')
   const ab = toDetachedArrayBuffer(bytes)
   return new Blob([ab], { type: 'audio/mpeg' })
+}
+
+export function readMiniMaxCredentialsFromLocalStorage(): MiniMaxCredentials {
+  if (typeof localStorage === 'undefined') return { apiKey: '', groupId: '' }
+  return {
+    apiKey: String(localStorage.getItem('minimax:apiKey') || '').trim(),
+    groupId: String(localStorage.getItem('minimax:groupId') || '').trim(),
+  }
+}
+
+export function readMiniMaxSpeechModelFromLocalStorage(): string {
+  if (typeof localStorage === 'undefined') return 'speech-2.8-hd'
+  return String(localStorage.getItem('minimax:speechModel') || 'speech-2.8-hd').trim() || 'speech-2.8-hd'
+}
+
+type MiniMaxVoiceSynthParams = {
+  voice_id: string
+  text: string
+  model?: string
+  emotion?: 'happy' | 'sad' | 'angry' | 'fearful' | 'disgusted' | 'surprised' | 'neutral' | 'calm' | 'fluent' | 'whisper'
+}
+
+async function fetchRemoteAudioAsBlob(url: string): Promise<Blob> {
+  const resp = await fetch(url, { method: 'GET' })
+  if (!resp.ok) throw new Error(`音频下载失败（HTTP ${resp.status}）`)
+  const blob = await resp.blob()
+  const mime = (blob.type || 'audio/mpeg').trim().toLowerCase()
+  if (mime.startsWith('audio/')) return blob
+  return new Blob([await blob.arrayBuffer()], { type: 'audio/mpeg' })
+}
+
+/** 异步 T2A 轮询并下载 MP3 Blob（与声纹档案预览页回退链路一致） */
+async function synthesizeMiniMaxVoiceViaAsyncTask(
+  creds: MiniMaxCredentials,
+  params: MiniMaxVoiceSynthParams,
+): Promise<Blob> {
+  const created = await createMiniMaxT2AAsyncTask(creds, {
+    voice_id: params.voice_id,
+    text: params.text,
+    model: params.model,
+  })
+  const task_id = String((created as { task_id?: unknown }).task_id ?? '').trim()
+  if (!task_id) throw new Error('任务创建失败：缺少 task_id')
+
+  const started = Date.now()
+  let waitMs = 600
+  for (;;) {
+    await new Promise((r) => window.setTimeout(r, waitMs))
+    waitMs = Math.min(1400, Math.round(waitMs * 1.15))
+    const q = await queryMiniMaxT2AAsyncTask(creds, { task_id })
+    const payload = ((q as { data?: unknown })?.data && typeof (q as { data?: unknown }).data === 'object'
+      ? (q as { data: unknown }).data
+      : q) as Record<string, unknown>
+    const url = String(payload?.audio_url ?? payload?.url ?? '').trim()
+    const fileId = String(payload?.file_id ?? '').trim()
+    const statusRaw = payload?.status ?? payload?.task_status ?? payload?.state ?? ''
+    const statusText = String(statusRaw).trim().toLowerCase()
+    const statusNum = Number(statusRaw)
+    const isFailed =
+      statusText.includes('fail') || statusText.includes('error') || (Number.isFinite(statusNum) && statusNum < 0)
+    const isDone =
+      statusText.includes('success') ||
+      statusText.includes('succeed') ||
+      statusText.includes('done') ||
+      statusText.includes('finish') ||
+      statusText.includes('complete') ||
+      (Number.isFinite(statusNum) && statusNum >= 2)
+
+    if (url || (fileId && isDone)) {
+      if (url) return await fetchRemoteAudioAsBlob(url)
+      if (fileId) {
+        const blobUrl = await retrieveMiniMaxAudioFileUrl(creds, { file_id: fileId })
+        try {
+          return await fetchRemoteAudioAsBlob(blobUrl)
+        } finally {
+          if (blobUrl.startsWith('blob:')) URL.revokeObjectURL(blobUrl)
+        }
+      }
+    }
+    if (isFailed) throw new Error('语音合成失败，请检查 Key/余额/模型参数')
+    if (Date.now() - started > 45_000) throw new Error('合成超时，请稍后重试')
+  }
+}
+
+/**
+ * 微信/约会等场景的统一合成入口：先同步（与声纹预览一致），失败再异步回退。
+ * 默认不传 emotion，避免克隆音色在 voice_setting.emotion 上失败。
+ */
+export async function synthesizeMiniMaxVoiceAudioBlob(
+  creds: MiniMaxCredentials,
+  params: MiniMaxVoiceSynthParams,
+): Promise<Blob> {
+  const voiceId = params.voice_id.trim()
+  const text = params.text.trim()
+  const model = String(params.model || readMiniMaxSpeechModelFromLocalStorage()).trim() || 'speech-2.8-hd'
+  if (!voiceId) throw new Error('请先选择 voice_id')
+  if (!text) throw new Error('请输入要合成的台词')
+
+  const attempts: MiniMaxVoiceSynthParams[] = [{ voice_id: voiceId, text, model }]
+  if (params.emotion) {
+    attempts.unshift({ voice_id: voiceId, text, model, emotion: params.emotion })
+  }
+
+  let lastErr: unknown = null
+  for (const attempt of attempts) {
+    try {
+      return await createMiniMaxT2ASyncAudioBlob(creds, attempt)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  for (const attempt of attempts) {
+    try {
+      return await synthesizeMiniMaxVoiceViaAsyncTask(creds, attempt)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('语音合成失败')
 }
 
 export async function createMiniMaxT2AAsyncTask(

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { apiPresetEditPath } from '../apiPresetRoutes'
+import { API_LINK_PREVIEW_ROUTE, LINK_PREVIEW_FEATURE_TITLE } from '../linkPreviewDisplayLabels'
 import { useApiSettings } from '../ApiSettingsContext'
 import { useImageGenSettings } from '../useImageGenSettings'
 import { apiTheme } from '../theme'
@@ -9,7 +11,8 @@ import { TopNav } from '../components/TopNav'
 
 export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
   const nav = useNavigate()
-  const { presets, currentPresetId, currentPreset, setCurrentPresetId, deletePreset, duplicatePreset } = useApiSettings()
+  const { presets, currentPresetId, currentPreset, setCurrentPresetId, deletePreset, duplicatePreset, linkPreview } =
+    useApiSettings()
   const { configured: imageGenConfigured, imageGen } = useImageGenSettings()
   const [deleteId, setDeleteId] = useState<string | null>(null)
 
@@ -33,12 +36,26 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
       : { text: '待填 Key', bg: apiTheme.subText }
   }, [currentPreset, imageGen.enabled, imageGenConfigured])
 
+  const linkPreviewTag = useMemo(() => {
+    if (!linkPreview.enabled) return { text: '已关闭', bg: apiTheme.subText }
+    const t = linkPreview.lastTest
+    if (!linkPreview.apiKey.trim()) {
+      return t?.ok ? { text: '匿名可用', bg: apiTheme.accent } : { text: '已启用', bg: apiTheme.accent }
+    }
+    if (!t) return { text: '已配置', bg: apiTheme.accent }
+    return t.ok ? { text: '连接正常', bg: apiTheme.accent } : { text: '连接失败', bg: apiTheme.subText }
+  }, [linkPreview])
+
+  const openLinkPreview = () => {
+    nav(API_LINK_PREVIEW_ROUTE)
+  }
+
   const openEdit = () => {
     if (!currentPresetId) {
       nav('/new')
       return
     }
-    nav(`/edit/${currentPresetId}`)
+    nav(apiPresetEditPath(currentPresetId))
   }
 
   return (
@@ -86,7 +103,7 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
                 </p>
               ) : (
                 <p className="mt-2 text-[13px]" style={{ color: apiTheme.subText, fontWeight: 300 }}>
-                  编辑预设时可切换「主接口 / 副接口 / 生图 API」三个 Tab。
+                  编辑预设时可切换「主接口 / 副接口 / 生图」三个 Tab；{LINK_PREVIEW_FEATURE_TITLE} 在下方单独配置。
                 </p>
               )}
             </div>
@@ -96,7 +113,7 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
                   type="button"
                   onClick={() => {
                     const nid = duplicatePreset(currentPresetId)
-                    if (nid) nav(`/edit/${nid}`)
+                    if (nid) nav(apiPresetEditPath(nid))
                   }}
                   className="text-[14px] font-medium transition-all duration-200 ease-out hover:opacity-80"
                   style={{ color: apiTheme.subText }}
@@ -116,6 +133,33 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
           </div>
         </section>
 
+        <section className="mx-4 mt-3 rounded-2xl bg-white p-5" style={{ boxShadow: apiTheme.shadow }}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[16px] font-semibold" style={{ color: apiTheme.text }}>
+                {LINK_PREVIEW_FEATURE_TITLE}
+              </p>
+              <p className="mt-1 text-[13px] leading-relaxed" style={{ color: apiTheme.subText, fontWeight: 300 }}>
+                微信聊天发 https 时自动识别：普通页提取正文，抖音 / 小红书 / B 站等解析视频与图文（支持识图）。
+              </p>
+              <span
+                className="mt-2 inline-block rounded-lg px-3 py-1 text-[12px] font-medium text-white"
+                style={{ background: linkPreviewTag.bg }}
+              >
+                {linkPreviewTag.text}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={openLinkPreview}
+              className="shrink-0 text-[14px] font-medium transition-all duration-200 ease-out hover:opacity-80"
+              style={{ color: apiTheme.accent }}
+            >
+              配置
+            </button>
+          </div>
+        </section>
+
         <p className="mx-4 mt-6 text-[16px] font-semibold" style={{ color: apiTheme.text }}>
           我的预设
         </p>
@@ -128,10 +172,10 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
               description={p.description}
               active={p.id === currentPresetId}
               onClick={() => setCurrentPresetId(p.id)}
-              onEdit={() => nav(`/edit/${p.id}`)}
+              onEdit={() => nav(apiPresetEditPath(p.id))}
               onDuplicate={() => {
                 const nid = duplicatePreset(p.id)
-                if (nid) nav(`/edit/${nid}`)
+                if (nid) nav(apiPresetEditPath(nid))
               }}
               onDelete={() => setDeleteId(p.id)}
             />
@@ -149,13 +193,13 @@ export function ApiSettingsHomePage({ onBack }: { onBack: () => void }) {
       </div>
 
       <div
-        className="absolute bottom-0 left-0 right-0 px-4"
+        className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 px-4"
         style={{ paddingBottom: 'calc(20px + env(safe-area-inset-bottom, 0px))' }}
       >
         <button
           type="button"
           onClick={() => nav('/new')}
-          className="w-full rounded-xl px-4 py-3 text-[15px] font-semibold text-white transition-all duration-200 ease-out hover:brightness-105"
+          className="pointer-events-auto w-full rounded-xl px-4 py-3 text-[15px] font-semibold text-white transition-all duration-200 ease-out hover:brightness-105"
           style={{ background: apiTheme.accent }}
         >
           新建API预设

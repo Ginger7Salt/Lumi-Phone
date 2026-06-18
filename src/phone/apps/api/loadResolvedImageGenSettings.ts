@@ -4,13 +4,18 @@ import {
   migrateLegacyImageGenIntoStore,
   normalizeImageGenSettings,
 } from './imageGenPresetUtils'
+import {
+  API_STORE_STORAGE_KEY,
+  createEmptyLinkPreviewSettings,
+  mergeApiStoreLinkPreview,
+} from './linkPreviewSettingsUtils'
 import type { ApiPreset, ApiStore } from './types'
 import { createEmptyPreset } from './mock'
 import { SILICONFLOW_ASR_DEFAULT_BASE_URL } from '../wechat/voiceCall/siliconflowAsr'
 import type { ApiConfig, SubApiType } from './types'
 import { createEmptyApiConfig } from './mock'
 
-const STORAGE_KEY = 'ai-api-presets-v1'
+const STORAGE_KEY = API_STORE_STORAGE_KEY
 
 function normalizeApiConfig(raw: unknown): ApiConfig {
   const r = (raw ?? {}) as Partial<ApiConfig>
@@ -79,9 +84,13 @@ function parseApiStore(raw: unknown): ApiStore {
       typeof parsed.currentPresetId === 'string' && presets.some((p) => p.id === parsed.currentPresetId)
         ? parsed.currentPresetId
         : presets[0]?.id ?? ''
-    return migrateLegacyImageGenIntoStore({ presets, currentPresetId })
+    return migrateLegacyImageGenIntoStore({
+      presets,
+      currentPresetId,
+      ...mergeApiStoreLinkPreview(parsed),
+    })
   } catch {
-    return { presets: [], currentPresetId: '' }
+    return { presets: [], currentPresetId: '', linkPreview: createEmptyLinkPreviewSettings() }
   }
 }
 

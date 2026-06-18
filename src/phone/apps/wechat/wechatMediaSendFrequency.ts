@@ -227,14 +227,19 @@ export function resolveStickerCatalogPromptBlockForSession(
   return buildCatalog()
 }
 
+/**
+ * 客户端拦截表情包气泡：仅当会话设为 0%（完全禁止）时丢弃。
+ * 大于 0% 时概率只写入提示词引导模型，**不在模型已输出 `[表情包]` 行后再掷骰静默丢弃**（否则控制台有解析、界面无气泡）。
+ */
 export function shouldSuppressCharacterStickerLine(
   roomType: 'private' | 'group',
   stickerRoundTriggerPercent: number | undefined,
-  roundAllowed: boolean,
+  _roundAllowed?: boolean,
+  userExplicitStickerRequest = false,
 ): boolean {
+  if (userExplicitStickerRequest) return false
   if (roomType !== 'private' || stickerRoundTriggerPercent === undefined) return false
-  if (stickerRoundTriggerPercent <= 0) return true
-  return !roundAllowed
+  return stickerRoundTriggerPercent <= 0
 }
 
 export function shouldSuppressCharacterVoiceLine(

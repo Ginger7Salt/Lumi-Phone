@@ -223,10 +223,54 @@ export default defineConfig(({ command, mode }) => {
   const base = resolveAppBase(command)
   const env = loadEnv(mode, __dirname, '')
   const neteaseDevProxies = buildNeteaseDevProxyTable(env)
+  /** 默认 dev 走自签 https（桌面 Chrome 可点继续）；手机 Safari 常连不上，可设 VITE_DEV_HTTPS=false 改用 http */
+  const devHttps =
+    command === 'serve' &&
+    env.VITE_DEV_HTTPS !== 'false' &&
+    env.VITE_DEV_HTTPS !== '0'
 
   return {
   base,
-  plugins: [react(), tailwindcss(), basicSsl(), injectEarlyServiceWorkerPlugin(), notifyIconDevServerPlugin(), copyRootImageDirToDist(), pwaManifestPlugin()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    ...(devHttps ? [basicSsl()] : []),
+    injectEarlyServiceWorkerPlugin(),
+    notifyIconDevServerPlugin(),
+    copyRootImageDirToDist(),
+    pwaManifestPlugin(),
+    {
+      name: 'dev-lan-hint',
+      configureServer(server) {
+        server.httpServer?.once('listening', () => {
+          const addr = server.httpServer?.address()
+          const port =
+            typeof addr === 'object' && addr && 'port' in addr ? addr.port : server.config.server.port ?? 5173
+          const protocol = devHttps ? 'https' : 'http'
+          const lan = (server.resolvedUrls?.network ?? []).filter(Boolean)
+          const local = (server.resolvedUrls?.local ?? []).filter(Boolean)
+          const lines = [
+            '',
+            '──────────────── 本机调试 ────────────────',
+            `  电脑浏览器：${local[0] ?? `${protocol}://localhost:${port}`}`,
+            ...(lan.length ? lan.map((u) => `  手机同一 WiFi：${u}`) : [`  手机同一 WiFi：${protocol}://<本机IPv4>:${port}`]),
+            ...(devHttps
+              ? [
+                  '  iOS Safari 若打不开：先在手机访问上面局域网地址，',
+                  '  点「显示详细信息」→「访问此网站」信任自签证书；',
+                  '  仍不行则在 .env.local 加一行 VITE_DEV_HTTPS=false 后重启，改 http 访问。',
+                  '  切勿在手机输入 localhost（会连到手机自己）。',
+                ]
+              : ['  当前为 HTTP 局域网模式（便于 iOS 真机调试）。']),
+            '────────────────────────────────────────',
+            '',
+          ]
+          // eslint-disable-next-line no-console
+          console.log(lines.join('\n'))
+        })
+      },
+    },
+  ],
   /** 监听 0.0.0.0，同一局域网（同一 WiFi）内设备可通过本机 IP 访问 */
   server: {
     host: true,
@@ -234,8 +278,7 @@ export default defineConfig(({ command, mode }) => {
     fs: {
       allow: [__dirname, path.resolve(__dirname, '剧本杀')],
     },
-    // 通过 basicSsl() 启用 https；这里按 ServerOptions 传对象即可
-    https: {},
+    ...(devHttps ? { https: {} } : {}),
     proxy: {
       /**
        * MiniMax：前端直连大概率遇到 CORS，这里提供 dev proxy。
@@ -258,11 +301,26 @@ export default defineConfig(({ command, mode }) => {
        * 听一听 · 网易云 API 开发代理（/ncm-api-0… 对应不同公共节点，502 时自动切换）
        */
       ...neteaseDevProxies,
+      /** 极数本源：浏览器直连会 CORS，开发期走同源代理 */
+      '/apizero-proxy': {
+        target: 'https://v1.apizero.cn',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/apizero-proxy/, ''),
+      },
     },
   },
   preview: {
     host: true,
     port: 4173,
+    proxy: {
+      '/apizero-proxy': {
+        target: 'https://v1.apizero.cn',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/apizero-proxy/, ''),
+      },
+    },
   },
   }
 })

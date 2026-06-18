@@ -26,8 +26,10 @@ import {
 } from './memoryArchiveFilter'
 import type { MemoryEntry, MemoryTypeFilterId, MemoryCharacterPageMeta } from './memoryArchiveTypes'
 import { parseMemorySourcePrefix } from './memorySourceBadges'
+import { collectMemoryIdsForArchiveCharacterClear } from './collectMemoryIdsForArchiveCharacterClear'
 import { MemoryArchiveBackToTop } from './MemoryArchiveBackToTop'
 import { MemoryArchiveHeader } from './MemoryArchiveHeader'
+import { MemoryClearAllConfirmModal } from './MemoryClearAllConfirmModal'
 import { MemoryCharacterDetailView } from './MemoryCharacterDetailView'
 import { MemoryCharacterRoster } from './MemoryCharacterRoster'
 import { MemoryList } from './MemoryList'
@@ -97,6 +99,8 @@ export function MemoryArchivePanel({
   const [tutorialOpen, setTutorialOpen] = useState(false)
   const [coachOpen, setCoachOpen] = useState(false)
   const [coachStepIndex, setCoachStepIndex] = useState(0)
+  const [clearAllConfirmOpen, setClearAllConfirmOpen] = useState(false)
+  const [clearAllBusy, setClearAllBusy] = useState(false)
   const accountBootstrappedForAccountRef = useRef<string | null>(null)
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const [showBackToTop, setShowBackToTop] = useState(false)
@@ -428,6 +432,15 @@ export function MemoryArchivePanel({
     [allEntries, rawById, selectedAccountId, primaryAccountId, selectedCharId, debouncedSearch, typeFilters, archiveView],
   )
 
+  const clearAllTargetIds = useMemo(() => {
+    if (!selectedCharId) return []
+    return collectMemoryIdsForArchiveCharacterClear({
+      selectedCharId,
+      allEntries,
+      rawMemories: [...rawById.values()],
+    })
+  }, [selectedCharId, allEntries, rawById])
+
   useEffect(() => {
     const el = scrollerRef.current
     if (!el) return
@@ -442,6 +455,7 @@ export function MemoryArchivePanel({
   }, [])
 
   const openCharacter = useCallback((charId: string) => {
+    setClearAllConfirmOpen(false)
     setSelectedCharId(charId)
     setTypeFilters(new Set())
     setArchiveView('detail')
@@ -449,6 +463,7 @@ export function MemoryArchivePanel({
   }, [])
 
   const backToRoster = useCallback(() => {
+    setClearAllConfirmOpen(false)
     setArchiveView('roster')
     setSelectedCharId(null)
     setTypeFilters(new Set())
@@ -530,6 +545,28 @@ export function MemoryArchivePanel({
     await reload({ silent: true })
   }
 
+  const handleClearAllConfirm = async () => {
+    if (!selectedCharId || clearAllBusy || clearAllTargetIds.length === 0) return
+    setClearAllBusy(true)
+    try {
+      const ids = new Set(clearAllTargetIds)
+      for (const id of ids) {
+        await personaDb.deleteCharacterMemory(id)
+      }
+      if (editorOpen && editingEntry && ids.has(editingEntry.id)) {
+        setEditorOpen(false)
+        setEditingEntry(null)
+        setEditingRaw(null)
+      }
+      setClearAllConfirmOpen(false)
+      setTypeFilters(new Set())
+      setSearch('')
+      await reload({ silent: true })
+    } finally {
+      setClearAllBusy(false)
+    }
+  }
+
   const editorKind: 'own' | 'linked' =
     editingRaw?.memoryScope === 'linked' || editingEntry?.memoryScope === 'linked' ? 'linked' : 'own'
 
@@ -608,6 +645,8 @@ export function MemoryArchivePanel({
                     : '请先在当前微信账号下选择扮演身份'
               }
               alignUserToast={alignUserToast}
+              onClearAll={() => setClearAllConfirmOpen(true)}
+              clearAllDisabled={clearAllTargetIds.length === 0 || clearAllBusy}
             >
               <MemoryList
                 entries={filtered}
@@ -626,6 +665,19 @@ export function MemoryArchivePanel({
         </div>
         <MemoryArchiveBackToTop visible={showBackToTop} onClick={scrollArchiveToTop} />
       </div>
+
+      <MemoryClearAllConfirmModal
+        open={clearAllConfirmOpen}
+        characterName={detailCharacter?.displayName ?? '该角色'}
+        memoryCount={clearAllTargetIds.length}
+        visibleMemoryCount={filtered.length}
+        busy={clearAllBusy}
+        onCancel={() => {
+          if (clearAllBusy) return
+          setClearAllConfirmOpen(false)
+        }}
+        onConfirm={() => void handleClearAllConfirm()}
+      />
 
       <MemoryTutorialModal
         open={tutorialOpen}

@@ -48,12 +48,10 @@ export type NarrativeGenOptions = {
   referenceSnippet?: string
   /** 剧情分支：选中卡片后的续写执导（仅当轮注入 user 侧一次） */
   branchContinuationHint?: string
-  /**
-   * 仅 **VN 自定义输入** 发送时由界面填入；缺省表示其它入口（分支/普通输入）不附加本条语义。
-   * `paraphrase`：玩家输入仅为剧情走向引导，**尚未发生**，正文须当场演出过程。
-   * `canon`：玩家输入视为**已经发生**的事实，正文写他人反应与后续。
-   */
-  vnCustomIntentMode?: 'canon' | 'paraphrase'
+  /** 导演模式：玩家输入为下一段生成指引（尚未发生），须当场展开演出；关闭则视为既成事实 */
+  directorMode?: boolean
+  /** 本轮玩家指定出场的人脉角色 id（输入框展示姓名，模型侧按 id 注入） */
+  presentNetworkCharacterIds?: string[]
 }
 
 export type PlotItemType = 'player' | 'ai'
@@ -170,8 +168,10 @@ export type CharacterArchive = {
   offlineDanmakuEnabled?: boolean
   /** VN 模式：禁用语音合成/播放（省 token + 省请求） */
   vnVoiceDisabled?: boolean
-  /** VN 自定义输入面板：开启「转述」时，输入仅为剧情引导（未发生）；关闭则视为既定事实 */
-  vnCustomInputParaphrase?: boolean
+  /** 导演模式：输入为下一段剧情指引（尚未发生）；关闭则视为既成事实。普通模式与 VN 共用 */
+  directorMode?: boolean
+  /** 抢话：允许 AI 代写玩家当轮言行；关闭则不抢话。普通模式与 VN 共用 */
+  autoUserReaction?: boolean
   lastDateAt: number | null
   pendingBranches: BranchOption[]
   branchNodeHistory: number[]

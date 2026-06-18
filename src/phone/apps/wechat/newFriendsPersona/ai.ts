@@ -2,6 +2,7 @@ import type { Character, PlayerIdentity, WorldBook, WorldBookItem } from './type
 import { genderLabelZh } from './utils'
 import { formatWorldBookItemLineForPrompt, worldBookPronounGuideAnnotation } from './worldBookPronounGuide'
 import type { ApiConfig } from '../../api/types'
+import { buildOpenAiChatCompletionsEndpoint } from '../../api/openAiCompatibleEndpoints'
 import { LUMI_SYS_TOKENS_TOTAL_KEY } from '../../dataArchive/constants'
 import { clampWbItemGenTargetChars } from './worldBookItemGenConstants'
 
@@ -816,12 +817,7 @@ export async function openAiCompatibleChatAny(
     return parseGeminiText(data)
   }
 
-  const base = cfg.apiUrl.trim().replace(/\/+$/, '')
-  const endpoint = /\/v1$/i.test(base)
-    ? `${base}/chat/completions`
-    : /\/v1\/chat\/completions$/i.test(base)
-      ? base
-      : `${base}/v1/chat/completions`
+  const endpoint = buildOpenAiChatCompletionsEndpoint(cfg.apiUrl)
   const body: Record<string, unknown> = {
     model: cfg.modelId || undefined,
     messages,
@@ -862,12 +858,7 @@ export async function openAiCompatibleChatLenient(
     }
   }
 
-  const base = cfg.apiUrl.trim().replace(/\/+$/, '')
-  const endpoint = /\/v1$/i.test(base)
-    ? `${base}/chat/completions`
-    : /\/v1\/chat\/completions$/i.test(base)
-      ? base
-      : `${base}/v1/chat/completions`
+  const endpoint = buildOpenAiChatCompletionsEndpoint(cfg.apiUrl)
   const body: Record<string, unknown> = {
     model: cfg.modelId || undefined,
     messages,
@@ -950,8 +941,7 @@ export async function openAiCompatibleChat(
     return parseGeminiText(data)
   }
 
-  const base = cfg.apiUrl.trim().replace(/\/+$/, '')
-  const endpoint = /\/v1$/i.test(base) ? `${base}/chat/completions` : /\/v1\/chat\/completions$/i.test(base) ? base : `${base}/v1/chat/completions`
+  const endpoint = buildOpenAiChatCompletionsEndpoint(cfg.apiUrl)
   const body: Record<string, unknown> = {
     model: cfg.modelId || undefined,
     messages,

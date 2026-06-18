@@ -1,3 +1,4 @@
+import { buildOpenAiChatCompletionsEndpoint } from '../../phone/apps/api/openAiCompatibleEndpoints'
 import type { MockContact, Question, QnAAnswer } from './types'
 import type { AnonymousQaWechatContext } from './buildAnonymousQaPersonaContext'
 import {
@@ -82,17 +83,10 @@ function pickApiConfig(): ApiConfig | null {
   }
 }
 
-function resolveChatUrl(apiUrl: string): string {
-  const base = apiUrl.trim().replace(/\/+$/, '')
-  if (!base) return ''
-  if (base.endsWith('/chat/completions') || base.endsWith('/completions')) return base
-  return `${base}/chat/completions`
-}
-
 async function callAiJson(systemPrompt: string, userPrompt: string): Promise<string | null> {
   const cfg = pickApiConfig()
   if (!cfg) return null
-  const url = resolveChatUrl(cfg.apiUrl)
+  const url = buildOpenAiChatCompletionsEndpoint(cfg.apiUrl)
   if (!url) return null
   try {
     const resp = await fetch(url, {
