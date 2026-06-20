@@ -298,7 +298,7 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
               若在 QQ 群与 Discord 社区<strong>两处均无法查询到</strong>您填写的信息，将按违规处理并<strong>封禁账号</strong>。
             </p>
           </div>
-          <p className={`text-[12px] leading-5 ${t.muted}`}>注册成功后请登录；管理员将在 48 小时内审核 QQ 与 Discord ID，审核期间可正常使用。</p>
+          <p className={`text-[12px] leading-5 ${t.muted}`}>注册成功后请登录；管理员将在 48 小时内审核 QQ 与 Discord ID，审核期间可正常使用。每个 QQ 号与 Discord ID 仅可注册一个账号。</p>
           <label className="block">
             <span className={`mb-1 block text-[12px] ${t.label}`}>账号</span>
             <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} />
