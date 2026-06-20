@@ -33,10 +33,10 @@ export function AccountStatusCheckingOverlay({ open }: Props) {
             </div>
             <h2 className="mt-4 text-[18px] font-semibold sm:text-[20px]">正在检测账号状态</h2>
             <p className="mt-3 text-[13px] leading-6 text-[#1C1C1E]/65 sm:text-[14px]">
-              请打开梯子（VPN）并确保网络畅通，以便连接账号服务器完成验证。
+              每次进入 Lumi 都会联网验证账号状态，最多等待 10 秒。
             </p>
             <p className="mt-2 text-[12px] leading-5 text-[#1C1C1E]/45">
-              验证通过后即可关闭梯子，本次使用无需持续联网。
+              若超时或连不上服务器，请打开梯子（VPN）后点击重新验证；验证成功前无法进入。
             </p>
           </motion.div>
         </motion.div>

@@ -1,6 +1,12 @@
 import { Copy } from 'lucide-react'
 import { useCallback, useState } from 'react'
+import { AccountNumericText, accountNumStyle } from '../userSystem/AccountNum'
 import { recoverAccountByContact } from '../userSystem/userSystemApi'
+
+const accountInputNumStyle = {
+  fontFamily: accountNumStyle.fontFamily,
+  fontVariantNumeric: accountNumStyle.fontVariantNumeric,
+} as const
 
 type Props = {
   inputCls: string
@@ -33,12 +39,15 @@ export function UserAccountRecoverPanel({
     const qqTrim = qq.trim()
     const dcTrim = dcId.trim()
     if (!qqTrim && !dcTrim) {
-      setError('请至少填写 QQ 号或 Discord ID')
+      setError('请至少填写 QQ 号或 Discord ID 其中一项')
       return
     }
     setLoading(true)
     try {
-      const r = await recoverAccountByContact({ qq: qqTrim, dcId: dcTrim })
+      const r = await recoverAccountByContact({
+        ...(qqTrim ? { qq: qqTrim } : {}),
+        ...(dcTrim ? { dcId: dcTrim } : {}),
+      })
       if (!r.ok) {
         setError(r.error)
         return
@@ -60,7 +69,7 @@ export function UserAccountRecoverPanel({
   return (
     <div className={`space-y-3 ${cardCls}`}>
       <p className={`text-[12px] leading-5 ${mutedCls}`}>
-        输入注册时填写的 QQ 号或 Discord ID（两项都填则须完全匹配），即可找回账号与密码。
+        只需填写 QQ 号或 Discord ID 其中一项即可找回；若两项都填，须与注册时同一账号完全一致。
       </p>
       {error ? (
         <div className="rounded-[10px] border border-[#FECACA] bg-[#FEF2F2] px-3 py-2 text-[13px] text-[#B91C1C]">
@@ -73,7 +82,7 @@ export function UserAccountRecoverPanel({
           <div className="flex items-center justify-between gap-3 text-[13px]">
             <span className={labelCls}>账号</span>
             <div className="flex items-center gap-2">
-              <span className="font-medium">{result.username}</span>
+              <AccountNumericText text={result.username} className="font-medium" />
               <button
                 type="button"
                 className="inline-flex items-center gap-1 rounded-[8px] border border-black/10 px-2 py-1 text-[11px]"
@@ -87,7 +96,7 @@ export function UserAccountRecoverPanel({
           <div className="flex items-center justify-between gap-3 text-[13px]">
             <span className={labelCls}>密码</span>
             <div className="flex items-center gap-2">
-              <span className="font-medium">{result.password}</span>
+              <AccountNumericText text={result.password} className="font-medium" />
               <button
                 type="button"
                 className="inline-flex items-center gap-1 rounded-[8px] border border-black/10 px-2 py-1 text-[11px]"
@@ -111,24 +120,27 @@ export function UserAccountRecoverPanel({
       ) : (
         <>
           <label className="block">
-            <span className={`mb-1 block text-[12px] ${labelCls}`}>QQ 号</span>
+            <span className={`mb-1 block text-[12px] ${labelCls}`}>QQ 号（选填）</span>
             <input
               className={inputCls}
+              style={accountInputNumStyle}
               value={qq}
               onChange={(e) => setQq(e.target.value)}
               inputMode="numeric"
               autoComplete="off"
-              placeholder="与注册时一致"
+              placeholder="与注册时一致，可与 Discord ID 二选一"
             />
           </label>
+          <p className={`text-center text-[11px] ${mutedCls}`}>— 或 —</p>
           <label className="block">
-            <span className={`mb-1 block text-[12px] ${labelCls}`}>Discord ID</span>
+            <span className={`mb-1 block text-[12px] ${labelCls}`}>Discord ID（选填）</span>
             <input
               className={inputCls}
+              style={accountInputNumStyle}
               value={dcId}
               onChange={(e) => setDcId(e.target.value)}
               autoComplete="off"
-              placeholder="与注册时一致"
+              placeholder="与注册时一致，可与 QQ 号二选一"
             />
           </label>
           <button

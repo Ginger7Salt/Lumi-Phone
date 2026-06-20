@@ -148,7 +148,7 @@ export function UserSystemAuthModal({
               </h2>
               <p className="mt-1 text-center text-[12px] leading-5 text-[#1C1C1E]/55 sm:text-[13px]">
                 {authMode === 'recover'
-                  ? '输入注册时的 QQ 或 Discord ID 找回账号密码'
+                  ? '只需填写 QQ 或 Discord ID 其中一项即可找回'
                   : '登录账号密码后即可进入 Lumi'}
               </p>
             </div>

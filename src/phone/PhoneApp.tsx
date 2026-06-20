@@ -12,13 +12,22 @@ import { AccountStatusCheckingOverlay } from './components/AccountStatusChecking
 import { SplashScreen } from './components/SplashScreen'
 import { useCustomization } from './CustomizationContext'
 import {
+  clearAuthVerified,
   fetchUserStatus,
   getAuthToken,
   needsRemoteAuthCheck,
+  readAuthVerified,
   readBannedNotice,
+  readLocalAccountGateStatus,
   readLocalUserLoginStatus,
   readSessionKickedNotice,
   runLumiSessionGuard,
+  shouldShowAccountStatusCheck,
+  setAuthVerified,
+  STATUS_CHECK_NETWORK_ERROR,
+  STATUS_FETCH_TIMEOUT_MS,
+  STATUS_CHECK_MIN_OVERLAY_MS,
+  waitForStatusCheckOverlay,
 } from './userSystem/userSystemApi'
 import { isUserActivated, needsUserInfoCorrection, type UserAccountTab, type UserLoginStatus } from './userSystem/types'
 import { isLocalDevBypassAuth, LOCAL_DEV_MOCK_STATUS } from './userSystem/localDevMode'
@@ -104,10 +113,19 @@ export function PhoneApp() {
   const [sessionKickedNotice, setSessionKickedNotice] = useState<string | null>(() => readSessionKickedNotice())
   const [authVerifyError, setAuthVerifyError] = useState<string | null>(null)
   const [authChecking, setAuthChecking] = useState(false)
-  const openVerifiedRef = useRef(localDevBypassAuth)
+  const openVerifiedRef = useRef(localDevBypassAuth || readAuthVerified())
 
   useEffect(() => {
     if (localDevBypassAuth) openVerifiedRef.current = true
+  }, [])
+
+  useEffect(() => {
+    if (localDevBypassAuth && import.meta.env.DEV) {
+      console.info('[Lumi] 本地开发模式：已跳过账号登录与状态检测')
+    }
+    if (!localDevBypassAuth && import.meta.env.DEV) {
+      console.info('[Lumi] 本地开发模式：已启用账号登录与状态检测（验证完请在 .env.development 改回 bypass）')
+    }
   }, [])
 
   const handleKickedToLogin = useCallback(() => {
@@ -192,6 +210,21 @@ export function PhoneApp() {
     }
 
     if (!getAuthToken()) {
+      if (readBannedNotice()) {
+        setAuthChecking(true)
+        setUserAuthReady(false)
+        setAuthVerifyError(null)
+        try {
+          await waitForStatusCheckOverlay()
+          setUserAuthStatus(readLocalAccountGateStatus())
+          setBanNotice(readBannedNotice()?.message ?? null)
+          setSessionKickedNotice(readSessionKickedNotice())
+        } finally {
+          setAuthChecking(false)
+          setUserAuthReady(true)
+        }
+        return
+      }
       openVerifiedRef.current = false
       setAuthChecking(false)
       setUserAuthStatus(null)
@@ -202,70 +235,62 @@ export function PhoneApp() {
       return
     }
 
-    if (!openVerifiedRef.current) {
-      setAuthChecking(true)
-      setAuthVerifyError(null)
-      try {
-        const status = await fetchUserStatus({ force: true })
-        if (!getAuthToken()) {
+    setAuthChecking(true)
+    setUserAuthReady(false)
+    setAuthVerifyError(null)
+    const checkStarted = Date.now()
+    try {
+      const status = await fetchUserStatus({ force: true, timeoutMs: STATUS_FETCH_TIMEOUT_MS })
+      if (!getAuthToken()) {
+        openVerifiedRef.current = false
+        handleKickedToLogin()
+        return
+      }
+      if (!status) {
+        openVerifiedRef.current = false
+        clearAuthVerified()
+        setUserAuthStatus(null)
+        setAuthVerifyError(STATUS_CHECK_NETWORK_ERROR)
+        setBanNotice(readBannedNotice()?.message ?? null)
+        setSessionKickedNotice(readSessionKickedNotice())
+        setUserAuthReady(true)
+        return
+      }
+      openVerifiedRef.current = true
+
+      if (needsRemoteAuthCheck()) {
+        const guard = await runLumiSessionGuard()
+        if (guard === 'displaced' || guard === 'banned') {
           openVerifiedRef.current = false
           handleKickedToLogin()
           return
         }
-        if (!status) {
-          setUserAuthStatus(null)
-          setAuthVerifyError('无法连接账号服务器，请打开梯子后点击「重新验证账号状态」')
-          setBanNotice(readBannedNotice()?.message ?? null)
-          setSessionKickedNotice(readSessionKickedNotice())
-          setUserAuthReady(true)
-          return
-        }
-        openVerifiedRef.current = true
-
-        if (needsRemoteAuthCheck()) {
-          const guard = await runLumiSessionGuard()
-          if (guard === 'displaced' || guard === 'banned') {
-            openVerifiedRef.current = false
-            handleKickedToLogin()
-            return
-          }
-        }
-
-        setUserAuthStatus(status)
-        setBanNotice(readBannedNotice()?.message ?? null)
-        setSessionKickedNotice(readSessionKickedNotice())
-        setUserAuthReady(true)
-      } finally {
-        setAuthChecking(false)
       }
-      return
-    }
 
-    setAuthChecking(false)
-    setUserAuthStatus(readLocalUserLoginStatus())
-    setAuthVerifyError(null)
-    setBanNotice(readBannedNotice()?.message ?? null)
-    setSessionKickedNotice(readSessionKickedNotice())
-    setUserAuthReady(true)
+      setUserAuthStatus(status)
+      setAuthVerifyError(null)
+      setBanNotice(readBannedNotice()?.message ?? null)
+      setSessionKickedNotice(readSessionKickedNotice())
+      setUserAuthReady(true)
+    } finally {
+      const remain = STATUS_CHECK_MIN_OVERLAY_MS - (Date.now() - checkStarted)
+      if (remain > 0) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, remain))
+      }
+      setAuthChecking(false)
+    }
   }, [handleKickedToLogin])
 
   useEffect(() => {
     if (localDevBypassAuth) return
     if (showSplash || showEntryNotice) return
     if (route.name !== 'home') return
-    setUserAuthReady(false)
+    if (shouldShowAccountStatusCheck()) {
+      setAuthChecking(true)
+      setUserAuthReady(false)
+    }
     void refreshUserAuth()
   }, [route.name, showSplash, showEntryNotice, refreshUserAuth])
-
-  useEffect(() => {
-    if (localDevBypassAuth) return
-    if (showSplash || showEntryNotice) return
-    if (!getAuthToken() || !openVerifiedRef.current) return
-    void fetchUserStatus({ force: true }).then((status) => {
-      if (!status) return
-      setUserAuthStatus(status)
-    })
-  }, [route.name, showSplash, showEntryNotice])
 
   const needsCorrection = needsUserInfoCorrection(userAuthStatus)
 
@@ -295,7 +320,8 @@ export function PhoneApp() {
     !showSplash &&
     !showEntryNotice &&
     route.name === 'home' &&
-    authChecking
+    shouldShowAccountStatusCheck() &&
+    (authChecking || !userAuthReady)
 
   const userAuthStatusOnly =
     !!userAuthStatus && !isUserActivated(userAuthStatus)
@@ -313,6 +339,9 @@ export function PhoneApp() {
     setAuthVerifyError(null)
     setBanNotice(null)
     setSessionKickedNotice(null)
+    if (isUserActivated(status)) {
+      setAuthVerified()
+    }
   }, [])
 
   const openUserAccount = useCallback((tab: UserAccountTab = 'overview', authTab?: 'login' | 'register') => {

@@ -23,6 +23,7 @@ import {
 } from '../../userSystem/userAccountTheme'
 import { type UserAccountTab, type UserProfile } from '../../userSystem/types'
 import { UserAccountAnnouncementPanel } from './UserAccountAnnouncementPanel'
+import { UserAccountChangePasswordPanel } from './UserAccountChangePasswordPanel'
 import { UserAccountReportPanel } from './UserAccountReportPanel'
 import { UserAccountUnbanPanel } from './UserAccountUnbanPanel'
 import { UserAccountRecoverPanel } from '../../components/UserAccountRecoverPanel'
@@ -434,6 +435,13 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
           </dl>
         ) : null}
       </div>
+      <UserAccountChangePasswordPanel
+        t={t}
+        inputCls={inputCls}
+        dividerCls={drawerBorder}
+        onInfo={setInfo}
+        onError={setError}
+      />
     </div>
   )
 

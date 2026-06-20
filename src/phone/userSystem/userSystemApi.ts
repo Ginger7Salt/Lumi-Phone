@@ -1,4 +1,5 @@
 import type { LumiSessionStatus, UnbanStatusState, UserLoginStatus, UserProfile, UserReportType } from './types'
+import { isUserActivated, needsUserInfoCorrection } from './types'
 import { getDeviceFingerprint } from './deviceFingerprint'
 import { isLocalDevBypassAuth, LOCAL_DEV_MOCK_STATUS } from './localDevMode'
 
@@ -9,6 +10,8 @@ const SESSION_KICKED_NOTICE_KEY = 'us_session_kicked_notice'
 const STATUS_CACHE_KEY = 'us_cached_user_status'
 const PENDING_BAN_CHECK_KEY = 'us_pending_ban_check'
 const PENDING_SESSION_CHECK_KEY = 'us_pending_session_check'
+const PENDING_CORRECTION_CHECK_KEY = 'us_pending_correction_check'
+const AUTH_VERIFIED_KEY = 'us_auth_verified'
 
 type CachedUserStatus = {
   status: UserLoginStatus
@@ -105,6 +108,20 @@ function handleAuthFailure(error: string): void {
   if (/未登录|401|403/.test(error)) clearAuth()
 }
 
+export const STATUS_CHECK_MIN_OVERLAY_MS = 500
+export const STATUS_FETCH_TIMEOUT_MS = 10000
+
+export const STATUS_CHECK_NETWORK_ERROR =
+  '网络连接失败或超时（10 秒），请打开梯子后点击「重新验证账号状态」'
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+export async function waitForStatusCheckOverlay(): Promise<void> {
+  await sleep(STATUS_CHECK_MIN_OVERLAY_MS)
+}
+
 function apiBase(): string {
   const base = import.meta.env.VITE_USER_SYSTEM_API_BASE as string | undefined
   return (base || '').replace(/\/+$/, '')
@@ -162,17 +179,132 @@ export function isPendingSessionCheck(): boolean {
   }
 }
 
+export function markPendingCorrectionCheck(): void {
+  try {
+    localStorage.setItem(PENDING_CORRECTION_CHECK_KEY, '1')
+    localStorage.removeItem(AUTH_VERIFIED_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearPendingCorrectionCheck(): void {
+  try {
+    localStorage.removeItem(PENDING_CORRECTION_CHECK_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+export function isPendingCorrectionCheck(): boolean {
+  try {
+    if (localStorage.getItem(PENDING_CORRECTION_CHECK_KEY) === '1') return true
+    const cached = readCachedUserStatus()
+    return cached?.status.auditStatus === 'correction_required'
+  } catch {
+    return false
+  }
+}
+
 export function clearPendingStatusChecks(): void {
   clearPendingBanStatusCheck()
   clearPendingSessionCheck()
+  clearPendingCorrectionCheck()
 }
 
-/** 是否必须联网核查（仅上次封禁/挤下线后待复查时为 true） */
+export function readAuthVerified(): boolean {
+  try {
+    return localStorage.getItem(AUTH_VERIFIED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function setAuthVerified(): void {
+  try {
+    localStorage.setItem(AUTH_VERIFIED_KEY, '1')
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearAuthVerified(): void {
+  try {
+    localStorage.removeItem(AUTH_VERIFIED_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+function markAuthVerifiedIfActivated(status: UserLoginStatus): void {
+  if (isUserActivated(status)) {
+    setAuthVerified()
+  }
+}
+
+/** 是否须在主页显示「正在检测账号状态」（每次刷新进入且已登录） */
+export function shouldShowAccountStatusCheck(): boolean {
+  if (isLocalDevBypassAuth()) return false
+  if (getAuthToken()) return true
+  return !!readBannedNotice()
+}
+
+/** 本地已知的封禁 / 待更正状态（无网也可用来展示检测弹窗与拦截面板） */
+export function readLocalAccountGateStatus(): UserLoginStatus | null {
+  const cached = readCachedUserStatus()?.status ?? null
+  if (cached?.auditStatus === 'correction_required') return cached
+  if (cached && !isUserActivated(cached)) return cached
+
+  const bannedNotice = readBannedNotice()
+  if (!bannedNotice) return null
+
+  if (cached?.banStatus === 'banned') return cached
+
+  return {
+    username: bannedNotice.username || getStoredUsername() || '当前账号',
+    auditStatus: 'approved',
+    auditRejectReason: '',
+    banStatus: 'banned',
+    banReason: '',
+  }
+}
+
+/** 本地是否处于须拦截进入 Lumi 的账号状态（封禁 / 待更正） */
+export function isLocallyAccountGated(): boolean {
+  if (isPendingBanStatusCheck()) return true
+  if (isPendingCorrectionCheck()) return true
+  const local = readLocalUserLoginStatus()
+  if (!local) return true
+  if (!isUserActivated(local)) return true
+  if (needsUserInfoCorrection(local)) return true
+  return false
+}
+
+/** 无网时是否允许凭本地缓存直接进入 Lumi（仅正常已验证账号） */
+export function canEnterHomeOffline(): boolean {
+  if (isLocalDevBypassAuth()) return true
+  if (!getAuthToken()) return false
+  if (!readAuthVerified()) return false
+  if (isLocallyAccountGated()) return false
+  const local = readLocalUserLoginStatus()
+  return !!local && isUserActivated(local)
+}
+
+/** 联网验证失败时：若本地已有封禁/待更正等拦截态，由对应弹窗处理，不再重复网络报错 */
+export function resolveOfflineAuthVerifyError(local: UserLoginStatus | null): string | null {
+  if (canEnterHomeOffline()) return null
+  if (local && needsUserInfoCorrection(local)) return null
+  if (local && !isUserActivated(local)) return null
+  return '无法连接账号服务器，请打开梯子后点击「重新验证账号状态」'
+}
+
+/** 是否必须联网核查（封禁 / 挤下线 / 待更正） */
 export function needsRemoteAuthCheck(): boolean {
   if (isLocalDevBypassAuth()) return false
   try {
     if (localStorage.getItem(PENDING_BAN_CHECK_KEY) === '1') return true
     if (localStorage.getItem(PENDING_SESSION_CHECK_KEY) === '1') return true
+    if (localStorage.getItem(PENDING_CORRECTION_CHECK_KEY) === '1') return true
     return false
   } catch {
     return false
@@ -203,14 +335,21 @@ export function shouldCheckLumiSessionOnOpen(): boolean {
 function syncPendingFlagsFromStatus(status: UserLoginStatus): void {
   if (status.banStatus === 'banned') {
     markPendingBanStatusCheck()
+    clearPendingCorrectionCheck()
     return
   }
   clearPendingBanStatusCheck()
+  if (status.auditStatus === 'correction_required') {
+    markPendingCorrectionCheck()
+  } else {
+    clearPendingCorrectionCheck()
+  }
 }
 
 function shouldFetchUserStatus(options?: { force?: boolean }): boolean {
   if (options?.force) return true
   if (isPendingBanStatusCheck()) return true
+  if (isPendingCorrectionCheck()) return true
   return !readCachedUserStatus()
 }
 
@@ -219,6 +358,8 @@ export function clearAuth(): void {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(USERNAME_KEY)
     localStorage.removeItem(STATUS_CACHE_KEY)
+    localStorage.removeItem(AUTH_VERIFIED_KEY)
+    localStorage.removeItem(PENDING_CORRECTION_CHECK_KEY)
   } catch {
     /* ignore */
   }
@@ -262,7 +403,7 @@ export async function sendLumiHeartbeat(): Promise<'ok' | 'session_conflict' | '
   if (isLocalDevBypassAuth()) return 'ignored'
   if (!getAuthToken()) return 'ignored'
   const fp = await getDeviceFingerprint()
-  const r = await request('POST', '/api/auth/lumi-heartbeat', { deviceId: fp.deviceId }, true)
+  const r = await request<Record<string, never>>('POST', '/api/auth/lumi-heartbeat', { deviceId: fp.deviceId }, true)
   if (!r.ok && /封禁/.test(r.error)) {
     handleLumiBanned(r.error)
     return 'banned'
@@ -325,6 +466,7 @@ async function request<T>(
   path: string,
   body?: Record<string, unknown>,
   auth = true,
+  timeoutMs?: number,
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   const base = apiBase()
   if (!base) return { ok: false, error: '未配置账号系统 API（VITE_USER_SYSTEM_API_BASE）' }
@@ -335,11 +477,18 @@ async function request<T>(
     if (token) headers.Authorization = `Bearer ${token}`
   }
 
+  const controller = timeoutMs != null ? new AbortController() : null
+  const timer =
+    controller != null
+      ? window.setTimeout(() => controller.abort(), timeoutMs)
+      : null
+
   try {
     const res = await fetch(`${base}${path}`, {
       method,
       headers,
       body: body != null ? JSON.stringify(body) : undefined,
+      signal: controller?.signal,
     })
     const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
     if (!res.ok || data.ok === false) {
@@ -347,7 +496,12 @@ async function request<T>(
     }
     return { ok: true, data: data as T }
   } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      return { ok: false, error: '网络连接超时，请打开梯子后重试' }
+    }
     return { ok: false, error: e instanceof Error ? e.message : '网络错误，请检查网络或稍后重试' }
+  } finally {
+    if (timer != null) window.clearTimeout(timer)
   }
 }
 
@@ -386,6 +540,11 @@ export async function loginUser(
     clearPendingBanStatusCheck()
     clearBannedNotice()
   }
+  if (r.data.status.auditStatus === 'correction_required') {
+    markPendingCorrectionCheck()
+  } else if (options?.lumiEntry && isUserActivated(r.data.status)) {
+    setAuthVerified()
+  }
   return { ok: true, status: r.data.status }
 }
 
@@ -410,10 +569,7 @@ export async function recoverAccountByContact(payload: {
   const r = await request<{ username: string; password: string }>(
     'POST',
     '/api/auth/recover-account',
-    {
-      qq: payload.qq || '',
-      dcId: payload.dcId || '',
-    },
+    payload,
     false,
   )
   if (!r.ok) return r
@@ -445,7 +601,10 @@ export async function fetchUserProfile(): Promise<UserProfile | null> {
   }
 }
 
-export async function fetchUserStatus(options?: { force?: boolean }): Promise<UserLoginStatus | null> {
+export async function fetchUserStatus(options?: {
+  force?: boolean
+  timeoutMs?: number
+}): Promise<UserLoginStatus | null> {
   if (isLocalDevBypassAuth()) return LOCAL_DEV_MOCK_STATUS
   if (!getAuthToken()) return null
 
@@ -453,10 +612,16 @@ export async function fetchUserStatus(options?: { force?: boolean }): Promise<Us
     return readCachedUserStatus()?.status ?? null
   }
 
-  const r = await request<{ status: UserLoginStatus }>('GET', '/api/auth/status')
+  const r = await request<{ status: UserLoginStatus }>(
+    'GET',
+    '/api/auth/status',
+    undefined,
+    true,
+    options?.timeoutMs,
+  )
   if (!r.ok) {
     handleAuthFailure(r.error || '')
-    if (options?.force && isLikelyNetworkError(r.error || '')) {
+    if (options?.force) {
       return null
     }
     const cached = readCachedUserStatus()
@@ -472,6 +637,7 @@ export async function fetchUserStatus(options?: { force?: boolean }): Promise<Us
     return null
   }
   writeCachedUserStatus(r.data.status)
+  markAuthVerifiedIfActivated(r.data.status)
   return r.data.status
 }
 
@@ -534,4 +700,14 @@ export async function submitUserInfoCorrection(payload: {
     message: r.data.message || '信息已提交，请等待管理员重新审核',
     status: r.data.status,
   }
+}
+
+export async function changeUserPassword(payload: {
+  currentPassword: string
+  newPassword: string
+}): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  if (!getAuthToken()) return { ok: false, error: '登录已失效，请重新登录后再修改密码' }
+  const r = await request<{ message?: string }>('POST', '/api/user/change-password', payload, true)
+  if (!r.ok) return r
+  return { ok: true, message: r.data.message || '密码已修改' }
 }
