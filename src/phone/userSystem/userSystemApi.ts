@@ -493,3 +493,18 @@ export async function submitUnbanApplication(payload: {
   if (!r.ok) return r
   return { ok: true, message: r.data.message || '解封申请已提交，请等待管理员审核' }
 }
+
+export async function submitUserInfoCorrection(payload: {
+  qq: string
+  dcId: string
+}): Promise<{ ok: true; message: string; status: UserLoginStatus } | { ok: false; error: string }> {
+  if (!getAuthToken()) return { ok: false, error: '登录已失效，请重新登录后再提交' }
+  const r = await request<{ message?: string; status: UserLoginStatus }>('POST', '/api/user/correction', payload, true)
+  if (!r.ok) return r
+  if (r.data.status) writeCachedUserStatus(r.data.status)
+  return {
+    ok: true,
+    message: r.data.message || '信息已提交，请等待管理员重新审核',
+    status: r.data.status,
+  }
+}

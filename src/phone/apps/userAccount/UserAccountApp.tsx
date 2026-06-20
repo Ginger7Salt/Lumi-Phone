@@ -352,6 +352,12 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
         {profile && profile.auditStatus === 'pending' ? (
           <p className={`mt-3 text-[12px] leading-5 ${t.muted}`}>账号待后台核对成员信息，不影响正常使用。</p>
         ) : null}
+        {profile && profile.auditStatus === 'correction_required' ? (
+          <p className={`mt-3 text-[12px] leading-5 ${t.statusRejected}`}>
+            管理员要求更正 QQ / Discord 信息，请返回 Lumi 主页完成更正后再继续使用。
+            {profile.auditRejectReason ? `说明：${profile.auditRejectReason}` : ''}
+          </p>
+        ) : null}
 
         {profileLoading ? (
           <p className={`mt-4 text-[13px] ${t.subtitle}`}>加载中…</p>
@@ -375,6 +381,9 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
                 <AccountNumericText text={profile.dcId || '-'} className="text-[13px]" />
               </dd>
             </div>
+            {profile.auditStatus === 'correction_required' && profile.auditRejectReason ? (
+              <div className={`rounded-[10px] px-3 py-2 ${t.statusRejected}`}>更正说明：{profile.auditRejectReason}</div>
+            ) : null}
             {profile.auditStatus === 'rejected' && profile.auditRejectReason ? (
               <div className={`rounded-[10px] px-3 py-2 ${t.statusRejected}`}>拒绝原因：{profile.auditRejectReason}</div>
             ) : null}

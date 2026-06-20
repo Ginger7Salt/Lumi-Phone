@@ -1,4 +1,4 @@
-export type UserAuditStatus = 'pending' | 'approved' | 'rejected'
+export type UserAuditStatus = 'pending' | 'approved' | 'rejected' | 'correction_required'
 
 export type UserLoginStatus = {
   auditStatus: UserAuditStatus
@@ -58,10 +58,15 @@ export type UserAuthSession = {
   status: UserLoginStatus
 }
 
-/** 是否可进入 Lumi 主页使用（封禁、审核驳回会拦截；待审核仅作后台核对，不影响使用） */
+/** 是否可进入 Lumi 主页使用（封禁、审核驳回、待更正会拦截；待审核仅作后台核对，不影响使用） */
 export function isUserActivated(status: UserLoginStatus | null | undefined): boolean {
   if (!status) return false
   if (status.banStatus === 'banned') return false
   if (status.auditStatus === 'rejected') return false
+  if (status.auditStatus === 'correction_required') return false
   return true
+}
+
+export function needsUserInfoCorrection(status: UserLoginStatus | null | undefined): boolean {
+  return !!status && status.banStatus !== 'banned' && status.auditStatus === 'correction_required'
 }

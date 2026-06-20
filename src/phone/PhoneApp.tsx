@@ -7,6 +7,7 @@ import { HomeScreen } from './components/HomeScreen'
 import { PhoneShell } from './components/PhoneShell'
 import { UserAccountApp } from './apps/userAccount/UserAccountApp'
 import { UserSystemAuthModal } from './components/UserSystemAuthModal'
+import { UserInfoCorrectionModal } from './components/UserInfoCorrectionModal'
 import { AccountStatusCheckingOverlay } from './components/AccountStatusCheckingOverlay'
 import { SplashScreen } from './components/SplashScreen'
 import { useCustomization } from './CustomizationContext'
@@ -19,7 +20,7 @@ import {
   readSessionKickedNotice,
   runLumiSessionGuard,
 } from './userSystem/userSystemApi'
-import { isUserActivated, type UserAccountTab, type UserLoginStatus } from './userSystem/types'
+import { isUserActivated, needsUserInfoCorrection, type UserAccountTab, type UserLoginStatus } from './userSystem/types'
 import { ApiSettingsProvider } from './apps/api/ApiSettingsContext'
 import { ApiSettingsApp } from './apps/api/ApiSettingsApp'
 import { VoiceprintHubApp } from './apps/voiceprint/VoiceprintHubApp'
@@ -236,15 +237,35 @@ export function PhoneApp() {
     void refreshUserAuth()
   }, [route.name, showSplash, showEntryNotice, refreshUserAuth])
 
+  useEffect(() => {
+    if (showSplash || showEntryNotice) return
+    if (!getAuthToken() || !openVerifiedRef.current) return
+    void fetchUserStatus({ force: true }).then((status) => {
+      if (!status) return
+      setUserAuthStatus(status)
+    })
+  }, [route.name, showSplash, showEntryNotice])
+
+  const needsCorrection = needsUserInfoCorrection(userAuthStatus)
+
   const showUserAuthModal =
     !showSplash &&
     !showEntryNotice &&
     !authChecking &&
+    !needsCorrection &&
     route.name === 'home' &&
     userAuthReady &&
     (!!authVerifyError ||
       !userAuthStatus ||
       !isUserActivated(userAuthStatus))
+
+  const showInfoCorrectionModal =
+    !showSplash &&
+    !showEntryNotice &&
+    !authChecking &&
+    userAuthReady &&
+    needsCorrection &&
+    !!userAuthStatus
 
   const showAccountStatusChecking =
     !showSplash &&
@@ -391,6 +412,21 @@ export function PhoneApp() {
             openUserAccount(tab ?? 'overview')
           }}
         />
+        {userAuthStatus ? (
+          <UserInfoCorrectionModal
+            open={showInfoCorrectionModal}
+            status={userAuthStatus}
+            onCorrected={(status) => {
+              setUserAuthStatus(status)
+              setUserAuthReady(true)
+            }}
+            onLogout={() => {
+              openVerifiedRef.current = false
+              setUserAuthStatus(null)
+              setUserAuthReady(true)
+            }}
+          />
+        ) : null}
       </ApiSettingsProvider>
     </div>
   )

@@ -189,6 +189,8 @@ export function UserSystemAuthModal({
                   <div className="rounded-[14px] border border-black/8 bg-[#F9FAFB] p-4 text-center">
                     <p className="text-[14px] font-medium">{storedName || status.username}</p>
                     <p className="mt-2 text-[13px] leading-6 text-[#1C1C1E]/75">
+                      {status.auditStatus === 'correction_required' &&
+                        `请更正账号信息${status.auditRejectReason ? `：${status.auditRejectReason}` : ''}`}
                       {status.auditStatus === 'rejected' &&
                         `审核未通过${status.auditRejectReason ? `：${status.auditRejectReason}` : ''}`}
                       {status.banStatus === 'banned' &&
