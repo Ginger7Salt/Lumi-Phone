@@ -2,7 +2,6 @@
  * 浏览器内设备标识（localStorage，各浏览器独立）
  * - 用于后台溯源、同浏览器防多账号
  * - 不能当作「手机硬件 ID」：Safari/Chrome 数据隔离，纯网页无法读取真机序列号
- * - 跨浏览器「一机一号」靠注册时的公网 IP 校验（见 Worker API）
  */
 const LEGACY_KEY = 'lc_device_fingerprint_v1'
 const MACHINE_KEY = 'us_machine_id_v2'

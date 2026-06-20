@@ -3,6 +3,19 @@ import { useCallback, useEffect, useState } from 'react'
 import { fetchUserProfile, logoutUser, submitUserInfoCorrection } from '../userSystem/userSystemApi'
 import type { UserLoginStatus } from '../userSystem/types'
 
+const CORRECTION_DEADLINE_MS = 48 * 60 * 60 * 1000
+
+function formatCorrectionDeadlineHint(requestedAt?: string): string {
+  if (!requestedAt?.trim()) return '请在 48 小时内完成更正，逾期账号将自动封禁'
+  const normalized = requestedAt.trim().replace(' ', 'T')
+  const start = new Date(`${normalized}+08:00`).getTime()
+  if (Number.isNaN(start)) return '请在 48 小时内完成更正，逾期账号将自动封禁'
+  const remainMs = start + CORRECTION_DEADLINE_MS - Date.now()
+  if (remainMs <= 0) return '更正期限已过，请尽快提交；若仍无法进入请重新登录'
+  const remainHours = Math.max(1, Math.ceil(remainMs / (60 * 60 * 1000)))
+  return `请在 48 小时内完成更正（剩余约 ${remainHours} 小时），逾期账号将自动封禁`
+}
+
 type Props = {
   open: boolean
   status: UserLoginStatus
@@ -13,24 +26,29 @@ type Props = {
 export function UserInfoCorrectionModal({ open, status, onCorrected, onLogout }: Props) {
   const [qq, setQq] = useState('')
   const [dcId, setDcId] = useState('')
+  const [inquiryImages, setInquiryImages] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
+  const [previewImage, setPreviewImage] = useState<string | null>(null)
+  const deadlineHint = formatCorrectionDeadlineHint(status.correctionRequestedAt)
 
   useEffect(() => {
     if (!open) return
     setError('')
     setInfo('')
+    setPreviewImage(null)
     let cancelled = false
     void fetchUserProfile().then((profile) => {
       if (cancelled || !profile) return
       setQq(profile.qq)
       setDcId(profile.dcId)
+      setInquiryImages(profile.auditInquiryImages?.length ? profile.auditInquiryImages : (status.auditInquiryImages ?? []))
     })
     return () => {
       cancelled = true
     }
-  }, [open, status.auditRejectReason])
+  }, [open, status.auditRejectReason, status.auditInquiryImages])
 
   const handleSubmit = useCallback(async () => {
     setError('')
@@ -81,10 +99,35 @@ export function UserInfoCorrectionModal({ open, status, onCorrected, onLogout }:
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
+              <div className="mb-3 rounded-[10px] border border-[#FECACA] bg-[#FEF2F2] px-3 py-2 text-[12px] leading-5 text-[#B91C1C]">
+                {deadlineHint}
+              </div>
               {status.auditRejectReason ? (
                 <div className="mb-3 rounded-[10px] border border-[#FCD34D] bg-[#FFFBEB] px-3 py-2.5">
                   <p className="text-[12px] font-medium text-[#B45309]">管理员说明</p>
                   <p className="mt-1 text-[13px] leading-6 text-[#92400E]">{status.auditRejectReason}</p>
+                </div>
+              ) : null}
+
+              {inquiryImages.length ? (
+                <div className="mb-3">
+                  <p className="mb-2 text-[12px] font-medium text-[#1C1C1E]/55">证据截图</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {inquiryImages.map((src, index) => (
+                      <button
+                        key={`${index}-${src.slice(0, 24)}`}
+                        type="button"
+                        className="overflow-hidden rounded-[10px] border border-black/10"
+                        onClick={() => setPreviewImage(src)}
+                      >
+                        <img
+                          src={src}
+                          alt={`证据截图 ${index + 1}`}
+                          className="aspect-square w-full object-cover"
+                        />
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : null}
 
@@ -140,6 +183,22 @@ export function UserInfoCorrectionModal({ open, status, onCorrected, onLogout }:
               </div>
             </div>
           </motion.div>
+
+          {previewImage ? (
+            <button
+              type="button"
+              className="absolute inset-0 z-[10003] flex items-center justify-center bg-black/75 p-4"
+              onClick={() => setPreviewImage(null)}
+              aria-label="关闭截图预览"
+            >
+              <img
+                src={previewImage}
+                alt="证据截图放大预览"
+                className="max-h-[85vh] max-w-full rounded-[12px] object-contain"
+                onClick={(e) => e.stopPropagation()}
+              />
+            </button>
+          ) : null}
         </motion.div>
       ) : null}
     </AnimatePresence>

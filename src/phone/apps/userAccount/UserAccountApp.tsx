@@ -354,8 +354,8 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
         ) : null}
         {profile && profile.auditStatus === 'correction_required' ? (
           <p className={`mt-3 text-[12px] leading-5 ${t.statusRejected}`}>
-            管理员要求更正 QQ / Discord 信息，请返回 Lumi 主页完成更正后再继续使用。
-            {profile.auditRejectReason ? `说明：${profile.auditRejectReason}` : ''}
+            管理员要求更正 QQ / Discord 信息，请在 48 小时内完成，逾期将自动封禁。请返回 Lumi 主页完成更正后再继续使用。
+            {profile.auditRejectReason ? ` 说明：${profile.auditRejectReason}` : ''}
           </p>
         ) : null}
 
@@ -383,6 +383,21 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
             </div>
             {profile.auditStatus === 'correction_required' && profile.auditRejectReason ? (
               <div className={`rounded-[10px] px-3 py-2 ${t.statusRejected}`}>更正说明：{profile.auditRejectReason}</div>
+            ) : null}
+            {profile.auditStatus === 'correction_required' && profile.auditInquiryImages?.length ? (
+              <div>
+                <p className={`mb-2 text-[12px] ${t.subtitle}`}>管理员证据截图</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {profile.auditInquiryImages.map((src, index) => (
+                    <img
+                      key={`${index}-${src.slice(0, 24)}`}
+                      src={src}
+                      alt={`证据截图 ${index + 1}`}
+                      className="aspect-square w-full rounded-[10px] border border-black/10 object-cover"
+                    />
+                  ))}
+                </div>
+              </div>
             ) : null}
             {profile.auditStatus === 'rejected' && profile.auditRejectReason ? (
               <div className={`rounded-[10px] px-3 py-2 ${t.statusRejected}`}>拒绝原因：{profile.auditRejectReason}</div>

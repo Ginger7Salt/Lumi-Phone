@@ -3,6 +3,8 @@ export type UserAuditStatus = 'pending' | 'approved' | 'rejected' | 'correction_
 export type UserLoginStatus = {
   auditStatus: UserAuditStatus
   auditRejectReason: string
+  auditInquiryImages?: string[]
+  correctionRequestedAt?: string
   banStatus: 'normal' | 'banned'
   banReason: string
   username: string
@@ -21,6 +23,8 @@ export type UserProfile = {
   dcId: string
   auditStatus: UserAuditStatus
   auditRejectReason: string
+  auditInquiryImages?: string[]
+  correctionRequestedAt?: string
   banStatus: 'normal' | 'banned'
   banReason: string
   createdAt: string

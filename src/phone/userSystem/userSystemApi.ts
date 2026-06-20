@@ -413,6 +413,10 @@ export async function fetchUserProfile(): Promise<UserProfile | null> {
     dcId: String(p.dcId ?? ''),
     auditStatus: (p.auditStatus as UserProfile['auditStatus']) ?? 'pending',
     auditRejectReason: String(p.auditRejectReason ?? ''),
+    auditInquiryImages: Array.isArray(p.auditInquiryImages)
+      ? p.auditInquiryImages.filter((x): x is string => typeof x === 'string')
+      : [],
+    correctionRequestedAt: String(p.correctionRequestedAt ?? ''),
     banStatus: (p.banStatus as UserProfile['banStatus']) ?? 'normal',
     banReason: String(p.banReason ?? ''),
     createdAt: String(p.createdAt ?? ''),
