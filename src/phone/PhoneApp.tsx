@@ -19,7 +19,6 @@ import {
   readAuthVerified,
   readBannedNotice,
   readLocalAccountGateStatus,
-  readLocalUserLoginStatus,
   readSessionKickedNotice,
   runLumiSessionGuard,
   shouldShowAccountStatusCheck,

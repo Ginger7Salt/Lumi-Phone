@@ -641,11 +641,6 @@ export async function fetchUserStatus(options?: {
   return r.data.status
 }
 
-function isLikelyNetworkError(message: string): boolean {
-  if (!message.trim()) return true
-  return /网络|fetch|failed|timeout|aborterror|dns|连接|无法|unreachable|enotfound|econnrefused/i.test(message)
-}
-
 export function getStoredUsername(): string {
   try {
     return localStorage.getItem(USERNAME_KEY) || ''
