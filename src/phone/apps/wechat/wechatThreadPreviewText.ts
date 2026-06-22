@@ -36,6 +36,8 @@ type NotifyPreviewMessage = {
   transfer?: unknown | null
   musicSync?: unknown | null
   listenCommentShare?: unknown | null
+  listenProfileShare?: unknown | null
+  listenTrackShare?: unknown | null
   sharedRecord?: unknown | null
   chatHistory?: unknown | null
 }
@@ -60,6 +62,8 @@ export function formatWeChatNotifyPreviewFromStoredMessage(msg: NotifyPreviewMes
   }
   if (msg.transfer) return '[转账]'
   if (msg.listenCommentShare) return '[分享评论]'
+  if (msg.listenProfileShare) return '[分享主页]'
+  if (msg.listenTrackShare) return '[分享音乐]'
   if (msg.sharedRecord) return '[收藏]'
   if (msg.chatHistory) return '[聊天记录]'
   if (msg.musicSync) return '[音乐]'

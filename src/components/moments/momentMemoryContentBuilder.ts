@@ -6,6 +6,7 @@ import { formatMomentLocationDisplay } from './momentLocationUtils'
 import type { MomentsContactDirectory } from './momentsContactDirectory'
 import { hasCharacterToCharacterBinding } from './momentRelationshipGraph'
 import { sanitizeMomentBodyText, sanitizeMomentText } from './momentTextSanitize'
+import { buildMomentContentForAi } from './momentAttachedMusic'
 import { formatMomentPublishedAtAbsolute } from './utils/timeFormat'
 import type { MomentMemoryPayload } from '../../phone/apps/wechat/newFriendsPersona/types'
 
@@ -133,23 +134,28 @@ export function buildMomentInteractionsSnapshot(rows: MomentInteractionArchiveRo
   return lines.length ? lines.join('\n') : ''
 }
 
+/** 写入长期记忆的朋友圈正文：分享歌曲时附带与一起听同格式的歌名/歌手/歌词节选 */
+export function buildMomentMemoryBodyText(moment: MomentItemModel): string {
+  const withMusic = buildMomentContentForAi({
+    content: moment.content,
+    attachedMusic: moment.attachedMusic,
+  }).trim()
+  if (withMusic) return withMusic
+  const text = sanitizeMomentBodyText(moment.content).trim()
+  if (text) return text
+  const imageCount = moment.images?.length ?? 0
+  if (imageCount > 0) return `（图片动态，${imageCount} 张）`
+  return '（无文字）'
+}
+
 export function buildMomentMemoryNaturalContent(params: {
   moment: MomentItemModel
   publisherDisplayName: string
   rows: MomentInteractionArchiveRow[]
   locationLabel: string
 }): string {
-  const body = sanitizeMomentBodyText(params.moment.content)
-  const imageCount = params.moment.images?.length ?? 0
-  const parts: string[] = []
-
-  if (body) {
-    parts.push(`朋友圈正文：${body}`)
-  } else if (imageCount > 0) {
-    parts.push(`朋友圈正文：（图片动态，${imageCount} 张）`)
-  } else {
-    parts.push('朋友圈正文：（无文字）')
-  }
+  const body = buildMomentMemoryBodyText(params.moment)
+  const parts: string[] = [`朋友圈正文：${body}`]
 
   const publishedLabel = formatMomentPublishedAtAbsolute(params.moment.timestamp)
   if (publishedLabel) {
@@ -194,7 +200,7 @@ export function buildMomentMemoryPayload(params: {
     interactionRows: rows,
     memoryContent,
     payload: {
-      originalText: sanitizeMomentBodyText(params.moment.content) || '（图片动态）',
+      originalText: buildMomentMemoryBodyText(params.moment) || '（图片动态）',
       publishedAt: params.moment.timestamp,
       imagesCount: params.moment.images?.length ?? 0,
       interactionsSnapshot,
@@ -345,7 +351,7 @@ export function buildUserMomentMentionMemoryContent(params: {
   now: number
 }): string {
   const userName = params.playerDisplayName.trim() || '用户'
-  const body = sanitizeMomentBodyText(params.moment.content) || '（图片动态）'
+  const body = buildMomentMemoryBodyText(params.moment)
   const locationLabel = formatMomentLocationDisplay(params.moment.location)
   const response = summarizeMentionedCharacterMomentResponse(
     params.moment,
@@ -683,8 +689,7 @@ export function buildUserMomentViewerMemoryContent(params: {
   mentionedViewer: boolean
 }): string {
   const userName = params.playerDisplayName.trim() || '用户'
-  const body = sanitizeMomentBodyText(params.moment.content)
-  const imageCount = params.moment.images?.length ?? 0
+  const body = buildMomentMemoryBodyText(params.moment)
   const parts: string[] = [`${userName}的朋友圈：`]
 
   if (params.moment.isPinned) {
@@ -697,10 +702,10 @@ export function buildUserMomentViewerMemoryContent(params: {
     parts.push('你在正文中被提醒查看（提到了你）')
   }
 
-  if (body) {
+  if (body && body !== '（无文字）') {
     parts.push(`朋友圈正文：${body}`)
-  } else if (imageCount > 0) {
-    parts.push(`朋友圈正文：（图片动态，${imageCount} 张）`)
+  } else if ((params.moment.images?.length ?? 0) > 0) {
+    parts.push(`朋友圈正文：（图片动态，${params.moment.images!.length} 张）`)
   } else {
     parts.push('朋友圈正文：（无文字）')
   }
@@ -745,7 +750,7 @@ export function buildUserMomentViewerMemoryPayload(params: {
     interactionRows: rows,
     memoryContent,
     payload: {
-      originalText: sanitizeMomentBodyText(params.moment.content) || '（图片动态）',
+      originalText: buildMomentMemoryBodyText(params.moment) || '（图片动态）',
       publishedAt: params.moment.timestamp,
       imagesCount: params.moment.images?.length ?? 0,
       interactionsSnapshot,

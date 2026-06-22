@@ -34,8 +34,13 @@ import {
   PUBLISHER_SELF_COMMENT_PROMPT_RULES,
   type CharacterMomentAiDraft,
 } from './momentCharacterPublishTypes'
-import { buildInstantGenContentTypePromptBlock } from './momentInstantGenContentTypes'
+import {
+  CHARACTER_MOMENT_MUSIC_POST_JSON_HINT,
+  CHARACTER_MOMENT_MUSIC_POST_PROMPT,
+  CHARACTER_MOMENT_MUSIC_LOCALE_HINT,
+} from './momentAttachedMusic'
 import type { InstantGenContentTypeChoice } from './momentInstantGenContentTypes'
+import { buildInstantGenContentTypePromptBlock } from './momentInstantGenContentTypes'
 import type { InstantGenPostTypeChoice } from './momentInstantGenTypes'
 import { instantGenChoiceToPostType } from './momentInstantGenTypes'
 import type { MomentContactRef } from './newMomentTypes'
@@ -64,9 +69,12 @@ ${MOMENT_IMAGE_COUNT_PROMPT}
 - mixed：文字+图片（images 数组 1~9 张均可）
 - text：纯文字
 - image：纯图片（content 留空）
+- music：分享歌曲（必填 attachedMusic；content 可选配文；禁止 images）
 
 # Output Format (严格返回 JSON，严禁 Markdown 与额外解释)
-{"postType":"text"|"image"|"mixed","content":"...","location":null,"images":["prompt1","prompt2"],${PUBLISHER_SELF_COMMENT_JSON_HINT},${CHARACTER_MOMENT_PRIVACY_JSON_HINT}}
+{"postType":"text"|"image"|"mixed"|"music","content":"...","location":null,"images":["prompt1","prompt2"],${CHARACTER_MOMENT_MUSIC_POST_JSON_HINT},${PUBLISHER_SELF_COMMENT_JSON_HINT},${CHARACTER_MOMENT_PRIVACY_JSON_HINT}}
+
+${CHARACTER_MOMENT_MUSIC_POST_PROMPT}
 
 ${PUBLISHER_SELF_COMMENT_PROMPT_RULES}
 
@@ -180,7 +188,10 @@ export async function generateHistoricalCharacterMomentPost(params: {
     '',
     privacyPrompt,
     '',
-    `【载体形式 · 必须遵循】本条 postType 必须为 "${forcedPostType}"（text=纯文字，mixed=图文，image=纯图片）。`,
+    `【载体形式 · 必须遵循】本条 postType 必须为 "${forcedPostType}"（text=纯文字，mixed=图文，image=纯图片，music=分享歌曲）。`,
+    forcedPostType === 'music'
+      ? `【分享歌曲】必填 attachedMusic（网易云真实歌名+歌手）；content 可选配文；禁止 images/imagePrompts。\n${CHARACTER_MOMENT_MUSIC_LOCALE_HINT}`
+      : '',
     contentTypeBlock,
     textLengthHint,
     ...(pinnedBlock ? [pinnedBlock] : []),
@@ -199,7 +210,7 @@ export async function generateHistoricalCharacterMomentPost(params: {
       },
       { role: 'user', content: userTask },
     ],
-    { temperature: 0.9, max_tokens: 3600 },
+    { temperature: 0.9 },
   )
   const payload = parseMomentsModelJsonPayload(raw)
   const draft = normalizeCharacterMomentAiDraft(payload, params.characterId)

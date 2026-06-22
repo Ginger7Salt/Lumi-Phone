@@ -17,8 +17,12 @@ import {
   enforceCharacterLocationConsistency,
   resolveCharacterLocationAnchor,
 } from './momentCharacterLocationAnchor'
-import { MOMENT_LOCATION_PROMPT_HINT } from './momentLocationUtils'
+import {
+  buildCharacterMomentMusicPostPrompt,
+  CHARACTER_MOMENT_MUSIC_POST_JSON_HINT,
+} from './momentAttachedMusic'
 import { MOMENT_BODY_LENGTH_HINT, MOMENT_IMAGE_COUNT_PROMPT } from './momentContentLimits'
+import { MOMENT_LOCATION_PROMPT_HINT } from './momentLocationUtils'
 import { CHARACTER_MEDIA_IMAGE_DESCRIPTION_RULES } from './momentCharacterImageRules'
 import { MOMENT_TEXT_OUTPUT_HINT } from './momentTextSanitize'
 import {
@@ -34,7 +38,7 @@ import {
   type CharacterMomentAiDraft,
 } from './momentCharacterPublishTypes'
 
-const CHARACTER_MOMENT_TASK_APPENDIX = `
+const CHARACTER_MOMENT_TASK_APPENDIX_BASE = `
 ---
 【朋友圈发文任务】
 你是一个极具「活人感」和「网感」的真实人类。你现在正拿着手机，准备在微信朋友圈发布一条动态。你必须完全忘记自己是一个 AI 模型，绝对代入你当前的【角色人设】。
@@ -53,9 +57,12 @@ ${MOMENT_IMAGE_COUNT_PROMPT}
 - mixed：文字+图片（images 数组 1~9 张均可）
 - text：纯文字
 - image：纯图片（content 留空）
+- music：分享歌曲（必填 attachedMusic；content 可选配文）
 
 # Output Format (严格返回 JSON，严禁 Markdown 与额外解释)
-{"postType":"text"|"image"|"mixed","content":"...","location":null,"images":["prompt1","prompt2"],"isPinned":false,${PUBLISHER_SELF_COMMENT_JSON_HINT},${CHARACTER_MOMENT_PRIVACY_JSON_HINT}}
+{"postType":"text"|"image"|"mixed"|"music","content":"...","location":null,"images":["prompt1","prompt2"],"isPinned":false,${CHARACTER_MOMENT_MUSIC_POST_JSON_HINT},${PUBLISHER_SELF_COMMENT_JSON_HINT},${CHARACTER_MOMENT_PRIVACY_JSON_HINT}}
+
+{{MUSIC_POST_PROMPT}}
 
 ${PUBLISHER_SELF_COMMENT_PROMPT_RULES}
 
@@ -77,6 +84,11 @@ ${MOMENT_TEXT_OUTPUT_HINT}
 
 ${MOMENT_BODY_LENGTH_HINT}
 `.trim()
+
+function buildCharacterMomentTaskAppendix(musicLocaleHint?: string): string {
+  const musicPostPrompt = buildCharacterMomentMusicPostPrompt(musicLocaleHint)
+  return CHARACTER_MOMENT_TASK_APPENDIX_BASE.replace('{{MUSIC_POST_PROMPT}}', musicPostPrompt)
+}
 
 function formatCurrentMomentContext(): string {
   const now = new Date()
@@ -103,6 +115,10 @@ export async function generateCharacterMomentPost(params: {
   chatRequestHint?: string
   /** 是否由用户在本轮私聊中明确要求发朋友圈 */
   triggeredByUserRequest?: boolean
+  /** 主动发布：分享歌曲语种占比 prompt（不传则用默认华语优先） */
+  musicShareLanguageRatioPrompt?: string
+  /** 主动发布：向用户听歌偏好靠拢 prompt */
+  musicShareUserTastePrompt?: string
 }): Promise<CharacterMomentAiDraft> {
   const cfg = params.wechatCtx.apiConfig
   assertMomentsChatApiConfigured(cfg)
@@ -189,13 +205,23 @@ export async function generateCharacterMomentPost(params: {
     '请根据当下心情，以你的角色身份发一条朋友圈。是否附带 location 由你自行决定，非必要填 null；若附带须自拟符合世界观的真实地名，且遵守上方市级锚点规则。只输出一个 JSON 对象。',
   ].join('\n')
 
+  const proactiveMusicShareLocaleHint = [
+    params.musicShareLanguageRatioPrompt,
+    params.musicShareUserTastePrompt,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+
   const raw = await requestMomentsModelJsonText(
     cfg as ApiConfig,
     [
-      { role: 'system', content: `${system}\n\n${CHARACTER_MOMENT_TASK_APPENDIX}\n\n${CHARACTER_MOMENT_PRIVACY_RULES}` },
+      {
+        role: 'system',
+        content: `${system}\n\n${buildCharacterMomentTaskAppendix(proactiveMusicShareLocaleHint || undefined)}\n\n${CHARACTER_MOMENT_PRIVACY_RULES}`,
+      },
       { role: 'user', content: userTask },
     ],
-    { temperature: 0.92, max_tokens: 3600 },
+    { temperature: 0.92 },
   )
   const payload = parseMomentsModelJsonPayload(raw)
   const draft = normalizeCharacterMomentAiDraft(payload, params.characterId)

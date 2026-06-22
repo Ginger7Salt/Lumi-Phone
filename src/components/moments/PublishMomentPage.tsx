@@ -1,6 +1,6 @@
 import { AtSign, ChevronRight, Eye, MapPin, Plus, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { useCallback, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import TextareaAutosize from 'react-textarea-autosize'
 
 import {
@@ -19,6 +19,7 @@ import {
 import { PrivacySettingsModal } from './PrivacySettingsModal'
 import { useMomentsContactTags } from './momentsContactTagsStore'
 import { filterMentionableMomentContacts } from './publishMomentUtils'
+import { MomentMusicCapsule } from './MomentMusicCapsule'
 import {
   compressChatImageToJpeg,
   loadImageFromFile,
@@ -51,11 +52,18 @@ function SettingsRow({ icon, label, value, onClick }: SettingsRowProps) {
 type PublishMomentPageProps = {
   open: boolean
   contacts?: MomentContactRef[]
+  initialDraft?: NewMomentDraft | null
   onClose: () => void
   onPublish: (draft: NewMomentDraft) => void
 }
 
-export function PublishMomentPage({ open, contacts = [], onClose, onPublish }: PublishMomentPageProps) {
+export function PublishMomentPage({
+  open,
+  contacts = [],
+  initialDraft = null,
+  onClose,
+  onPublish,
+}: PublishMomentPageProps) {
   const fileRef = useRef<HTMLInputElement | null>(null)
   const titleId = useId()
   const [draft, setDraft] = useState<NewMomentDraft>(() => createEmptyNewMoment())
@@ -78,13 +86,33 @@ export function PublishMomentPage({ open, contacts = [], onClose, onPublish }: P
     setMentionOpen(false)
   }, [])
 
+  useEffect(() => {
+    if (!open) return
+    if (initialDraft) {
+      setDraft({
+        ...createEmptyNewMoment(),
+        ...initialDraft,
+        images: initialDraft.attachedMusic ? [] : (initialDraft.images ?? []),
+        mentions: initialDraft.mentions ?? [],
+        privacy: initialDraft.privacy ?? createEmptyNewMoment().privacy,
+      })
+      setLocationDraft(initialDraft.location ?? '')
+    } else {
+      setDraft(createEmptyNewMoment())
+      setLocationDraft('')
+    }
+    setPrivacyOpen(false)
+    setLocationOpen(false)
+    setMentionOpen(false)
+  }, [open, initialDraft])
+
   const handleClose = () => {
     resetDraft()
     onClose()
   }
 
   const onPickImages = (files: FileList | null) => {
-    if (!files?.length) return
+    if (!files?.length || draft.attachedMusic) return
     const room = MAX_IMAGES - draft.images.length
     if (room <= 0) return
     void (async () => {
@@ -99,7 +127,7 @@ export function PublishMomentPage({ open, contacts = [], onClose, onPublish }: P
           })
           const src = `data:image/jpeg;base64,${base64}`
           setDraft((prev) => {
-            if (prev.images.length >= MAX_IMAGES) return prev
+            if (prev.attachedMusic || prev.images.length >= MAX_IMAGES) return prev
             return { ...prev, images: [...prev.images, src] }
           })
         } catch {
@@ -133,6 +161,7 @@ export function PublishMomentPage({ open, contacts = [], onClose, onPublish }: P
     onPublish({
       ...draft,
       content: draft.content.trim(),
+      images: draft.attachedMusic ? [] : draft.images,
       mentions: draft.mentions.filter((m) => m.id !== 'self'),
     })
     resetDraft()
@@ -198,6 +227,13 @@ export function PublishMomentPage({ open, contacts = [], onClose, onPublish }: P
               {draft.content.length}/{MOMENT_BODY_MAX_CHARS}
             </p>
 
+            {draft.attachedMusic ? (
+              <div className="px-6 pb-4">
+                <MomentMusicCapsule music={draft.attachedMusic} />
+              </div>
+            ) : null}
+
+            {!draft.attachedMusic ? (
             <div className="grid grid-cols-3 gap-2 px-6 pb-6">
               <AnimatePresence initial={false}>
                 {draft.images.map((src, index) => (
@@ -235,6 +271,7 @@ export function PublishMomentPage({ open, contacts = [], onClose, onPublish }: P
                 </motion.button>
               ) : null}
             </div>
+            ) : null}
 
             <div className="h-2 w-full bg-gray-50/50" />
 

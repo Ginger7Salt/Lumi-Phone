@@ -8,6 +8,7 @@ import { normalizeCharacterMomentPrivacyDraft } from './momentCharacterPrivacyAi
 import type { InstantGenContentTypeChoice } from './momentInstantGenContentTypes'
 import { clampInstantGenTextLength, MAX_MOMENT_IMAGES } from './momentContentLimits'
 import { normalizeMomentLocation } from './momentLocationUtils'
+import { parseCharacterMomentSongDraftFromAi, type CharacterMomentSongDraft } from './momentAttachedMusic'
 import { sanitizeMomentBodyText, sanitizeMomentText } from './momentTextSanitize'
 
 const INSTANT_GEN_PAYLOAD_NEST_KEYS = ['data', 'result', 'moment', 'post', 'output', 'response'] as const
@@ -26,9 +27,15 @@ function unwrapInstantGenPayload(raw: unknown): Record<string, unknown> | null {
   return o
 }
 
-export type InstantGenPostTypeChoice = 'text' | 'mixed' | 'image'
+export type InstantGenPostTypeChoice = 'text' | 'mixed' | 'image' | 'music'
 
 export function instantGenPostTypeIncludesText(
+  postType: InstantGenPostTypeChoice,
+): boolean {
+  return postType === 'text' || postType === 'mixed' || postType === 'music'
+}
+
+export function instantGenPostTypeRequiresText(
   postType: InstantGenPostTypeChoice,
 ): boolean {
   return postType === 'text' || postType === 'mixed'
@@ -72,6 +79,7 @@ export type InstantGenAiDraft = {
   mentionUser?: boolean
   mentionCharacterIds?: string[]
   publisherSelfComments?: PublisherSelfCommentDraft[]
+  attachedMusicDraft?: CharacterMomentSongDraft
 }
 
 export function instantGenChoiceToPostType(choice: InstantGenPostTypeChoice): CharacterMomentPostType {
@@ -82,7 +90,7 @@ export function normalizeInstantGenPostType(
   raw: unknown,
   fallback: InstantGenPostTypeChoice,
 ): CharacterMomentPostType {
-  if (raw === 'text' || raw === 'mixed' || raw === 'image') return raw
+  if (raw === 'text' || raw === 'mixed' || raw === 'image' || raw === 'music') return raw
   return fallback
 }
 
@@ -122,7 +130,8 @@ export function normalizeInstantGenAiDraft(
     .map((x) => (typeof x === 'string' ? x.trim() : ''))
     .filter(Boolean)
     .slice(0, MAX_MOMENT_IMAGES)
-  const imagePrompts = postType === 'text' ? [] : rawPrompts
+  const imagePrompts = postType === 'text' || postType === 'music' ? [] : rawPrompts
+  const attachedMusicDraft = parseCharacterMomentSongDraftFromAi(o.attachedMusic)
 
   const interactions: InstantGenInteractionDraft[] = []
   if (Array.isArray(o.interactions)) {
@@ -170,6 +179,7 @@ export function normalizeInstantGenAiDraft(
 
   if (postType === 'image' && !imagePrompts.length) return null
   if (postType === 'mixed' && !content && !imagePrompts.length) return null
+  if (postType === 'music' && !attachedMusicDraft) return null
 
   const location = normalizeMomentLocation(o.location)
   const privacy = normalizeCharacterMomentPrivacyDraft(o, publisherCharacterId)
@@ -194,5 +204,6 @@ export function normalizeInstantGenAiDraft(
     mentionUser,
     mentionCharacterIds,
     ...(publisherSelfComments.length ? { publisherSelfComments } : {}),
+    ...(attachedMusicDraft ? { attachedMusicDraft } : {}),
   }
 }

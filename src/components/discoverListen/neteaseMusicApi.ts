@@ -1698,35 +1698,75 @@ export function songToAttached(song: NeteaseSongItem) {
   }
 }
 
+/** 展示名是否包含多位歌手（网易云用 " / " 连接） */
+export function songHasMultipleArtists(artistLabel: string): boolean {
+  return /\s\/\s/.test(artistLabel.trim())
+}
+
+function pickArtistsFromSongRaw(row: Record<string, unknown>): NeteaseArtistItem[] {
+  const ar = Array.isArray(row.ar)
+    ? row.ar
+    : Array.isArray(row.artists)
+      ? row.artists
+      : []
+  return ar
+    .map((item) =>
+      item && typeof item === 'object' ? mapArtist(item as Record<string, unknown>) : null,
+    )
+    .filter((a): a is NeteaseArtistItem => Boolean(a))
+}
+
+/** 解析歌曲全部歌手，用于多歌手选择面板 */
+export async function resolveSongArtists(
+  cookie: string,
+  songId: number,
+  artistName?: string,
+): Promise<NeteaseArtistItem[]> {
+  if (!songId) return []
+
+  try {
+    const body = await ncmApiGet('/song/detail', cookie, { ids: String(songId) })
+    const rows = pickSongsFromBody(body as Record<string, unknown>)
+    const artists = rows[0] ? pickArtistsFromSongRaw(rows[0]) : []
+    if (artists.length > 0) {
+      return enrichNeteaseArtists(cookie, artists)
+    }
+  } catch {
+    /* 回退按名字搜索 */
+  }
+
+  const names = (artistName ?? '')
+    .split(/\s*\/\s*/)
+    .map((n) => n.trim())
+    .filter(Boolean)
+  if (names.length === 0 && artistName?.trim()) {
+    names.push(artistName.trim())
+  }
+  if (names.length === 0) return []
+
+  const byId = new Map<number, NeteaseArtistItem>()
+  await Promise.all(
+    names.map(async (name) => {
+      try {
+        const found = await searchNeteaseArtists(cookie, name, 6)
+        const pick = found.find((a) => a.name === name) ?? found[0]
+        if (pick && !byId.has(pick.id)) byId.set(pick.id, pick)
+      } catch {
+        /* 单个搜索失败不阻断 */
+      }
+    }),
+  )
+  return enrichNeteaseArtists(cookie, [...byId.values()])
+}
+
 /** 解析歌曲主唱歌手，用于全屏页跳转歌手主页 */
 export async function resolveSongPrimaryArtist(
   cookie: string,
   songId: number,
   artistName?: string,
 ): Promise<{ id: number; name: string; avatar: string } | null> {
-  if (!songId) return null
-  try {
-    const details = await fetchNeteaseSongDetails(cookie, [songId])
-    const row = details[0]
-    if (row?.artistId) {
-      return {
-        id: row.artistId,
-        name: row.artist || artistName?.trim() || '未知歌手',
-        avatar: '',
-      }
-    }
-  } catch {
-    /* 回退搜索 */
-  }
-  const q = artistName?.trim()
-  if (!q) return null
-  try {
-    const artists = await searchNeteaseArtists(cookie, q, 8)
-    const exact = artists.find((a) => a.name === q)
-    const pick = exact ?? artists[0]
-    if (pick) return { id: pick.id, name: pick.name, avatar: pick.avatar }
-  } catch {
-    /* ignore */
-  }
-  return null
+  const artists = await resolveSongArtists(cookie, songId, artistName)
+  const first = artists[0]
+  if (!first) return null
+  return { id: first.id, name: first.name, avatar: first.avatar }
 }

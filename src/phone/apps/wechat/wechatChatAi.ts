@@ -61,6 +61,7 @@ import {
 } from './wechatCharacterProfileUpdateApply'
 import { WECHAT_CHARACTER_MOMENT_PIN_APPENDIX } from './wechatCharacterMomentPinApply'
 import { WECHAT_CHARACTER_MOMENT_PUBLISH_APPENDIX } from './wechatCharacterMomentPublishApply'
+import { WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX } from './wechatCharacterMomentSongShareApply'
 import { WECHAT_HEART_WHISPER_SYSTEM_PROMPT } from './wechatHeartWhisperPrompt'
 import { WECHAT_CHARACTER_PSYCHE_SYSTEM_PROMPT } from './wechatCharacterPsychePrompt'
 import type { CharacterPsychePageSummaries } from './characterPsyche/characterPsycheSummaries'
@@ -1152,7 +1153,7 @@ function buildPersonaPrivateChatSelfServiceAppendix(params: {
   return appendWorldBookAfterPatchOutputRules(
     params.character,
     false,
-    `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_FORWARD_HISTORY_FORGER_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}\n\n${WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_APPENDIX}${profileBlock ? `\n\n${profileBlock}` : ''}\n\n${WECHAT_CHARACTER_PROFILE_UPDATE_APPENDIX}${pinCatalog ? `\n\n${pinCatalog}` : ''}${userMomentsCatalog ? `\n\n${userMomentsCatalog}` : ''}\n\n${WECHAT_CHARACTER_MOMENT_PUBLISH_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_PIN_APPENDIX}`,
+    `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_FORWARD_HISTORY_FORGER_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}\n\n${WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_APPENDIX}${profileBlock ? `\n\n${profileBlock}` : ''}\n\n${WECHAT_CHARACTER_PROFILE_UPDATE_APPENDIX}${pinCatalog ? `\n\n${pinCatalog}` : ''}${userMomentsCatalog ? `\n\n${userMomentsCatalog}` : ''}\n\n${WECHAT_CHARACTER_MOMENT_PUBLISH_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_PIN_APPENDIX}`,
   )
 }
 

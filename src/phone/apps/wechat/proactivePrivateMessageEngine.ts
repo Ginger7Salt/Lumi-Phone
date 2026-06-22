@@ -12,7 +12,7 @@ import {
   loadMeetUserProfileSnapshotFromKv,
 } from '../lumiMeet/meetUserProfileSnapshot'
 import { personaDb } from './newFriendsPersona/idb'
-import type { ChatConversationSettingsRow, WeChatChatMessage } from './newFriendsPersona/types'
+import type { ChatConversationSettingsRow, WeChatChatMessage, WeChatMusicSyncInvitePayload } from './newFriendsPersona/types'
 import { formatWorldBackgroundForPrompt } from './newFriendsPersona/worldBackgroundFormat'
 import { loadAccountsBundle } from './wechatAccountPersistence'
 import { buildFriendRequestPrivatePromptPack } from './wechatFriendRequestPrivatePromptPack'
@@ -55,6 +55,16 @@ import {
   hasProactiveMessageScheduleSaved,
   resolveProactiveMessageAiRound,
 } from './proactivePrivateMessageTypes'
+import { buildSyncListeningPlaybackBias } from './musicSync/syncListeningPlaybackBias'
+import { WECHAT_CHARACTER_MUSIC_SYNC_OUTPUT_BLOCK, buildCharacterMusicSyncInviteStateBias } from './musicSync/wechatCharacterMusicSyncAi'
+import {
+  buildCharacterMusicSyncSessionContextForProactive,
+  stripAndApplyCharacterMusicSyncDirectives,
+} from './musicSync/applyCharacterMusicSyncDirective'
+import {
+  stripAndApplyCharacterMomentSongShareDirectives,
+  WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX,
+} from './wechatCharacterMomentSongShareApply'
 import {
   drawProactiveVariableIntervalSeconds,
   isProactiveVariableIntervalEnabled,
@@ -123,7 +133,7 @@ export async function resetProactiveMessageCountdown(conversationKey: string): P
   }
   if (isProactiveVariableIntervalEnabled(row)) {
     const explicitBusy = await resolveCharacterExplicitBusyForProactive({ row, now })
-    patch.proactiveMessageNextIntervalSeconds = drawProactiveVariableIntervalSeconds(explicitBusy)
+    patch.proactiveMessageNextIntervalSeconds = drawProactiveVariableIntervalSeconds(explicitBusy, row)
   }
   await personaDb.upsertChatConversationSettings(patch)
 }
@@ -270,11 +280,19 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
       // 体征未生成时仍可走通用主动消息偏向
     }
 
-    const replyBias = buildProactivePrivateMessageReplyBias(messages, {
-      msSinceLastUserMessage,
-      affection,
-      relationshipDef,
-    })
+    const replyBias = [
+      buildProactivePrivateMessageReplyBias(messages, {
+        msSinceLastUserMessage,
+        affection,
+        relationshipDef,
+      }),
+      buildSyncListeningPlaybackBias(characterId, { forProactive: true }),
+      buildCharacterMusicSyncInviteStateBias(characterId, messages),
+      WECHAT_CHARACTER_MUSIC_SYNC_OUTPUT_BLOCK,
+      WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX,
+    ]
+      .filter((x) => x.trim())
+      .join('\n\n')
     const aiRound = resolveProactiveMessageAiRound(messages)
 
     const pack = await buildFriendRequestPrivatePromptPack({
@@ -399,32 +417,56 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
     } else if (characterImageGenEnabled && imageRoundAllowed) {
       bubbles = limitCharacterImageGenLinesFromBubbles(bubbles, imageCountRange.max)
     }
-    if (wechatAccountId && characterId && bubbles.length) {
-      const profileImageApplied = await stripAndApplyCharacterProfileImageActions({
-        characterId,
+    let musicSyncInvites: WeChatMusicSyncInvitePayload[] = []
+    if (wechatAccountId && characterId) {
+      if (bubbles.length) {
+        const profileImageApplied = await stripAndApplyCharacterProfileImageActions({
+          characterId,
+          bubbles,
+        })
+        bubbles = profileImageApplied.bubbles
+        const profileApplied = await stripAndApplyCharacterWechatProfileUpdates({
+          characterId,
+          bubbles,
+        })
+        bubbles = profileApplied.bubbles
+        bubbles = await stripAndApplyCharacterMomentPublishDirectives({
+          accountId: wechatAccountId,
+          characterId,
+          playerIdentityId,
+          playerDisplayName,
+          apiConfig,
+          bubbles,
+        })
+        bubbles = await stripAndApplyCharacterMomentSongShareDirectives({
+          accountId: wechatAccountId,
+          characterId,
+          playerIdentityId,
+          playerDisplayName,
+          apiConfig,
+          bubbles,
+        })
+        bubbles = await stripAndApplyCharacterMomentPinDirectives({
+          accountId: wechatAccountId,
+          characterId,
+          bubbles,
+        })
+      }
+      const musicSyncStripped = await stripAndApplyCharacterMusicSyncDirectives({
         bubbles,
+        ctx: buildCharacterMusicSyncSessionContextForProactive({
+          characterId: peerCharacterId,
+          characterDisplayName:
+            character.wechatNickname?.trim() || character.remark?.trim() || character.name?.trim() || '对方',
+          characterAvatarUrl: character.avatarUrl,
+          playerDisplayName,
+          playerAvatarUrl: account?.avatarUrl,
+        }),
       })
-      bubbles = profileImageApplied.bubbles
-      const profileApplied = await stripAndApplyCharacterWechatProfileUpdates({
-        characterId,
-        bubbles,
-      })
-      bubbles = profileApplied.bubbles
-      bubbles = await stripAndApplyCharacterMomentPublishDirectives({
-        accountId: wechatAccountId,
-        characterId,
-        playerIdentityId,
-        playerDisplayName,
-        apiConfig,
-        bubbles,
-      })
-      bubbles = await stripAndApplyCharacterMomentPinDirectives({
-        accountId: wechatAccountId,
-        characterId,
-        bubbles,
-      })
+      bubbles = musicSyncStripped.bubbles
+      musicSyncInvites = musicSyncStripped.invites
     }
-    if (!bubbles.length) return
+    if (!bubbles.length && !musicSyncInvites.length) return
 
     const notifyTitle =
       character.wechatNickname?.trim() || character.name?.trim() || '聊天'
@@ -439,6 +481,15 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
         content,
         thinking: i === 0 ? ai.thinking : undefined,
         timestamp: ts,
+      })
+    }
+    for (const invite of musicSyncInvites) {
+      ts += 800 + Math.floor(Math.random() * 1200)
+      revealBubbles.push({
+        id: newMessageId(),
+        content: bubbles[bubbles.length - 1]?.trim() || '[音乐共听邀约]',
+        timestamp: ts,
+        musicSync: invite,
       })
     }
 
@@ -469,7 +520,7 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
       proactiveMessageLastFiredAtMs: firedAt,
     }
     if (isProactiveVariableIntervalEnabled(row)) {
-      nextPatch.proactiveMessageNextIntervalSeconds = drawProactiveVariableIntervalSeconds(explicitBusy)
+      nextPatch.proactiveMessageNextIntervalSeconds = drawProactiveVariableIntervalSeconds(explicitBusy, row)
     }
     await personaDb.upsertChatConversationSettings(nextPatch)
   } catch (err) {

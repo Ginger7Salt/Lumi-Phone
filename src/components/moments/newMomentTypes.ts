@@ -29,9 +29,12 @@ export type NewMomentPrivacy = {
   audience?: PrivacyAudienceSelection
 }
 
+import type { MomentAttachedMusic } from './momentAttachedMusic'
+
 export type NewMomentDraft = {
   content: string
   images: string[]
+  attachedMusic?: MomentAttachedMusic
   location: string | null
   mentions: MomentContactRef[]
   privacy: NewMomentPrivacy
@@ -61,7 +64,11 @@ export function createEmptyNewMoment(): NewMomentDraft {
 }
 
 export function isNewMomentPublishable(draft: NewMomentDraft): boolean {
-  return draft.content.trim().length > 0 || draft.images.length > 0
+  return (
+    draft.content.trim().length > 0 ||
+    draft.images.length > 0 ||
+    Boolean(draft.attachedMusic?.title.trim())
+  )
 }
 
 export function formatLocationPreview(location: string | null): string {

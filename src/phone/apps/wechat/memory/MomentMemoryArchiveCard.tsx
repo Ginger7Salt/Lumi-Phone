@@ -1,4 +1,5 @@
 import { formatMomentPublishedAtAbsolute } from '../../../../components/moments/utils/timeFormat'
+import { formatMomentMemoryBodyForDisplay } from './momentMemoryDisplayUtils'
 import { ARCHIVE_SERIF } from './memoryArchiveTheme'
 import type { MemoryEntry } from './memoryArchiveTypes'
 
@@ -12,7 +13,7 @@ export function MomentMemoryArchiveCard({ entry, expanded }: Props) {
   if (!payload) return null
 
   const keywords = (entry.triggerKeywords ?? []).slice(0, 5)
-  const originalText = payload.originalText.trim() || '（无正文）'
+  const originalText = formatMomentMemoryBodyForDisplay(payload.originalText.trim() || '（无正文）')
   const location = payload.location?.trim()
   const publishedLabel =
     typeof payload.publishedAt === 'number' && payload.publishedAt > 0

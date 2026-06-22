@@ -9,7 +9,12 @@ import type { Relationship } from '../../phone/apps/wechat/newFriendsPersona/typ
 import {
   buildMomentCharacterRelationshipPromptBlock,
 } from './momentRelationshipGraph'
+import {
+  buildUserMomentInteractionCharacterContexts,
+  formatUserMomentCharacterContextsPrompt,
+} from './momentUserInteractionContext'
 import { MOMENT_TEXT_OUTPUT_HINT, sanitizeMomentText } from './momentTextSanitize'
+import { MOMENT_SONG_SHARE_AI_COMMENT_RULES } from './momentAttachedMusic'
 import { runMomentsVisionChat } from './momentVisionChat'
 
 export type ThreadReplyDraft = {
@@ -34,6 +39,8 @@ const THREAD_REPLY_TASK = `
 - 每项 1～3 句口语，禁止编号前缀
 - authorCharId 必须来自参与者列表；replyToCommentId 必须来自评论目录
 - **互称规则**：若提供了【角色之间的人脉关系】，提及/回复对方时必须使用其中的「当面称呼」；禁止与关系矛盾的称谓（如母子绝不可互称学姐学长）
+- 若下方提供了各角色与该用户的**长期记忆与近期私聊**，回复须据此反应，勿写与人设/关系无关的客套
+${MOMENT_SONG_SHARE_AI_COMMENT_RULES}
 ${MOMENT_TEXT_OUTPUT_HINT}
 `.trim()
 
@@ -77,6 +84,7 @@ export async function generateMomentThreadReplies(params: {
   commentCatalog: CommentCatalogEntry[]
   participants: ThreadParticipant[]
   momentRelationships?: Relationship[]
+  momentPublishedAt?: number
 }): Promise<ThreadReplyDraft[]> {
   assertMomentsChatApiConfigured(params.wechatCtx.apiConfig)
   const cfg = params.wechatCtx.apiConfig
@@ -100,6 +108,30 @@ export async function generateMomentThreadReplies(params: {
     params.momentRelationships ?? [],
   )
 
+  const relevanceContent = [
+    params.momentContent.trim(),
+    params.userComment.content.trim(),
+    params.commentCatalog.map((c) => c.content).join('\n'),
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  let characterContextPrompt = ''
+  try {
+    const contexts = await buildUserMomentInteractionCharacterContexts({
+      wechatCtx: params.wechatCtx,
+      allowedCharacters: params.participants.map((p) => ({
+        charId: p.charId,
+        displayName: p.displayName,
+      })),
+      momentContent: relevanceContent,
+      momentPublishedAt: params.momentPublishedAt ?? Date.now(),
+    })
+    characterContextPrompt = formatUserMomentCharacterContextsPrompt(contexts)
+  } catch (err) {
+    console.error('[momentCommentThreadReplyAi] character contexts failed', err)
+  }
+
   const userTask = [
     `朋友圈正文：${params.momentContent.trim() || '（无文字）'}`,
     `发布者：${params.publisherDisplayName}（id: ${params.publisherCharacterId}）`,
@@ -107,6 +139,7 @@ export async function generateMomentThreadReplies(params: {
     '',
     relationshipBlock,
     relationshipBlock ? '' : null,
+    characterContextPrompt || null,
     '【参与者】',
     participantLines,
     '',

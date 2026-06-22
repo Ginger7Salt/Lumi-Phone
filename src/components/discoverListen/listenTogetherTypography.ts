@@ -21,6 +21,15 @@ export const listenPlainNumStyle: CSSProperties = {
 /** 听一听数字：全局衬线数字 + 等宽 + 略紧字距 */
 export const listenNumClass = 'font-num tabular-nums tracking-tight'
 
+/** 听一听中文正文：与手机全局 --phone-font 一致（首页/搜索等） */
+export const LISTEN_TOGETHER_CN_FONT = 'var(--phone-font)'
+
+export const listenTogetherCnTextClass = 'listen-together-cn-text'
+
+export const listenTogetherCnTextStyle: CSSProperties = {
+  fontFamily: LISTEN_TOGETHER_CN_FONT,
+}
+
 /** 「我的」资料栏大号统计数字 */
 export const listenNumStatClass = `text-2xl text-stone-800 ${listenNumClass}`
 

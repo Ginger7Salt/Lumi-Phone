@@ -22,6 +22,7 @@ import { PublishMomentPage } from './PublishMomentPage'
 import type { MomentItemModel } from './mockMoments'
 import { generateMomentInteractions, countAiEngagementDrafts } from './momentInteractionAi'
 import { finalizeUserMomentEngagementDrafts } from './momentUserInteractionAi'
+import { buildMomentContentForAi, enrichMomentAttachedMusic } from './momentAttachedMusic'
 import type { AiMomentInteractionDraft } from './momentInteractionTypes'
 import {
   materializeInteractions,
@@ -307,11 +308,21 @@ export function UserMomentsArchive({
       void (async () => {
         let aiDrafts: AiMomentInteractionDraft[] = []
         try {
-          const next = await upsertUserMoment(accountId, item)
+          let persistedItem = item
+          if (item.attachedMusic) {
+            const enrichedMusic = await enrichMomentAttachedMusic(item.attachedMusic)
+            persistedItem = { ...item, attachedMusic: enrichedMusic }
+          }
+          const momentContentForAi = buildMomentContentForAi({
+            content: persistedItem.content,
+            attachedMusic: persistedItem.attachedMusic,
+          })
+
+          const next = await upsertUserMoment(accountId, persistedItem)
           setAllMoments(filterMomentsForArchiveSubject(next, userId))
 
           scheduleMomentInteractionMemoryArchive({
-            moment: item,
+            moment: persistedItem,
             apiConfig,
             wechatAccountId: accountId,
             playerIdentityId: qnaWechatCtx?.playerIdentityId ?? '__none__',
@@ -327,9 +338,10 @@ export function UserMomentsArchive({
           try {
             aiDrafts = await generateMomentInteractions({
               apiConfig,
-              momentContent: draft.content,
+              momentContent: momentContentForAi,
               imageCount: draft.images.length,
               momentImages: draft.images,
+              hasAttachedMusic: !!persistedItem.attachedMusic,
               allowedCharacters: allowed,
               mentionedCharacters,
               wechatCtx: qnaWechatCtx,
@@ -352,9 +364,10 @@ export function UserMomentsArchive({
             relationships: momentRelationships,
             engagementRules: userMomentEngagementRules,
             wechatCtx: qnaWechatCtx,
-            momentContent: draft.content,
+            momentContent: momentContentForAi,
             momentImages: draft.images,
             imageCount: draft.images.length,
+            hasAttachedMusic: !!persistedItem.attachedMusic,
             momentPublishedAt: publishedAt,
           })
 

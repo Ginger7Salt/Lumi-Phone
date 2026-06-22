@@ -193,7 +193,7 @@ export function ListenTogetherNotesFeedPage({
 
   return (
     <div className={`min-h-full ${className}`}>
-      <header className="sticky top-0 z-10 border-b border-white/40 bg-white/45 px-4 pb-3 pt-[max(10px,env(safe-area-inset-top))] backdrop-blur-md">
+      <header className="sticky top-0 z-10 border-b border-stone-100 bg-white px-4 pb-3 pt-[max(10px,env(safe-area-inset-top))]">
         <div className="relative flex items-center justify-center">
           <div className="text-center">
             <h1 className="text-[17px] font-medium tracking-wide text-stone-800">音符手记</h1>

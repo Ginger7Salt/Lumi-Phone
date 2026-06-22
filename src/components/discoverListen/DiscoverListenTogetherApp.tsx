@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MusicDiscoveryPage } from './MusicDiscoveryPage'
 import { buildMusicDiscoveryModel } from './musicDiscoveryModel'
 import { ListenTogetherNotesFeedPage } from './ListenTogetherNotesFeedPage'
+import { ListenTogetherTabUnderDev } from './ListenTogetherTabUnderDev'
 import {
   ListenTogetherPlaylistDetailPage,
   type PlaylistDetailInfo,
@@ -39,6 +40,8 @@ import {
   hydrateListenTogetherDataCaches,
 } from './listenTogetherPersistence'
 import { hydrateListenTogetherPageCaches } from './listenTogetherPageCache'
+import { hydrateListenTogetherUserAvatarPreference } from './listenTogetherUserAvatarPreference'
+import { useListenTogetherUserAvatar } from './useListenTogetherUserAvatar'
 import { ListenTogetherPageBackground } from './listenTogetherPageBg'
 import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
 import { useListenTogetherPlayer } from './useListenTogetherPlayer'
@@ -51,6 +54,10 @@ import { useNeteaseProfile } from './useNeteaseProfile'
 import type { NeteaseArtistItem, NeteaseSongItem } from './neteaseMusicApi'
 
 import { ListenTogetherMiniPlayerBar, LISTEN_MINI_PLAYER_H, LISTEN_TAB_BAR_H, listenOverlayBottomInset } from './ListenTogetherMiniPlayerBar'
+import { listenTogetherCnTextClass } from './listenTogetherTypography'
+
+/** 改 false 恢复听一听笔记 Tab */
+const LISTEN_NOTES_UNDER_DEV = true
 
 const BOTTOM_STACK = LISTEN_TAB_BAR_H + LISTEN_MINI_PLAYER_H
 
@@ -150,7 +157,11 @@ export function DiscoverListenTogetherApp({
   } = useNeteaseToplists(neteaseCookie, dataSyncVersion)
 
   useEffect(() => {
-    void Promise.all([hydrateListenTogetherDataCaches(), hydrateListenTogetherPageCaches()])
+    void Promise.all([
+      hydrateListenTogetherDataCaches(),
+      hydrateListenTogetherPageCaches(),
+      hydrateListenTogetherUserAvatarPreference(),
+    ])
   }, [])
 
   useEffect(() => {
@@ -182,6 +193,7 @@ export function DiscoverListenTogetherApp({
   }, [])
 
   const headerUser = neteaseProfile?.user ?? null
+  const { avatar: headerAvatar } = useListenTogetherUserAvatar(headerUser?.avatar)
 
   const handleSyncNetease = useCallback(async () => {
     if (!neteaseCookie || syncingNetease) return
@@ -410,7 +422,7 @@ export function DiscoverListenTogetherApp({
         className={`relative z-[1] min-h-0 flex-1 overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden ${
           hideUnderlyingPages ? 'hidden' : 'overflow-y-auto'
         }`}
-        style={{ paddingBottom: isHome || isSearch ? bottomPad : undefined }}
+        style={{ paddingBottom: hideUnderlyingPages ? undefined : bottomPad }}
         aria-hidden={hideUnderlyingPages}
       >
         {isMe ? (
@@ -431,15 +443,23 @@ export function DiscoverListenTogetherApp({
             cookie={neteaseCookie ?? ''}
             onOpenArtist={openArtistDetail}
             onOpenUser={openUserProfile}
+            onPlaySong={(s, queue, index) => void playSongWithContext(s, queue, index)}
           />
         ) : null}
 
         {isNotes ? (
-          <ListenTogetherNotesFeedPage
-            key={notesFeedKey}
-            onPlayAttachedMusic={playAttachedMusic}
-            onRefresh={() => setNotesFeedKey((k) => k + 1)}
-          />
+          LISTEN_NOTES_UNDER_DEV ? (
+            <ListenTogetherTabUnderDev
+              title="功能开发中"
+              hint="听一听笔记正在开发，角色与用户听歌心得、互动笔记将在此展示。"
+            />
+          ) : (
+            <ListenTogetherNotesFeedPage
+              key={notesFeedKey}
+              onPlayAttachedMusic={playAttachedMusic}
+              onRefresh={() => setNotesFeedKey((k) => k + 1)}
+            />
+          )
         ) : null}
 
         {isSearch ? (
@@ -466,7 +486,7 @@ export function DiscoverListenTogetherApp({
 
         {isHome ? (
         <header
-          className="sticky top-0 z-10 flex items-center justify-between border-b border-white/40 bg-white/45 px-4 pb-3 pt-[max(10px,env(safe-area-inset-top))] backdrop-blur-md"
+          className={`sticky top-0 z-10 flex items-center justify-between border-b border-stone-100 bg-white px-4 pb-3 pt-[max(10px,env(safe-area-inset-top))] ${listenTogetherCnTextClass}`}
         >
           <div className="flex min-w-0 items-center gap-2">
             {onBack ? (
@@ -474,15 +494,15 @@ export function DiscoverListenTogetherApp({
                 type="button"
                 aria-label="返回发现页"
                 onClick={onBack}
-                className="mr-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#2D2422]/70 transition-colors hover:bg-white/60"
+                className="mr-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#2D2422]/70 transition-colors hover:bg-stone-100"
               >
                 <ArrowLeft className="size-5" strokeWidth={1.5} />
               </button>
             ) : null}
             <div className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-stone-200/80 ring-2 ring-white shadow-sm">
-              {headerUser?.avatar ? (
+              {headerAvatar ? (
                 <img
-                  src={headerUser.avatar}
+                  src={headerAvatar}
                   alt=""
                   className="h-full w-full object-cover"
                 />
@@ -523,12 +543,12 @@ export function DiscoverListenTogetherApp({
               type="button"
               aria-label="登录或切换账号"
               onClick={() => setQrLoginOpen(true)}
-              className={`flex h-9 w-9 items-center justify-center rounded-full border shadow-sm backdrop-blur-sm transition-colors ${
+              className={`flex h-9 w-9 items-center justify-center rounded-full border shadow-sm transition-colors ${
                 neteaseLoggedIn
-                  ? 'border-rose-100 bg-rose-50/80 text-rose-400'
+                  ? 'border-rose-100 bg-rose-50 text-rose-400'
                   : isGuestMode
-                    ? 'border-stone-200 bg-white/70 text-stone-500'
-                    : 'border-white/80 bg-white/50 text-stone-500 hover:bg-white/80'
+                    ? 'border-stone-200 bg-stone-50 text-stone-500'
+                    : 'border-stone-200 bg-stone-50 text-stone-500 hover:bg-stone-100'
               }`}
             >
               <Smartphone className="size-[18px]" strokeWidth={1.5} />
@@ -538,10 +558,10 @@ export function DiscoverListenTogetherApp({
         ) : null}
 
         {isHome ? (
-        <main className="px-4 pb-2">
+        <main className={`px-4 pb-2 ${listenTogetherCnTextClass}`}>
           {!listenSessionActive ? (
             <section className="mb-6 px-1 py-6 text-center">
-              <p className="font-serif text-[18px] font-medium text-[#2D2422]">开始听一听</p>
+              <p className="text-[18px] font-medium text-[#2D2422]">开始听一听</p>
               <p className="mt-2 text-[12px] leading-relaxed text-rose-300/90">
                 没有网易云账号也可以游客进入，搜索与播放公开歌曲
               </p>

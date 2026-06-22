@@ -3,6 +3,16 @@ import {
   PROACTIVE_MESSAGE_NUMBER_FONT,
   type ProactiveMessageIntervalUnit,
 } from '../../phone/apps/wechat/proactivePrivateMessageTypes'
+import {
+  DEFAULT_PROACTIVE_MOMENT_MUSIC_LANGUAGE_RATIO,
+  normalizeProactiveMomentMusicLanguageRatio,
+  type ProactiveMomentMusicLanguageRatioSettings,
+} from './proactiveCharacterMomentMusicLanguageRatio'
+import {
+  DEFAULT_PROACTIVE_MOMENT_FOLLOW_USER_MUSIC_TASTE,
+  normalizeProactiveMomentFollowUserMusicTaste,
+  type ProactiveMomentFollowUserMusicTasteSettings,
+} from './proactiveCharacterMomentUserMusicTaste'
 
 export { PROACTIVE_MESSAGE_INTERVAL_UNITS, PROACTIVE_MESSAGE_NUMBER_FONT }
 
@@ -44,6 +54,10 @@ export type ProactiveCharacterMomentsSettings = {
   global: ProactiveCharacterMomentSchedule
   /** 全局模式每轮抽取几名角色发朋友圈 */
   globalPickCount: number
+  /** 主动发布分享歌曲时的语种权重（归一化后注入生成 prompt） */
+  musicShareLanguageRatio: ProactiveMomentMusicLanguageRatioSettings
+  /** 主动发布分享歌曲时是否向用户当前听歌偏好靠拢 */
+  followUserMusicTaste: ProactiveMomentFollowUserMusicTasteSettings
   /** key = buildProactiveCharacterMomentKey(accountId, characterId) */
   byCharacter: Record<string, ProactiveCharacterMomentSchedule>
 }
@@ -58,6 +72,8 @@ export const DEFAULT_PROACTIVE_CHARACTER_MOMENTS_SETTINGS: ProactiveCharacterMom
   mode: 'global',
   global: { ...DEFAULT_PROACTIVE_CHARACTER_MOMENT_SCHEDULE },
   globalPickCount: PROACTIVE_CHARACTER_MOMENT_PICK_COUNT_DEFAULT,
+  musicShareLanguageRatio: { ...DEFAULT_PROACTIVE_MOMENT_MUSIC_LANGUAGE_RATIO },
+  followUserMusicTaste: { ...DEFAULT_PROACTIVE_MOMENT_FOLLOW_USER_MUSIC_TASTE },
   byCharacter: {},
 }
 
@@ -121,6 +137,8 @@ export function normalizeProactiveCharacterMomentsSettings(raw: unknown): Proact
       globalPickCount: clampProactiveCharacterMomentPickCount(
         typeof o.globalPickCount === 'number' ? o.globalPickCount : NaN,
       ),
+      musicShareLanguageRatio: normalizeProactiveMomentMusicLanguageRatio(o.musicShareLanguageRatio),
+      followUserMusicTaste: normalizeProactiveMomentFollowUserMusicTaste(o.followUserMusicTaste),
       byCharacter,
     }
   }
@@ -131,6 +149,8 @@ export function normalizeProactiveCharacterMomentsSettings(raw: unknown): Proact
     mode: 'global',
     global: legacy,
     globalPickCount: PROACTIVE_CHARACTER_MOMENT_PICK_COUNT_DEFAULT,
+    musicShareLanguageRatio: { ...DEFAULT_PROACTIVE_MOMENT_MUSIC_LANGUAGE_RATIO },
+    followUserMusicTaste: { ...DEFAULT_PROACTIVE_MOMENT_FOLLOW_USER_MUSIC_TASTE },
     byCharacter: {},
   }
 }

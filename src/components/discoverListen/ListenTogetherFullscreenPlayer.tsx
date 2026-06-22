@@ -30,6 +30,8 @@ import {
   shouldUseLiteFullscreenEffects,
 } from './listenDeviceProfile'
 import { PLAY_MODE_LABELS, type ListenPlayMode } from './listenPlayMode'
+import { ListenTogetherSyncFloat } from './ListenTogetherSyncFloat'
+import type { SyncListeningState } from '../../stores/useMusicStore'
 import {
   LISTEN_FULLSCREEN_VINYL_DECORATION_URL,
   LISTEN_PROGRESS_THUMB_PAUSED_URL,
@@ -74,7 +76,11 @@ export type ListenTogetherFullscreenPlayerProps = {
   isPlaying?: boolean
   liked?: boolean
   likeBusy?: boolean
-  companion?: ListenCompanionInfo | null
+  /** 一起听悬浮舱 */
+  syncListening?: SyncListeningState | null
+  syncUserAvatar?: string
+  syncUserName?: string
+  onInviteSync?: () => void
   onTogglePlay?: () => void
   onToggleLike?: () => void
   onSeek?: (percentage: number) => void
@@ -243,20 +249,25 @@ const LyricSeekScrollViewMemo = memo(function LyricSeekScrollView({
   durationMs,
   onSeekToTimeMs,
   onBackToVinyl,
+  onSeekPlayUsed,
 }: {
   lines: LyricSeekLine[]
   currentPlayIndex: number
   durationMs: number
   onSeekToTimeMs?: (timeMs: number) => void
   onBackToVinyl: () => void
+  onSeekPlayUsed?: () => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([])
   const [isScrubbing, setIsScrubbing] = useState(false)
+  const [seekPlayUsed, setSeekPlayUsed] = useState(false)
   const [scrolledLyricIndex, setScrolledLyricIndex] = useState(0)
   const hideTimerRef = useRef<number | null>(null)
   const programmaticScrollRef = useRef(false)
   const userInteractingRef = useRef(false)
+  const scrollGestureRef = useRef(false)
+  const scrollGestureTimerRef = useRef<number | null>(null)
 
   const safePlayIndex = Math.min(
     Math.max(0, currentPlayIndex),
@@ -315,7 +326,17 @@ const LyricSeekScrollViewMemo = memo(function LyricSeekScrollView({
   useEffect(() => {
     return () => {
       if (hideTimerRef.current != null) window.clearTimeout(hideTimerRef.current)
+      if (scrollGestureTimerRef.current != null) window.clearTimeout(scrollGestureTimerRef.current)
     }
+  }, [])
+
+  const markScrollGesture = useCallback(() => {
+    scrollGestureRef.current = true
+    if (scrollGestureTimerRef.current != null) window.clearTimeout(scrollGestureTimerRef.current)
+    scrollGestureTimerRef.current = window.setTimeout(() => {
+      scrollGestureRef.current = false
+      scrollGestureTimerRef.current = null
+    }, 320)
   }, [])
 
   useEffect(() => {
@@ -324,6 +345,7 @@ const LyricSeekScrollViewMemo = memo(function LyricSeekScrollView({
 
     const onScroll = () => {
       if (programmaticScrollRef.current) return
+      markScrollGesture()
       showSeekCursor()
       refreshScrolledIndex()
       scheduleHideSeekCursor()
@@ -343,7 +365,7 @@ const LyricSeekScrollViewMemo = memo(function LyricSeekScrollView({
       el.removeEventListener('pointerdown', onUserIntent)
       el.removeEventListener('wheel', onUserIntent)
     }
-  }, [showSeekCursor, refreshScrolledIndex, scheduleHideSeekCursor])
+  }, [showSeekCursor, refreshScrolledIndex, scheduleHideSeekCursor, markScrollGesture])
 
   const lastAutoScrollIndexRef = useRef(-1)
   useEffect(() => {
@@ -365,6 +387,8 @@ const LyricSeekScrollViewMemo = memo(function LyricSeekScrollView({
     const label = formatLyricTime(target.timeMs)
     console.log(`跳转到时间: ${label}`)
 
+    setSeekPlayUsed(true)
+    onSeekPlayUsed?.()
     onSeekToTimeMs(target.timeMs)
     setIsScrubbing(false)
     userInteractingRef.current = false
@@ -374,14 +398,25 @@ const LyricSeekScrollViewMemo = memo(function LyricSeekScrollView({
     }
   }
 
+  const handleLyricsSurfaceClick = () => {
+    if (seekPlayUsed || scrollGestureRef.current) return
+    onBackToVinyl()
+  }
+
   const cursorTimeLabel =
     lines.length > 0 ? formatLyricTime(lines[safeScrollIndex]?.timeMs ?? 0) : '00:00'
 
   return (
-    <div className="relative z-20 flex h-full w-full max-w-md flex-col text-center">
+    <div
+      className="relative z-20 flex h-full w-full max-w-md flex-col text-center"
+      onClick={handleLyricsSurfaceClick}
+    >
       <button
         type="button"
-        onClick={onBackToVinyl}
+        onClick={(e) => {
+          e.stopPropagation()
+          onBackToVinyl()
+        }}
         className="mb-2 shrink-0 text-[11px] tracking-wide text-stone-400/90 transition-colors hover:text-stone-600"
       >
         点击返回唱片
@@ -392,6 +427,9 @@ const LyricSeekScrollViewMemo = memo(function LyricSeekScrollView({
           ref={scrollRef}
           className="h-full touch-pan-y overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
           aria-label="歌词滚动区，滑动可定位播放"
+          onClick={() => {
+            if (!seekPlayUsed && !scrollGestureRef.current) onBackToVinyl()
+          }}
         >
           <div className="relative z-0 flex flex-col items-center px-2">
             <div className="h-[42vh] shrink-0" aria-hidden />
@@ -653,27 +691,6 @@ function CapsuleProgressBar({
   )
 }
 
-function CompanionBubble({ companion }: { companion: ListenCompanionInfo }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: 'easeOut' }}
-      className="mb-8 flex w-full items-center gap-3 rounded-2xl bg-white/80 p-3 shadow-lg shadow-stone-200/50 backdrop-blur-md"
-    >
-      <img
-        src={companion.avatar}
-        alt={companion.name}
-        className="h-10 w-10 shrink-0 rounded-full object-cover ring-2 ring-white shadow-sm"
-      />
-      <div className="min-w-0 flex-1">
-        <p className="text-xs text-stone-400">{companion.name}</p>
-        <p className="mt-0.5 text-sm leading-snug text-stone-700">{companion.message}</p>
-      </div>
-    </motion.div>
-  )
-}
-
 export function ListenTogetherFullscreenPlayer({
   open,
   onClose,
@@ -683,7 +700,10 @@ export function ListenTogetherFullscreenPlayer({
   isPlaying = false,
   liked = false,
   likeBusy = false,
-  companion = null,
+  syncListening = null,
+  syncUserAvatar = '',
+  syncUserName = '我',
+  onInviteSync,
   onTogglePlay,
   onToggleLike,
   onSeek,
@@ -703,7 +723,16 @@ export function ListenTogetherFullscreenPlayer({
 }: ListenTogetherFullscreenPlayerProps) {
   const coverSrc = song.cover?.trim() || ''
   const [centerView, setCenterView] = useState<CenterView>('vinyl')
+  const seekPlayUsedRef = useRef(false)
   const backToVinyl = useCallback(() => setCenterView('vinyl'), [])
+
+  const handleLyricsBackdropClick = useCallback(() => {
+    if (!seekPlayUsedRef.current) backToVinyl()
+  }, [backToVinyl])
+
+  const markSeekPlayUsed = useCallback(() => {
+    seekPlayUsedRef.current = true
+  }, [])
 
   const seekLyricLines = useMemo((): LyricSeekLine[] => {
     if (lyricLines && lyricLines.length > 0) {
@@ -731,19 +760,24 @@ export function ListenTogetherFullscreenPlayer({
     setCenterView('vinyl')
   }, [song.title, song.artist])
 
-  if (!open) return null
+  useEffect(() => {
+    if (centerView === 'lyrics') seekPlayUsedRef.current = false
+  }, [centerView])
 
   return (
     <ListenFullscreenErrorBoundary onClose={onClose}>
-      <motion.div
-          className="fixed inset-0 z-[10010] flex h-screen w-full flex-col overflow-hidden"
-          initial={{ y: '100%' }}
-          animate={{ y: 0 }}
-          exit={{ y: '100%' }}
-          transition={{ type: 'spring', damping: 34, stiffness: 320 }}
-          role="dialog"
-          aria-label="全屏播放"
-        >
+      <AnimatePresence>
+        {open ? (
+          <motion.div
+            key="listen-fullscreen-player"
+            className="fixed inset-0 z-[10010] flex h-screen w-full flex-col overflow-hidden"
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 34, stiffness: 320 }}
+            role="dialog"
+            aria-label="全屏播放"
+          >
           {/* 1. 页面背景图 */}
           <ListenTogetherPageBackground overlayClassName="bg-white/8" />
 
@@ -802,27 +836,44 @@ export function ListenTogetherFullscreenPlayer({
                   transition={{ duration: 0.3 }}
                 >
                   <SoftAudioParticles playing={isPlaying} />
-                  <SpinningVinyl
-                    cover={coverSrc}
-                    playing={isPlaying}
-                    onClick={() => setCenterView('lyrics')}
-                  />
-                  <p className="pointer-events-none absolute bottom-2 text-[11px] text-stone-400/80">
+                  <div className="relative z-20 flex flex-col items-center">
+                    {onInviteSync ? (
+                      <ListenTogetherSyncFloat
+                        sync={syncListening}
+                        userAvatar={syncUserAvatar}
+                        userName={syncUserName}
+                        onInviteClick={onInviteSync}
+                      />
+                    ) : null}
+                    <SpinningVinyl
+                      cover={coverSrc}
+                      playing={isPlaying}
+                      onClick={() => setCenterView('lyrics')}
+                    />
+                  </div>
+                  <p className="pointer-events-none absolute -bottom-3 text-[11px] text-stone-400/80">
                     点击唱片查看歌词
                   </p>
                 </motion.div>
               ) : (
                 <div
                   key="lyrics"
-                  className="absolute inset-0 flex items-center justify-center"
+                  className="absolute inset-0 px-6"
+                  onClick={handleLyricsBackdropClick}
                 >
-                  <LyricSeekScrollViewMemo
-                    lines={seekLyricLines}
-                    currentPlayIndex={activeLyricIndex}
-                    durationMs={durationMs}
-                    onSeekToTimeMs={onSeekToTimeMs}
-                    onBackToVinyl={backToVinyl}
-                  />
+                  <div
+                    className="mx-auto h-full w-full max-w-md"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <LyricSeekScrollViewMemo
+                      lines={seekLyricLines}
+                      currentPlayIndex={activeLyricIndex}
+                      durationMs={durationMs}
+                      onSeekToTimeMs={onSeekToTimeMs}
+                      onBackToVinyl={backToVinyl}
+                      onSeekPlayUsed={markSeekPlayUsed}
+                    />
+                  </div>
                 </div>
               )}
             </AnimatePresence>
@@ -830,8 +881,6 @@ export function ListenTogetherFullscreenPlayer({
 
           {/* 4. 底部控制区 */}
           <footer className="relative z-30 w-full bg-gradient-to-t from-white/85 via-white/55 to-transparent px-8 pb-[max(3rem,env(safe-area-inset-bottom))] pt-8">
-            {companion ? <CompanionBubble companion={companion} /> : null}
-
             <div className="mb-3 flex items-center justify-between">
               {onToggleLike ? (
                 <button
@@ -938,7 +987,9 @@ export function ListenTogetherFullscreenPlayer({
               </button>
             </div>
           </footer>
-        </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </ListenFullscreenErrorBoundary>
   )
 }

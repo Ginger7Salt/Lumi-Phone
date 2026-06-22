@@ -60,15 +60,56 @@ export function formatMusicSyncInviteTranscriptLine(
 ): string {
   const artist = data.trackArtist?.trim() || '未知歌手'
   const mid = messageId.trim() || data.inviteId
-  return `（用户向你发来音乐共听邀约：《${data.trackTitle}》— ${artist}；messageId=${mid}；inviteId=${data.inviteId}）`
+  const head = `（用户向你发来音乐共听邀约：《${data.trackTitle}》— ${artist}；messageId=${mid}；inviteId=${data.inviteId}）`
+  const lyrics = data.lyricsExcerpt?.trim()
+  if (!lyrics) return head
+  return `${head}；歌词（带时间轴，[分:秒] 后为该时刻起唱的内容）：\n${lyrics}`
+}
+
+export const WECHAT_LISTEN_TRACK_SHARE_OUTPUT_BLOCK = `
+---------------------
+【用户分享的单曲 / 歌单（听一听卡片）】
+---------------------
+- 会话里若出现「（分享单曲）《曲名》…」或「（分享歌单）《名称》…」，表示用户**推荐一首歌或一个歌单**，**不是**正式的音乐共听邀约。
+- 分享卡落库时会附带**歌单曲目摘录 / 歌手简介与热门曲目 / 带 [分:秒] 时间轴的歌词**等文字，你可据此判断「几分几秒唱哪句」并聊歌词意象。
+- 即使用户口头问「要一起听吗」「一起听听」等，你也只能以**普通口语**回应（愿意听、去点开、聊对歌的感受等）。
+- **禁止**为此输出 \`[MUSIC_SYNC_ACCEPT]\` / \`[MUSIC_SYNC_DECLINE]\`；**禁止**假装已通过指令加入共听。要建立同步共听，须由用户从播放器发起正式的「音乐共听邀约卡」。
+`.trim()
+
+function normalizeMusicSyncDirectiveLine(raw: string): string {
+  return String(raw ?? '')
+    .trim()
+    .replace(/^`+|`+$/g, '')
+    .trim()
+    .replace(/\r\n/g, '\n')
+    .replace(/［/g, '[')
+    .replace(/］/g, ']')
+    .replace(/【/g, '[')
+    .replace(/】/g, ']')
+}
+
+/** 模型把多行口语与指令挤在同一气泡时，拆成逐行便于解析/过滤 */
+export function expandMultilineReplyBubbles(bubbles: readonly string[]): string[] {
+  const out: string[] = []
+  for (const raw of bubbles) {
+    const text = String(raw ?? '')
+    if (!text.includes('\n')) {
+      const t = text.trim()
+      if (t) out.push(t)
+      continue
+    }
+    for (const line of text.split('\n')) {
+      const t = line.trim()
+      if (t) out.push(t)
+    }
+  }
+  return out
 }
 
 export function parseMusicSyncIncomingActionDirective(
   raw: string,
 ): { kind: 'accept' | 'decline'; messageId?: string; replyText?: string } | null {
-  const normalized = String(raw ?? '')
-    .trim()
-    .replace(/\r\n/g, '\n')
+  const normalized = normalizeMusicSyncDirectiveLine(raw)
   const tryOne = (tag: string, kind: 'accept' | 'decline') => {
     const tagOnly = new RegExp(`^\\[${tag}\\]$`, 'i').exec(normalized)
     if (tagOnly) return { kind }
@@ -91,8 +132,8 @@ export function parseMusicSyncIncomingActionDirective(
 
 /** 模型把指令行与 JSON 拆成两条气泡时，尝试合并解析 */
 export function mergeMusicSyncDirectiveBubbleLines(currentLine: string, nextLine?: string): string {
-  const current = String(currentLine ?? '').trim()
-  const next = String(nextLine ?? '').trim()
+  const current = normalizeMusicSyncDirectiveLine(currentLine)
+  const next = normalizeMusicSyncDirectiveLine(nextLine ?? '')
   if (/^\[MUSIC_SYNC_(ACCEPT|DECLINE)\]$/i.test(current) && next.startsWith('{') && next.endsWith('}')) {
     return `${current}${next}`
   }
@@ -101,9 +142,10 @@ export function mergeMusicSyncDirectiveBubbleLines(currentLine: string, nextLine
 
 /** 不应作为角色口语气泡展示的指令残留行 */
 export function isMusicSyncDirectiveArtifactLine(line: string): boolean {
-  const t = String(line ?? '').trim()
+  const t = normalizeMusicSyncDirectiveLine(line)
   if (!t) return false
   if (parseMusicSyncIncomingActionDirective(t)) return true
+  if (/^\[MUSIC_SYNC_(ACCEPT|DECLINE)\]/i.test(t)) return true
   if (!t.startsWith('{') || !t.endsWith('}')) return false
   try {
     const j = JSON.parse(t) as Record<string, unknown>
@@ -208,10 +250,11 @@ export function buildMusicSyncInviteReplyBias(params: {
   const artist = params.invite.trackArtist?.trim() || '未知歌手'
   return `[系统裁决·音乐共听] 用户刚向你发来音乐共听邀约：《${params.invite.trackTitle}》— ${artist}。
 你必须在本轮回复中：
-1) 先输出 1～4 行符合人设的口语对白（是否愿意一起听、对这首歌的看法等）；
-2) 最后一行**必须单独占一行**输出以下指令之一（缺一不可）：
+1) 输出 1～4 行符合人设的口语对白（是否愿意一起听、对这首歌的看法等）；
+2) 在口语对白之间的**任意位置**（不必在最后）**单独占一行**输出以下指令之一（缺一不可）：
    - 愿意共听：\`[MUSIC_SYNC_ACCEPT]{"messageId":"${params.messageId}"}\`
    - 拒绝共听：\`[MUSIC_SYNC_DECLINE]{"messageId":"${params.messageId}"}\`
+指令行与普通对白一样按输出顺序展示；例如可先口语、再指令、再补一句口语。
 禁止只回复口语而不输出指令行；禁止在未输出 [MUSIC_SYNC_ACCEPT] 时假装已加入共听。`
 }
 
@@ -243,14 +286,17 @@ export const WECHAT_MUSIC_SYNC_INVITE_OUTPUT_BLOCK = `
 ---------------------
 【用户发来的音乐共听邀约（同频共听）】
 ---------------------
-- 会话里若出现「（用户向你发来音乐共听邀约：《曲名》— 歌手…）」或用户刚发来音乐共听卡片，表示对方想与你**同步收听同一首歌**。
+- 会话里若出现「（用户向你发来音乐共听邀约：《曲名》— 歌手…）」或用户刚发来**音乐共听邀约卡**（非「分享单曲/歌单」卡），表示对方想与你**同步收听同一首歌**。
+- **「（分享单曲）」/「（分享歌单）」只是推荐音乐，不是共听邀约**；那种情况下禁止输出本节的 \`[MUSIC_SYNC_ACCEPT]\` / \`[MUSIC_SYNC_DECLINE]\`。
 - 你必须结合人设、好感、当下是否方便、对这首歌的态度，**自主决定接受或拒绝**；不要无脑答应，也不要无视邀约。
-- **接受**时：先输出 1～3 行自然口语（如附和品味、愿意陪听、调侃一句等），再**单独占一行**输出机器指令（与口语分条，勿塞进同一行）：
+- **接受**时：先输出自然口语（可多条），在口语之间的**任意位置**（不必在最后）**单独占一行**输出机器指令（与口语分条，勿塞进同一行）：
   - \`[MUSIC_SYNC_ACCEPT]{}\` 或 \`[MUSIC_SYNC_ACCEPT]{"messageId":"邀约消息id","replyText":"与上文口语一致或略收束的一句"}\`
+  - 指令行与普通对白**按输出顺序**展示；例如「嗯？一起听？」→ 指令 →「我进去了」。
   - \`messageId\` 可省略：以本会话里用户发出的、最近一条仍未回应的共听邀约为准。
   - \`replyText\` 可省略：客户端会尽量用你本轮已发出的口语；仍建议填写一句收束语供卡片展示。
-- **拒绝**时：先有冷淡/抱歉/忙/不合口味等口语（符合人设），再单独一行：
+- **拒绝**时：先有冷淡/抱歉/忙/不合口味等口语（符合人设，可多条），在口语之间的**任意位置**单独一行：
   - \`[MUSIC_SYNC_DECLINE]{}\` 或 \`[MUSIC_SYNC_DECLINE]{"messageId":"…","replyText":"…"}\`
 - **禁止**用普通文字假装「已加入一起听」却不输出对应指令行；**不写指令则界面不会建立共听**。
-- 指令行只表示你对**用户发来的邀约**的决断，不能用来向用户发起共听（用户侧从音乐面板发起）。
+- 指令行只表示你对**用户发来的邀约**的决断。
+- 你想**主动邀请用户一起听**时，用角色侧指令 \`[MUSIC_SYNC_INVITE]\`（见「角色侧播放控制」），不要用 \`[MUSIC_SYNC_ACCEPT]\`。
 `.trim()

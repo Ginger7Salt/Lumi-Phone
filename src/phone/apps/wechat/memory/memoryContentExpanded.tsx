@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterMemory } from '../newFriendsPersona/types'
+import { formatMomentMemoryBodyForDisplay } from './momentMemoryDisplayUtils'
 import { MemoryContentWithSourceBadges } from './memorySourceBadges'
 
 /**
@@ -44,7 +45,11 @@ export function MemoryContentWithSourceBadgesFromRow(props: {
 
   return (
     <MemoryContentWithSourceBadges
-      content={displayContent}
+      content={
+        props.memory.memoryScope === 'moment'
+          ? formatMomentMemoryBodyForDisplay(displayContent)
+          : displayContent
+      }
       bodyClassName={props.bodyClassName}
       bodyStyle={props.bodyStyle}
       size={props.size}

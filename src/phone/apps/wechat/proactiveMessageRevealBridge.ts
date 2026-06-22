@@ -1,10 +1,12 @@
 import { persistProactiveRevealPayload } from './proactiveBubbleRevealPersistence'
+import type { WeChatMusicSyncInvitePayload } from './newFriendsPersona/types'
 
 export type ProactiveMessageRevealBubble = {
   id: string
   content: string
   thinking?: string
   timestamp: number
+  musicSync?: WeChatMusicSyncInvitePayload
 }
 
 export type ProactiveMessageRevealPayload = {

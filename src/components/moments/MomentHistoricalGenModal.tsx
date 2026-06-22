@@ -65,6 +65,7 @@ const POST_TYPE_OPTIONS: { id: InstantGenPostTypeChoice; label: string }[] = [
   { id: 'text', label: '纯文字' },
   { id: 'mixed', label: '图文' },
   { id: 'image', label: '纯图片' },
+  { id: 'music', label: '分享歌曲' },
 ]
 
 const STAGE_LABEL: Record<HistoricalGenPublishStage, string> = {
@@ -154,7 +155,10 @@ export function MomentHistoricalGenModal({
   )
 
   const postTypeOptions = useMemo(
-    () => (imageGenReady ? POST_TYPE_OPTIONS : POST_TYPE_OPTIONS.filter((o) => o.id === 'text')),
+    () =>
+      imageGenReady
+        ? POST_TYPE_OPTIONS
+        : POST_TYPE_OPTIONS.filter((o) => o.id === 'text' || o.id === 'music'),
     [imageGenReady],
   )
 
@@ -203,7 +207,10 @@ export function MomentHistoricalGenModal({
     setErrorDialogMessage(null)
     setStage('idle')
     if (!imageGenReady) {
-      setPostTypes(new Set(['text']))
+      setPostTypes((prev) => {
+        const next = new Set([...prev].filter((p) => p === 'text' || p === 'music'))
+        return next.size > 0 ? next : new Set(['text'])
+      })
     }
   }, [imageGenReady, open])
 
@@ -409,6 +416,16 @@ export function MomentHistoricalGenModal({
                       )
                     })}
                   </div>
+                  {!imageGenReady ? (
+                    <p className="mt-2 text-[11px] leading-relaxed text-[#9CA3AF]">
+                      未配置生图 API 时，仅支持纯文字或分享歌曲。可在朋友圈设置中配置 AI 配图引擎。
+                    </p>
+                  ) : null}
+                  {postTypes.has('music') ? (
+                    <p className="mt-2 text-[11px] leading-relaxed text-[#6B7280]">
+                      含「分享歌曲」时，模型会挑选网易云曲库中的真实歌名与歌手，无需登录网易账号。
+                    </p>
+                  ) : null}
                 </section>
 
                 <section>
@@ -451,7 +468,9 @@ export function MomentHistoricalGenModal({
                   <section>
                     <div className="flex items-baseline justify-between gap-2">
                       <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9CA3AF]">
-                        正文字数范围
+                        {postTypes.has('music') && !postTypes.has('text') && !postTypes.has('mixed')
+                          ? '配文字数范围（可选）'
+                          : '正文字数范围'}
                       </p>
                       <p className="text-[11px] text-[#9CA3AF]">
                         {formatHistoricalTextLengthRangeLabel(

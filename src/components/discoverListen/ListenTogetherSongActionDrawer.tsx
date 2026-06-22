@@ -1,10 +1,12 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ChevronLeft,
+  CircleDot,
   Headphones,
   Link2,
   Loader2,
   Send,
+  Share2,
   UserRound,
 } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
@@ -15,17 +17,22 @@ import {
   sendNeteaseSongToFriend,
   type NeteaseFollowUser,
 } from './neteaseShareApi'
+import { ShareCommentContactsDrawer } from './ShareCommentContactsDrawer'
+import { sendListenTrackShareToContacts } from '../../phone/apps/wechat/musicSync/sendListenTrackShare'
+import { buildWeChatShareSuccessToast, type ListenTogetherToastInput } from './listenShareToast'
+import { requestShareSongToMoments } from './listenTogetherMomentShareNavigation'
+import type { InviteableContact } from './useInviteableWeChatContacts'
 
 type DrawerStep = 'menu' | 'netease-friends'
 
 export type ListenTogetherSongActionDrawerProps = {
   open: boolean
   onClose: () => void
-  song: { id: number; title: string; artist: string }
+  song: { id: number; title: string; artist: string; cover?: string }
   neteaseCookie: string
   neteaseUserId?: number
   onShareListenTogether: () => void
-  onToast: (message: string) => void
+  onToast: (message: ListenTogetherToastInput) => void
 }
 
 async function copyTextToClipboard(text: string): Promise<boolean> {
@@ -95,6 +102,8 @@ export function ListenTogetherSongActionDrawer({
   const [friends, setFriends] = useState<NeteaseFollowUser[]>([])
   const [friendsLoading, setFriendsLoading] = useState(false)
   const [sendingUserId, setSendingUserId] = useState<number | null>(null)
+  const [shareDrawerOpen, setShareDrawerOpen] = useState(false)
+  const [shareSending, setShareSending] = useState(false)
 
   const neteaseLoggedIn = Boolean(neteaseCookie.trim() && neteaseUserId > 0)
 
@@ -145,6 +154,54 @@ export function ListenTogetherSongActionDrawer({
     onShareListenTogether()
   }
 
+  const handleShareToMoments = () => {
+    resetAndClose()
+    requestShareSongToMoments({
+      songId: song.id,
+      title: song.title,
+      artist: song.artist,
+      cover: song.cover,
+    })
+    onToast('已打开发布页，可配文字后发表')
+  }
+
+  const handleShareToWeChat = () => {
+    setShareDrawerOpen(true)
+  }
+
+  const handleShareConfirm = useCallback(
+    async (contacts: InviteableContact[]) => {
+      if (!song.id) return
+      setShareSending(true)
+      try {
+        const result = await sendListenTrackShareToContacts(
+          contacts.map((c) => c.characterId),
+          {
+            targetType: 'song',
+            targetId: song.id,
+            targetTitle: song.title,
+            targetArtist: song.artist,
+            targetCover: song.cover,
+          },
+        )
+        onToast(
+          buildWeChatShareSuccessToast({
+            sent: result.sent,
+            characterIds: result.characterIds,
+            contactName: contacts.length === 1 ? contacts[0]?.remarkName : undefined,
+          }),
+        )
+        setShareDrawerOpen(false)
+        resetAndClose()
+      } catch (e) {
+        onToast(e instanceof Error ? e.message : '分享失败')
+      } finally {
+        setShareSending(false)
+      }
+    },
+    [song, onToast, resetAndClose],
+  )
+
   const handleOpenNeteaseFriends = () => {
     if (!neteaseLoggedIn) {
       onToast('请先登录网易云账号')
@@ -172,7 +229,8 @@ export function ListenTogetherSongActionDrawer({
   }
 
   return (
-    <AnimatePresence>
+    <>
+      <AnimatePresence>
       {open ? (
         <>
           <motion.button
@@ -220,8 +278,20 @@ export function ListenTogetherSongActionDrawer({
                     onClick={() => void handleCopySongLink()}
                   />
                   <MenuRow
+                    icon={<Share2 className="size-[18px]" strokeWidth={1.75} />}
+                    title="分享给微信好友"
+                    subtitle="发送单曲卡片到 Lumi 微信私聊"
+                    onClick={handleShareToWeChat}
+                  />
+                  <MenuRow
+                    icon={<CircleDot className="size-[18px]" strokeWidth={1.75} />}
+                    title="分享到朋友圈"
+                    subtitle="发布动态并附带单曲，可配文字"
+                    onClick={handleShareToMoments}
+                  />
+                  <MenuRow
                     icon={<Headphones className="size-[18px]" strokeWidth={1.75} />}
-                    title="分享听一听"
+                    title="邀请共听"
                     subtitle="从 Lumi 内置微信通讯录选择好友"
                     onClick={handleShareListenTogether}
                   />
@@ -329,6 +399,15 @@ export function ListenTogetherSongActionDrawer({
           </motion.div>
         </>
       ) : null}
-    </AnimatePresence>
+      </AnimatePresence>
+      <ShareCommentContactsDrawer
+        open={shareDrawerOpen}
+        onClose={() => setShareDrawerOpen(false)}
+        onConfirm={handleShareConfirm}
+        sending={shareSending}
+        dialogTitle="SHARE SONG | 分享单曲给好友"
+        dialogSubtitle="分享歌曲到微信私聊"
+      />
+    </>
   )
 }

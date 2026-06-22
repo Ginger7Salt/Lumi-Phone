@@ -110,12 +110,12 @@ export function InviteListenerDrawer({ open, onClose, onConfirm, sending = false
               )}
             </div>
 
-            <div className="border-t border-stone-100/80 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+            <div className="border-t border-rose-100/60 bg-white/95 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3 backdrop-blur-sm">
               <button
                 type="button"
                 disabled={!selected || sending}
                 onClick={() => void handleConfirm()}
-                className="w-full rounded-full bg-[#1A1A1A] py-3.5 text-[14px] font-medium tracking-wide text-white transition-opacity disabled:opacity-40"
+                className="w-full rounded-full bg-gradient-to-br from-[#FFD6DE] via-[#FFE8EE] to-[#FFF5F7] py-3.5 text-[14px] font-medium tracking-wide text-[#2D2422] shadow-[0_8px_24px_rgba(255,192,203,0.32)] ring-1 ring-rose-200/70 transition-all active:scale-[0.98] disabled:opacity-45 disabled:shadow-none disabled:ring-rose-100/50"
               >
                 {sending ? '发送中…' : '发送邀约 (Send Invitation)'}
               </button>

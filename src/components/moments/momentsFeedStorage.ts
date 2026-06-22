@@ -4,6 +4,7 @@ import { deleteMomentUserImages, externalizeMomentUserImages } from './momentUse
 import { normalizeMomentLocation } from './momentLocationUtils'
 import { sanitizeMomentBodyText, sanitizeMomentText } from './momentTextSanitize'
 import type { MomentComment, MomentItemModel } from './mockMoments'
+import { normalizeMomentAttachedMusic } from './momentAttachedMusic'
 import type { MomentInteraction } from './momentInteractionTypes'
 import type { MomentPrivacyMeta } from './newMomentTypes'
 import type { MomentContactRef } from './newMomentTypes'
@@ -139,6 +140,8 @@ function normalizeMoment(raw: unknown): MomentItemModel | null {
     ? o.images.map((x) => (typeof x === 'string' ? x : '')).filter(Boolean)
     : undefined
 
+  const attachedMusic = normalizeMomentAttachedMusic(o.attachedMusic)
+
   return {
     id,
     authorName,
@@ -149,11 +152,12 @@ function normalizeMoment(raw: unknown): MomentItemModel | null {
     comments: comments?.length ? comments : undefined,
     interactions: interactions?.length ? interactions : undefined,
     images: images?.length ? images : undefined,
+    attachedMusic,
     location: normalizeMomentLocation(o.location),
     isUserAuthored: o.isUserAuthored === true,
     authorCharacterId: typeof o.authorCharacterId === 'string' ? o.authorCharacterId : undefined,
     postType:
-      o.postType === 'text' || o.postType === 'image' || o.postType === 'mixed'
+      o.postType === 'text' || o.postType === 'image' || o.postType === 'mixed' || o.postType === 'music'
         ? o.postType
         : undefined,
     privacy: normalizeMomentPrivacy(o.privacy),

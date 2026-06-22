@@ -29,10 +29,16 @@ import { resolveProactiveMessageIntervalSeconds, hasProactiveMessageScheduleSave
 import {
   drawProactiveVariableIntervalSeconds,
   formatProactiveVariableIntervalRangeLabel,
+  formatProactiveVariableIdleRangeLabel,
   isProactiveVariableIntervalEnabled,
   resolveCharacterExplicitBusyForProactive,
+  resolveProactiveVariableIdleBounds,
 } from '../proactiveVariableInterval'
 import { ProactiveMessageIntervalControl } from './ProactiveMessageIntervalControl'
+import {
+  ProactiveMessageVariableIntervalControl,
+  resolveSavedProactiveVariableIdleBounds,
+} from './ProactiveMessageVariableIntervalControl'
 import { personaDb } from '../newFriendsPersona/idb'
 import { ChatTimeSettingsScreen } from './ChatTimeSettingsScreen'
 import { ChatFindChatHistoryScreen } from './ChatFindChatHistoryScreen'
@@ -448,6 +454,8 @@ export function ChatSettingsScreen({
           | 'proactiveMessageIntervalSeconds'
           | 'proactiveMessageLastFiredAtMs'
           | 'proactiveMessageVariableIntervalEnabled'
+          | 'proactiveMessageVariableIntervalMinSeconds'
+          | 'proactiveMessageVariableIntervalMaxSeconds'
           | 'proactiveMessageNextIntervalSeconds'
         >
       > & {
@@ -456,6 +464,7 @@ export function ChatSettingsScreen({
         clearImageRoundTriggerPercent?: boolean
         clearImageRoundCountRange?: boolean
         clearProactiveMessageIntervalSeconds?: boolean
+        clearProactiveMessageVariableIntervalBounds?: boolean
       },
     ) => {
       await personaDb.upsertChatConversationSettings({
@@ -478,7 +487,9 @@ export function ChatSettingsScreen({
   const proactiveVariableEnabled = isProactiveVariableIntervalEnabled(effective)
   const proactiveIntervalSeconds = resolveProactiveMessageIntervalSeconds(effective)
   const proactiveScheduleSaved = hasProactiveMessageScheduleSaved(effective)
+  const proactiveVariableIdleBounds = resolveSavedProactiveVariableIdleBounds(effective)
   const [proactiveIntervalSaving, setProactiveIntervalSaving] = useState(false)
+  const [proactiveVariableIntervalSaving, setProactiveVariableIntervalSaving] = useState(false)
   const [proactiveVariableBusyHint, setProactiveVariableBusyHint] = useState(false)
 
   useEffect(() => {
@@ -525,6 +536,31 @@ export function ChatSettingsScreen({
     [patch],
   )
 
+  const saveProactiveVariableBounds = useCallback(
+    async (bounds: ReturnType<typeof resolveProactiveVariableIdleBounds>) => {
+      setProactiveVariableIntervalSaving(true)
+      try {
+        const explicitBusy = await resolveCharacterExplicitBusyForProactive({
+          row: effective,
+          now: Date.now(),
+        })
+        const nextSeconds = drawProactiveVariableIntervalSeconds(explicitBusy, {
+          proactiveMessageVariableIntervalMinSeconds: bounds.minSeconds,
+          proactiveMessageVariableIntervalMaxSeconds: bounds.maxSeconds,
+        })
+        await patch({
+          proactiveMessageVariableIntervalMinSeconds: bounds.minSeconds,
+          proactiveMessageVariableIntervalMaxSeconds: bounds.maxSeconds,
+          proactiveMessageNextIntervalSeconds: nextSeconds,
+          proactiveMessageLastFiredAtMs: Date.now(),
+        })
+      } finally {
+        setProactiveVariableIntervalSaving(false)
+      }
+    },
+    [effective, patch],
+  )
+
   const toggleProactiveVariableInterval = useCallback(async () => {
     const next = !proactiveVariableEnabled
     if (!next) {
@@ -535,7 +571,7 @@ export function ChatSettingsScreen({
       row: effective,
       now: Date.now(),
     })
-    const nextSeconds = drawProactiveVariableIntervalSeconds(explicitBusy)
+    const nextSeconds = drawProactiveVariableIntervalSeconds(explicitBusy, effective)
     await patch({
       proactiveMessageVariableIntervalEnabled: true,
       proactiveMessageNextIntervalSeconds: nextSeconds,
@@ -830,9 +866,7 @@ export function ChatSettingsScreen({
                     <div className="min-w-0 flex-1">
                       <span className="text-[15px] font-medium text-black">灵动间隔</span>
                       <p className="mt-1 text-[11px] leading-relaxed text-[#8e8e8e]">
-                        像真人聊天一样不固定节奏：空闲时随机{' '}
-                        <span style={{ fontFamily: PROACTIVE_MESSAGE_NUMBER_FONT }}>1 秒～5 分钟</span>
-                        触达；角色说忙或开启忙碌后，下次等待自动拉长到数分钟～数小时。
+                        像真人聊天一样不固定节奏：空闲时在自定义区间内随机触达；角色说忙或开启忙碌后，下次等待自动拉长到数分钟～数小时。
                       </p>
                     </div>
                     <WxSwitch
@@ -841,10 +875,21 @@ export function ChatSettingsScreen({
                     />
                   </div>
                   {proactiveVariableEnabled ? (
-                    <p className="mt-2 text-[11px] text-[#8e8e8e]">
-                      当前模式：{formatProactiveVariableIntervalRangeLabel(proactiveVariableBusyHint)}
-                      {proactiveScheduleSaved ? ' · 每次触达后重新随机' : ' · 开启后将立即开始随机倒计时'}
-                    </p>
+                    <>
+                      <p className="mt-2 text-[11px] text-[#8e8e8e]">
+                        当前模式：
+                        {proactiveVariableBusyHint
+                          ? formatProactiveVariableIntervalRangeLabel(true, effective)
+                          : `约 ${formatProactiveVariableIdleRangeLabel(effective)}`}
+                        {proactiveScheduleSaved ? ' · 每次触达后重新随机' : ' · 开启后将立即开始随机倒计时'}
+                      </p>
+                      <ProactiveMessageVariableIntervalControl
+                        savedBounds={proactiveVariableIdleBounds}
+                        scheduleSaved={proactiveScheduleSaved}
+                        saving={proactiveVariableIntervalSaving}
+                        onSave={(bounds) => void saveProactiveVariableBounds(bounds)}
+                      />
+                    </>
                   ) : (
                     <ProactiveMessageIntervalControl
                       savedIntervalSeconds={proactiveIntervalSeconds}

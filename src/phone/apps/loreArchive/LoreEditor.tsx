@@ -191,7 +191,7 @@ export function LoreEditor({ draft, roster, onChange, onBack, autoSaveLabel }: P
             ref={contentRef}
             value={draft.content}
             onChange={(content) => onChange({ ...draft, content, updatedAt: Date.now() })}
-            placeholder="为你的世界注入额外的规则（可用上方按钮插入角色/玩家占位符）"
+            placeholder="写入规范模型输出的全局法则，如活人感、抗超雄、格式约束等（可用上方按钮插入占位符）"
           />
         </div>
 

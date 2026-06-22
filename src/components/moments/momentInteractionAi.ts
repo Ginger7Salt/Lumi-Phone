@@ -5,6 +5,10 @@ import type { ApiConfig } from '../../phone/apps/api/types'
 import type { AiMomentInteractionDraft } from './momentInteractionTypes'
 import { clampMomentInteractionDelay, MOMENT_INTERACTION_DELAY_MAX_SECONDS } from './momentInteractionTiming'
 import { generatePersonaBoundUserMomentInteractions } from './momentUserInteractionAi'
+import {
+  buildUserMomentInteractionCharacterContexts,
+  formatUserMomentCharacterContextsPrompt,
+} from './momentUserInteractionContext'
 import { supplementUserMomentCharacterThreads } from './momentUserMomentPublishThreadAi'
 import type { ResolvedUserMomentEngagementRules } from './userMomentEngagementRules'
 import {
@@ -18,6 +22,7 @@ import {
 import { assertMomentsChatApiConfigured, isMomentsChatApiConfigured } from './momentsChatApiReady'
 import { MOMENT_TEXT_OUTPUT_HINT, sanitizeMomentText } from './momentTextSanitize'
 import type { AllowedMomentCharacter } from './momentPrivacyAudience'
+import { MOMENT_SONG_SHARE_AI_COMMENT_RULES } from './momentAttachedMusic'
 import { runMomentsVisionChat } from './momentVisionChat'
 
 function extractInteractionsArray(payload: unknown): unknown[] | null {
@@ -93,10 +98,12 @@ JSON 结构：
 3. delaySeconds 为「刷到朋友圈后」的秒数，范围约 ${15}～${MOMENT_INTERACTION_DELAY_MAX_SECONDS}（10 分钟内），**须错落有致**（如 18 秒、52 秒、2 分 10 秒、6 分钟），勿整分钟或等差递增；同一角色须连贯：先 like（或 viewed），comment 仅比同角色 like 大 8～15 秒（模拟打字），禁止同角色 like 与 comment 相差超过 30 秒。
 4. 评论须符合各角色性格（傲娇、高冷、温柔等），简短自然。
 5. **评区可多级接话**：comment 可以是一级（直接评用户朋友圈），也可以是二级回复（replyToCharId 填被回复角色的 charId，对方须在同批 interactions 里已有 comment）。角色之间可互怼、接话、补充，像真实朋友圈评区。**一级评论默认对用户说**，文中「你/给你/您」指发朋友圈的用户；回复某角色时勿把其对用户的「给你」误解为在说你。
-6. **互称规则**：若下方提供了角色人脉关系，回复/提及其他角色时必须使用其中的「当面称呼」；禁止与关系矛盾的称谓（母子不可互称学姐学长等）。${
+6. **分享歌曲**：若正文含「分享单曲」及歌词节选，评论须基于该曲名、歌手与已给出的歌词；禁止编造歌词或乱评。
+${MOMENT_SONG_SHARE_AI_COMMENT_RULES}
+7. **互称规则**：若下方提供了角色人脉关系，回复/提及其他角色时必须使用其中的「当面称呼」；禁止与关系矛盾的称谓（母子不可互称学姐学长等）。${
     withCharacterContexts
-      ? '\n7. 下方各角色区块含与该用户的**近期私聊与长期记忆**：评论须据此反应，像真人刷到熟人朋友圈，可接梗、关心、吐槽或暧昧，勿写与人设/关系无关的客套。\n8. 若某角色标注「私聊未回但发朋友圈」，可在 comment 中自然调侃（如有空发朋友圈没空回消息）；须贴合人设，勿机械模板；关系冷淡或严肃时可略过。\n9. 严禁在 JSON 里写 displayName，只写 charId。'
-      : '\n7. 严禁在 JSON 里写 displayName，只写 charId。'
+      ? '\n8. 下方各角色区块含与该用户的**近期私聊与长期记忆**：评论须据此反应，像真人刷到熟人朋友圈，可接梗、关心、吐槽或暧昧，勿写与人设/关系无关的客套。\n9. 若某角色标注「私聊未回但发朋友圈」，可在 comment 中自然调侃（如有空发朋友圈没空回消息）；须贴合人设，勿机械模板；关系冷淡或严肃时可略过。\n10. 严禁在 JSON 里写 displayName，只写 charId。'
+      : '\n8. 严禁在 JSON 里写 displayName，只写 charId。'
   }${mentionBlock}
 
 ${relationshipBlock ? `\n${relationshipBlock}\n` : ''}${engagementBlock}${MOMENT_TEXT_OUTPUT_HINT}`
@@ -126,12 +133,30 @@ async function generateBatchOrchestratorMomentInteractions(params: {
   mentionedCharacters: AllowedMomentCharacter[]
   allowedCharIds: Set<string>
   engagementRules?: ResolvedUserMomentEngagementRules
+  wechatCtx?: AnonymousQaWechatContext | null
+  momentPublishedAt?: number
 }): Promise<AiMomentInteractionDraft[]> {
   const relationships = await loadMomentRelationships()
   const relationshipBlock = buildMomentCharacterRelationshipPromptBlock(
     params.allowedCharacters,
     relationships,
   )
+
+  let characterContextPrompt = ''
+  if (params.wechatCtx) {
+    try {
+      const contexts = await buildUserMomentInteractionCharacterContexts({
+        wechatCtx: params.wechatCtx,
+        allowedCharacters: params.allowedCharacters,
+        momentContent: params.momentContent,
+        momentPublishedAt: params.momentPublishedAt ?? Date.now(),
+      })
+      characterContextPrompt = formatUserMomentCharacterContextsPrompt(contexts)
+    } catch (err) {
+      console.error('[momentInteractionAi] batch character contexts failed', err)
+    }
+  }
+  const withCharacterContexts = characterContextPrompt.length > 0
 
   const mentionLines = params.mentionedCharacters.length
     ? `\n被用户「提醒谁看」@ 的角色：${params.mentionedCharacters.map((c) => c.displayName).join('、')}`
@@ -141,14 +166,17 @@ async function generateBatchOrchestratorMomentInteractions(params: {
     `用户刚刚发布了一条朋友圈。内容：${params.momentContent.trim() || '（无文字）'}`,
     `配图数：${params.imageCount}`,
     `能看到这条动态的角色：${params.allowedCharacters.map((c) => c.displayName).join('、')}${mentionLines}`,
+    characterContextPrompt,
     '请模拟点赞/评论，返回 JSON。评论可以是一级，也可用 replyToCharId 回复其他角色的 comment 形成接话。被 @ 的角色须知晓被提及；关系熟的角色多半会互动，关系一般者见特别有意思/有意义的内容也会点赞或短评。',
-  ].join('\n\n')
+  ]
+    .filter(Boolean)
+    .join('\n\n')
 
   const raw = await runMomentsVisionChat(params.cfg, {
     system: buildSystemPrompt(
       params.allowedCharacters,
       params.mentionedCharacters,
-      false,
+      withCharacterContexts,
       relationshipBlock,
       params.engagementRules,
     ),
@@ -184,6 +212,7 @@ export async function generateMomentInteractions(params: {
   momentContent: string
   imageCount: number
   momentImages?: string[]
+  hasAttachedMusic?: boolean
   allowedCharacters: AllowedMomentCharacter[]
   mentionedCharacters?: AllowedMomentCharacter[]
   /** 用户朋友圈：注入各角色私聊/长期记忆与「未回私聊却发朋友圈」情境 */
@@ -196,6 +225,7 @@ export async function generateMomentInteractions(params: {
     momentContent,
     imageCount,
     momentImages,
+    hasAttachedMusic,
     allowedCharacters,
     mentionedCharacters = [],
     wechatCtx = null,
@@ -217,6 +247,7 @@ export async function generateMomentInteractions(params: {
         momentContent,
         imageCount,
         momentImages,
+        hasAttachedMusic,
         allowedCharacters,
         mentionedCharacterIds: new Set(mentionedCharacters.map((c) => c.charId)),
         momentPublishedAt: publishedAt,
@@ -237,6 +268,8 @@ export async function generateMomentInteractions(params: {
           mentionedCharacters,
           allowedCharIds,
           engagementRules,
+          wechatCtx,
+          momentPublishedAt: publishedAt,
         })
         if (hasAiLikeOrCommentDrafts(batchDrafts)) {
           console.warn('[momentInteractionAi] persona path empty; used batch orchestrator fallback')
@@ -256,6 +289,7 @@ export async function generateMomentInteractions(params: {
         allowedCharacters,
         baseDrafts,
         userDisplayName: wechatCtx.playerDisplayName.trim() || '用户',
+        momentPublishedAt: publishedAt,
         engagementRules,
       })
       const combined =
@@ -285,5 +319,7 @@ export async function generateMomentInteractions(params: {
     mentionedCharacters,
     allowedCharIds,
     engagementRules,
+    wechatCtx,
+    momentPublishedAt: publishedAt,
   })
 }

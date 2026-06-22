@@ -610,8 +610,8 @@ function parseOpenAiChoiceMessage(data: unknown): string {
   }
 
   const diag = describeChatCompletionParseFailure(data)
-  const emptyHint = /content长度=[1-9][^0-9]|仅为空白|reasoning长度=0/.test(diag)
-    ? ' 本次响应几乎无正文，多为：上下文过长被截断、线路限流、模型名错误、或聊天卡片里「最大回复 token」过小（建议 ≥4096）。'
+  const emptyHint = /content长度=0|content长度=[1-9][^0-9]|仅为空白/.test(diag)
+    ? ' 本次响应几乎无正文，多为：输出 token 预算不足（瞬时生成建议 ≥3600）、上下文过长被截断、使用了思考模型导致 token 耗尽、线路限流、或 API 配置有误。'
     : ''
   throw new Error(
     `返回格式不符合预期（未解析到模型正文）。诊断：${diag}。客户端已尝试：嵌套 JSON、choices[].message 为字符串、answer/response、tool_calls、Gemini 结构。${emptyHint} 约会剧情只要求写正文，记忆在生成成功后后台写入；请换稳定聊天模型或检查 API 地址是否为非流式 chat/completions。`,

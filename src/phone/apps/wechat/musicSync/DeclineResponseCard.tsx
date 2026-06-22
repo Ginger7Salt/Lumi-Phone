@@ -22,8 +22,10 @@ export function DeclineResponseCard({ data }: Props) {
       {...CARD_MOTION}
     >
       <div className="px-3.5 py-3">
-        <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-stone-400 line-through">
-          SIGNAL LOST | 错失的波段
+        <p className="text-[9px] font-medium tracking-[0.1em] text-stone-400 line-through">
+          <span>暂未一起听</span>
+          <span className="mx-1 font-normal text-stone-300">·</span>
+          <span className="uppercase tracking-[0.14em]">Declined</span>
         </p>
         <div className="my-3 flex justify-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-stone-100/80">

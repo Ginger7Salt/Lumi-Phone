@@ -66,6 +66,7 @@ export function MemoryArchivePanel({
   activeCharacterPageId,
   onCharacterPageChange,
   onRegisterCharacterNav,
+  coachActive = true,
 }: {
   contacts: WeChatContactRow[]
   currentWechatAccountId?: string
@@ -74,6 +75,8 @@ export function MemoryArchivePanel({
   activeCharacterPageId?: string | null
   onCharacterPageChange?: (meta: MemoryCharacterPageMeta | null) => void
   onRegisterCharacterNav?: (nav: { prev: () => void; next: () => void } | null) => void
+  /** 仅记忆管理 Tab 可见时允许自动/展示高亮引导 */
+  coachActive?: boolean
 }) {
   const [loading, setLoading] = useState(true)
   const [allEntries, setAllEntries] = useState<MemoryEntry[]>([])
@@ -224,11 +227,16 @@ export function MemoryArchivePanel({
   }, [])
 
   useEffect(() => {
+    if (!coachActive) {
+      setCoachOpen(false)
+      setCoachStepIndex(0)
+      return
+    }
     if (loading) return
     if (readMemoryCoachSeen(MEMORY_ARCHIVE_COACH_SEEN_KEY)) return
     const id = window.setTimeout(() => startLiveCoach(), 640)
     return () => window.clearTimeout(id)
-  }, [loading, startLiveCoach])
+  }, [loading, startLiveCoach, coachActive])
 
   useEffect(() => {
     const onStart = () => startLiveCoach()
@@ -690,7 +698,7 @@ export function MemoryArchivePanel({
       />
 
       <MemoryCoachPortal
-        open={coachOpen}
+        open={coachOpen && coachActive}
         steps={MEMORY_ARCHIVE_COACH_STEPS}
         stepIndex={coachStepIndex}
         onStepChange={setCoachStepIndex}

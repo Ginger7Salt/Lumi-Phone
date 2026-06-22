@@ -118,3 +118,13 @@ export async function buildUserMomentInteractionCharacterContexts(params: {
 
   return rows.filter((r) => r.contextBlock.trim())
 }
+
+export function formatUserMomentCharacterContextsPrompt(
+  contexts: UserMomentInteractionCharacterContext[],
+): string {
+  if (!contexts.length) return ''
+  return [
+    '【各角色与该用户的私聊记忆与近期上下文（互动须据此反应，像真人刷熟人朋友圈）】',
+    ...contexts.map((c) => c.contextBlock),
+  ].join('\n\n')
+}

@@ -9,6 +9,7 @@ export function MemoryDashboard({
   activeCharacterPageId,
   onCharacterPageChange,
   onRegisterCharacterNav,
+  coachActive = true,
 }: {
   contacts: WeChatContactRow[]
   playerIdentityId: string
@@ -17,6 +18,7 @@ export function MemoryDashboard({
   activeCharacterPageId?: string | null
   onCharacterPageChange?: (meta: MemoryCharacterPageMeta | null) => void
   onRegisterCharacterNav?: (nav: { prev: () => void; next: () => void } | null) => void
+  coachActive?: boolean
 }) {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -27,6 +29,7 @@ export function MemoryDashboard({
         activeCharacterPageId={activeCharacterPageId}
         onCharacterPageChange={onCharacterPageChange}
         onRegisterCharacterNav={onRegisterCharacterNav}
+        coachActive={coachActive}
       />
     </div>
   )

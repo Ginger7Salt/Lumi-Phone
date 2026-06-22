@@ -50,6 +50,7 @@ const POST_TYPE_OPTIONS: { id: InstantGenPostTypeChoice; label: string }[] = [
   { id: 'text', label: '纯文字' },
   { id: 'mixed', label: '图文' },
   { id: 'image', label: '纯图片' },
+  { id: 'music', label: '分享歌曲' },
 ]
 
 const STAGE_LABEL: Record<InstantGenPublishStage, string> = {
@@ -155,7 +156,10 @@ export function MomentInstantGenModal({
   )
 
   const postTypeOptions = useMemo(
-    () => (imageGenReady ? POST_TYPE_OPTIONS : POST_TYPE_OPTIONS.filter((o) => o.id === 'text')),
+    () =>
+      imageGenReady
+        ? POST_TYPE_OPTIONS
+        : POST_TYPE_OPTIONS.filter((o) => o.id === 'text' || o.id === 'music'),
     [imageGenReady],
   )
 
@@ -196,7 +200,9 @@ export function MomentInstantGenModal({
     setBatchTotal(0)
     setActiveName(undefined)
     setCustomContentDirection('')
-    if (!imageGenReady) setPostType('text')
+    if (!imageGenReady && (postType === 'mixed' || postType === 'image')) {
+      setPostType('text')
+    }
   }, [open, imageGenReady])
 
   useEffect(() => {
@@ -453,7 +459,12 @@ export function MomentInstantGenModal({
                     <p className="mt-1 text-[11px] text-[#9CA3AF]">载体形式</p>
                     {!imageGenReady ? (
                       <p className="mt-2 text-[11px] leading-relaxed text-[#9CA3AF]">
-                        未配置生图 API，仅支持纯文字朋友圈。可在朋友圈设置中配置 AI 配图引擎。
+                        未配置生图 API 时，仅支持纯文字或分享歌曲。可在朋友圈设置中配置 AI 配图引擎。
+                      </p>
+                    ) : null}
+                    {postType === 'music' ? (
+                      <p className="mt-2 text-[11px] leading-relaxed text-[#6B7280]">
+                        将生成带歌曲胶囊的朋友圈；模型会挑选网易云曲库中的真实歌名与歌手，无需登录网易账号。
                       </p>
                     ) : null}
                     <div className={`mt-3 ${HORIZONTAL_SCROLL_ROW}`}>
@@ -484,7 +495,9 @@ export function MomentInstantGenModal({
                           <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9CA3AF]">
                             Text Length
                           </p>
-                          <p className="mt-1 text-[11px] text-[#9CA3AF]">正文字数</p>
+                          <p className="mt-1 text-[11px] text-[#9CA3AF]">
+                            {postType === 'music' ? '配文字数（可选）' : '正文字数'}
+                          </p>
                         </div>
                         <p className="text-[12px] font-medium tabular-nums text-[#111827]">
                           {formatInstantGenTextLengthLabel(textLengthTarget)}

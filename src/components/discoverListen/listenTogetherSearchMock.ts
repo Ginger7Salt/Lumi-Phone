@@ -14,26 +14,12 @@ export type VibeCategory = {
   gradient: string
 }
 
-export type FrequencyTicket = {
-  id: string
-  emoji: string
-  label: string
-  searchQuery: string
-}
-
 export const SEARCH_EXPLORE_MOCK = {
   searchSuggestions: [
     { text: '深夜循环歌单', isHot: true, type: 'character_vibe' as const },
     { text: '落日飞车', isHot: false, type: 'normal' as const },
     { text: '微醺暗恋期', isHot: true, type: 'normal' as const },
   ],
-  frequencyTickets: [
-    { id: 't1', emoji: '🌧️', label: '适合雨天', searchQuery: '雨天 氛围' },
-    { id: 't2', emoji: '☕', label: '咖啡馆白噪', searchQuery: '咖啡馆 轻音乐' },
-    { id: 't3', emoji: '🌃', label: '深夜心碎', searchQuery: '深夜 emo' },
-    { id: 't4', emoji: '🌅', label: '晨曦通勤', searchQuery: '早晨 治愈' },
-    { id: 't5', emoji: '💫', label: '微醺暗恋', searchQuery: 'R&B 浪漫' },
-  ] satisfies FrequencyTicket[],
   categories: [
     {
       id: 'c1',
@@ -80,6 +66,5 @@ export const SEARCH_EXPLORE_MOCK = {
   ],
 } satisfies {
   searchSuggestions: SearchSuggestion[]
-  frequencyTickets: FrequencyTicket[]
   categories: VibeCategory[]
 }

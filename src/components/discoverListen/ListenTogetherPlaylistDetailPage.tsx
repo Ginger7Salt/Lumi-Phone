@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { ArrowLeft, Bookmark, Loader2, MessageCircle, Music2, Pause, Play, Search, X } from 'lucide-react'
+import { ArrowLeft, Bookmark, Loader2, MessageCircle, Music2, Pause, Play, Search, Share2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { ListenTogetherPlaylistCommentsPage } from './ListenTogetherPlaylistCommentsPage'
@@ -20,6 +20,11 @@ import {
 } from './neteaseMusicApi'
 import { getCachedPlaylist, savePlaylistCache } from './playlistTracksCache'
 import { ListenTogetherPageBackground } from './listenTogetherPageBg'
+import { ShareCommentContactsDrawer } from './ShareCommentContactsDrawer'
+import { ListenTogetherActionToast } from './ListenTogetherActionToast'
+import { buildWeChatShareSuccessToast, type ListenTogetherToastInput } from './listenShareToast'
+import { sendListenTrackShareToContacts } from '../../phone/apps/wechat/musicSync/sendListenTrackShare'
+import type { InviteableContact } from './useInviteableWeChatContacts'
 
 function formatPlaylistDate(ts: number): string {
   if (!ts) return ''
@@ -179,6 +184,9 @@ export function ListenTogetherPlaylistDetailPage({
   const [commentsSong, setCommentsSong] = useState<NeteaseSongItem | null>(null)
   const [showPlaylistComments, setShowPlaylistComments] = useState(false)
   const [descExpanded, setDescExpanded] = useState(false)
+  const [shareDrawerOpen, setShareDrawerOpen] = useState(false)
+  const [shareSending, setShareSending] = useState(false)
+  const [toast, setToast] = useState<ListenTogetherToastInput | null>(null)
 
   const isAlbum = playlist.kind === 'album'
   const isOwnPlaylist = !isAlbum && neteaseUserId > 0 && meta?.creator.id === neteaseUserId
@@ -439,6 +447,38 @@ export function ListenTogetherPlaylistDetailPage({
     [meta, playlist.id, title, cover],
   )
 
+  const handleShareConfirm = useCallback(
+    async (contacts: InviteableContact[]) => {
+      if (!playlist.id) return
+      setShareSending(true)
+      try {
+        const result = await sendListenTrackShareToContacts(
+          contacts.map((c) => c.characterId),
+          {
+            targetType: 'playlist',
+            targetId: playlist.id,
+            targetTitle: title,
+            targetCover: cover,
+            trackCount: count,
+          },
+        )
+        setToast(
+          buildWeChatShareSuccessToast({
+            sent: result.sent,
+            characterIds: result.characterIds,
+            contactName: contacts.length === 1 ? contacts[0]?.remarkName : undefined,
+          }),
+        )
+        setShareDrawerOpen(false)
+      } catch (e) {
+        setToast(e instanceof Error ? e.message : '分享失败')
+      } finally {
+        setShareSending(false)
+      }
+    },
+    [playlist.id, title, cover, count],
+  )
+
   const listBusy = loadingMore || loadingAll
 
   return (
@@ -462,6 +502,15 @@ export function ListenTogetherPlaylistDetailPage({
             loading={pageRefreshing || loading}
             onClick={() => void handlePageRefresh()}
           />
+          <button
+            type="button"
+            aria-label="分享歌单"
+            title="分享到微信好友"
+            onClick={() => setShareDrawerOpen(true)}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-stone-600 transition-colors hover:bg-white hover:text-rose-500"
+          >
+            <Share2 className="size-4" strokeWidth={1.75} />
+          </button>
           <button
             type="button"
             onClick={() => void playAll()}
@@ -806,6 +855,16 @@ export function ListenTogetherPlaylistDetailPage({
         onBack={() => setShowPlaylistComments(false)}
         onRequireLogin={onRequireLogin}
       />
+
+      <ShareCommentContactsDrawer
+        open={shareDrawerOpen}
+        onClose={() => setShareDrawerOpen(false)}
+        onConfirm={handleShareConfirm}
+        sending={shareSending}
+        dialogTitle="SHARE PLAYLIST | 分享歌单给好友"
+        dialogSubtitle="分享歌单到微信私聊"
+      />
+      <ListenTogetherActionToast message={toast} onClear={() => setToast(null)} />
     </div>
   )
 }

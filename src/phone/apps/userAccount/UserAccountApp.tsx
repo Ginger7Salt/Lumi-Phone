@@ -279,7 +279,7 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
     <div className="mx-auto w-full max-w-md space-y-4 py-2">
       <div className={`rounded-[16px] border p-4 ${t.card}`}>
         <h2 className="text-[16px] font-semibold">Lumi账号中心</h2>
-        <p className={`mt-2 text-[13px] leading-6 ${t.muted}`}>欢迎使用 Lumi 账号中心。请先注册或登录；审核通过后即可在 Lumi 主页使用。</p>
+        <p className={`mt-2 text-[13px] leading-6 ${t.muted}`}>欢迎使用 Lumi 账号中心。请先注册或登录。</p>
       </div>
 
       <div className={`flex rounded-[12px] p-1 ${t.authTabs}`}>

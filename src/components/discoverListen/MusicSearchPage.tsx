@@ -1,14 +1,10 @@
-import { AnimatePresence, motion, type Variants } from 'framer-motion'
+import { motion, type Variants } from 'framer-motion'
 import { Loader2, Search, X } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 
-import {
-  SEARCH_EXPLORE_MOCK,
-  type FrequencyTicket,
-  type VibeCategory,
-} from './listenTogetherSearchMock'
 import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
 import { ListenNum, ListenNumericText } from './ListenNum'
+import { listenTogetherCnTextClass } from './listenTogetherTypography'
 import {
   getCachedSearchResult,
   saveCachedSearchResult,
@@ -84,9 +80,9 @@ function SectionHeader({
       {en ? (
         <p className="text-[9px] font-medium uppercase tracking-[0.32em] text-rose-300/90">{en}</p>
       ) : null}
-      <h2 className="font-serif text-[17px] font-medium tracking-tight text-[#2D2422]">{title}</h2>
+      <h2 className="text-[17px] font-medium tracking-tight text-[#2D2422]">{title}</h2>
       {subtitle ? (
-        <p className="mt-1 text-[12px] italic leading-relaxed text-rose-300/90">{subtitle}</p>
+        <p className="mt-1 text-[12px] leading-relaxed text-rose-300/90">{subtitle}</p>
       ) : null}
     </div>
   )
@@ -215,7 +211,7 @@ function ArtistResultRow({
             className="h-full w-full object-cover"
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-rose-100 to-[#F5E6E8] font-serif text-[16px] text-rose-300/80">
+          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-rose-100 to-[#F5E6E8] text-[16px] text-rose-300/80">
             {artist.name.slice(0, 1)}
           </div>
         )}
@@ -266,7 +262,6 @@ export function MusicSearchPage({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searched, setSearched] = useState(false)
-  const [tuningLabel, setTuningLabel] = useState<string | null>(null)
   const [pageRefreshing, setPageRefreshing] = useState(false)
   const {
     artists: featuredArtists,
@@ -441,33 +436,6 @@ export function MusicSearchPage({
     onRefreshToplists,
   ])
 
-  const handleRandomPlay = useCallback(
-    async (ticket: FrequencyTicket) => {
-      if (!sessionActive) {
-        onRequireLogin?.()
-        return
-      }
-      setTuningLabel(ticket.label)
-      window.setTimeout(() => setTuningLabel(null), 1600)
-      setLoading(true)
-      setError(null)
-      try {
-        const songs = await searchNeteaseSongs(neteaseCookie, ticket.searchQuery, 30)
-        if (songs.length === 0) {
-          setError('该频段暂无可用曲目')
-          return
-        }
-        const pick = songs[Math.floor(Math.random() * Math.min(songs.length, 12))]
-        onPlaySong?.(pick, songs)
-      } catch (e) {
-        setError(e instanceof Error ? e.message : '调频失败')
-      } finally {
-        setLoading(false)
-      }
-    },
-    [sessionActive, onRequireLogin, neteaseCookie, onPlaySong],
-  )
-
   const onArtistTap = useCallback(
     (artist: NeteaseArtistItem) => {
       if (onOpenArtist) {
@@ -478,18 +446,6 @@ export function MusicSearchPage({
       void runSearch(artist.name)
     },
     [onOpenArtist, runSearch],
-  )
-
-  const onGenreTap = useCallback(
-    (cat: VibeCategory) => {
-      void handleRandomPlay({
-        id: cat.id,
-        emoji: '✦',
-        label: cat.title,
-        searchQuery: cat.title.replace(/\s+/g, ' '),
-      })
-    },
-    [handleRandomPlay],
   )
 
   const openPlaylist = useCallback(
@@ -605,28 +561,9 @@ export function MusicSearchPage({
   const showCurated = !searched
 
   return (
-    <div className={`relative min-h-full text-[#2D2422] ${className}`}>
-      {/* 调频闪字 */}
-      <AnimatePresence>
-        {tuningLabel ? (
-          <motion.div
-            key={tuningLabel}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            className="pointer-events-none fixed inset-x-0 top-[38%] z-50 flex justify-center px-6"
-          >
-            <p className="text-center font-serif text-[15px] italic text-[#2D2422]/85">
-              Tuning to {tuningLabel} frequency…
-              <br />
-              <span className="text-[13px] text-rose-300">正在调频至「{tuningLabel}」</span>
-            </p>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-
+    <div className={`relative min-h-full text-[#2D2422] ${listenTogetherCnTextClass} ${className}`}>
       {/* 搜索中枢 */}
-      <div className="sticky top-0 z-20 border-b border-white/40 bg-white/45 px-4 pb-4 pt-[max(10px,env(safe-area-inset-top))] backdrop-blur-md">
+      <div className="sticky top-0 z-20 border-b border-stone-100 bg-white px-4 pb-4 pt-[max(10px,env(safe-area-inset-top))]">
         <div className="mb-3 flex items-center justify-end">
           <ListenTogetherHeaderRefreshButton
             variant="rose"
@@ -657,7 +594,7 @@ export function MusicSearchPage({
               if (e.key === 'Enter') submitSearch()
             }}
             placeholder="搜索歌手、歌曲或沉浸情绪..."
-            className="h-12 w-full rounded-[20px] border-0 bg-gray-50/50 pl-11 pr-11 text-[14px] text-[#2D2422] shadow-[inset_0_1px_4px_rgba(45,36,34,0.04)] outline-none ring-0 placeholder:italic placeholder:text-rose-300/70 focus:shadow-[inset_0_1px_4px_rgba(225,29,72,0.06),0_8px_24px_rgba(225,29,72,0.06)]"
+            className="h-12 w-full rounded-[20px] border-0 bg-gray-50/50 pl-11 pr-11 text-[14px] text-[#2D2422] shadow-[inset_0_1px_4px_rgba(45,36,34,0.04)] outline-none ring-0 placeholder:text-rose-300/70 focus:shadow-[inset_0_1px_4px_rgba(225,29,72,0.06),0_8px_24px_rgba(225,29,72,0.06)]"
             aria-label="搜索音乐"
           />
           {query ? (
@@ -736,12 +673,12 @@ export function MusicSearchPage({
                             className="h-full w-full object-cover"
                           />
                         ) : (
-                          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-rose-100 to-[#F5E6E8] font-serif text-[18px] text-rose-300/80">
+                          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-rose-100 to-[#F5E6E8] text-[18px] text-rose-300/80">
                             {artist.name.slice(0, 1)}
                           </div>
                         )}
                       </div>
-                      <span className="max-w-[88px] truncate font-serif text-[12px] tracking-[0.12em] text-[#2D2422]/90">
+                      <span className="max-w-[88px] truncate text-[12px] tracking-wide text-[#2D2422]/90">
                         {artist.name}
                       </span>
                     </button>
@@ -797,7 +734,7 @@ export function MusicSearchPage({
                             {chart.songs.slice(0, 3).map((s, i) => (
                               <p
                                 key={`${chart.id}-top-${s.id}`}
-                                className="truncate text-[10px] font-extralight text-[#2D2422]/45"
+                                className="truncate text-[10px] font-normal text-[#2D2422]/45"
                               >
                                 <ListenNumericText text={`${i + 1}. ${s.name} — ${s.artist}`} />
                               </p>
@@ -809,63 +746,6 @@ export function MusicSearchPage({
                   })}
                 </div>
               )}
-            </motion.section>
-
-            {/* Block C — 曲风与情绪 */}
-            <motion.section variants={riseVariants} className="mb-10" aria-label="曲风与情绪">
-              <SectionHeader title="曲风与情绪" en="Genre & Mood" />
-              <div className="grid grid-cols-2 gap-3 auto-rows-[minmax(140px,auto)]">
-                {SEARCH_EXPLORE_MOCK.categories.map((cat, i) => (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => onGenreTap(cat)}
-                    className={`group relative overflow-hidden rounded-[22px] text-left ${COVER_SHADOW} ${
-                      i % 3 === 0 ? 'col-span-2 aspect-[2.2/1]' : 'aspect-[4/5]'
-                    }`}
-                  >
-                    <img
-                      src={cat.cover}
-                      alt=""
-                      className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-active:scale-105"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-[#2D2422]/80 via-[#2D2422]/20 to-transparent" />
-                    <div className="absolute inset-x-0 bottom-0 p-3.5">
-                      <p className="text-[9px] font-medium uppercase tracking-[0.28em] text-white/55">
-                        {cat.subtitle}
-                      </p>
-                      <p className="mt-1 font-serif text-[16px] text-white/95">{cat.title}</p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </motion.section>
-
-            {/* Block D — 频段漫游 */}
-            <motion.section variants={riseVariants} aria-label="频段漫游">
-              <SectionHeader title="频段漫游" en="Frequency Wandering" />
-              <div className={H_SCROLL}>
-                {SEARCH_EXPLORE_MOCK.frequencyTickets.map((ticket) => (
-                  <motion.button
-                    key={ticket.id}
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => void handleRandomPlay(ticket)}
-                    className={`relative flex w-[168px] shrink-0 snap-start items-center gap-3 rounded-[18px] bg-white/90 py-3.5 pl-4 pr-3 text-left ${COVER_SHADOW}`}
-                  >
-                    <span
-                      className="absolute bottom-2 left-0 top-2 w-px border-l border-dashed border-rose-200/80"
-                      aria-hidden
-                    />
-                    <span className="pl-2 text-[20px]" aria-hidden>
-                      {ticket.emoji}
-                    </span>
-                    <span className="text-[13px] font-medium tracking-wide text-[#2D2422]/85">
-                      {ticket.label}
-                    </span>
-                  </motion.button>
-                ))}
-              </div>
             </motion.section>
           </>
         ) : null}

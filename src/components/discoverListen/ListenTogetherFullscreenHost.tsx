@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { sendMusicSyncInvite } from '../../phone/apps/wechat/musicSync/sendMusicSyncInvite'
+import { useCustomization } from '../../phone/CustomizationContext'
 import { useMusicStore } from '../../stores/useMusicStore'
 import { ListenTogetherMiniPlayerBar, listenOverlayBottomInset } from './ListenTogetherMiniPlayerBar'
 import {
@@ -12,6 +13,11 @@ import { ListenTogetherUserProfilePage } from './ListenTogetherUserProfilePage'
 import type { UserDetailInfo } from './listenTogetherProfileTypes'
 import { ListenTogetherActionToast } from './ListenTogetherActionToast'
 import { InviteListenerDrawer } from './InviteListenerDrawer'
+import {
+  buildMusicSyncInviteSuccessToast,
+  type ListenTogetherToastInput,
+} from './listenShareToast'
+import { SongArtistPickerDrawer } from './SongArtistPickerDrawer'
 import { activeLyricIndex } from './listenLyricParse'
 import {
   formatProgressTimes,
@@ -21,8 +27,10 @@ import { ListenTogetherSongActionDrawer } from './ListenTogetherSongActionDrawer
 import { ListenTogetherSongCommentsPage } from './ListenTogetherSongCommentsPage'
 import type { ListenCommentAuthor } from './ListenCommentComposer'
 import { hydrateNeteaseListenSession } from './neteaseListenSession'
+import { hydrateListenTogetherUserAvatarPreference } from './listenTogetherUserAvatarPreference'
 import {
-  resolveSongPrimaryArtist,
+  resolveSongArtists,
+  songHasMultipleArtists,
   type NeteaseArtistItem,
   type NeteaseSongItem,
 } from './neteaseMusicApi'
@@ -30,6 +38,7 @@ import { useListenTogetherPlayer } from './useListenTogetherPlayer'
 import type { InviteableContact } from './useInviteableWeChatContacts'
 import { useNeteaseLikedSongs } from './useNeteaseLikedSongs'
 import { useNeteaseProfile } from './useNeteaseProfile'
+import { useListenTogetherUserAvatar } from './useListenTogetherUserAvatar'
 
 /** 全局全屏播放页：悬浮球等任意入口直接叠层唤起，不跳转发现 Tab */
 export function ListenTogetherFullscreenHost() {
@@ -37,6 +46,7 @@ export function ListenTogetherFullscreenHost() {
   const setListenFullscreenOpen = useMusicStore((s) => s.setListenFullscreenOpen)
   const track = useMusicStore((s) => s.currentTrack)
   const syncListening = useMusicStore((s) => s.syncListening)
+  const { state } = useCustomization()
 
   const [neteaseCookie, setNeteaseCookie] = useState('')
   const [isGuestMode, setIsGuestMode] = useState(false)
@@ -48,7 +58,9 @@ export function ListenTogetherFullscreenHost() {
   const [actionDrawerOpen, setActionDrawerOpen] = useState(false)
   const [inviteDrawerOpen, setInviteDrawerOpen] = useState(false)
   const [inviteSending, setInviteSending] = useState(false)
-  const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [artistPickerOpen, setArtistPickerOpen] = useState(false)
+  const [artistPickerArtists, setArtistPickerArtists] = useState<NeteaseArtistItem[]>([])
+  const [toastMessage, setToastMessage] = useState<ListenTogetherToastInput | null>(null)
 
   const {
     nowPlaying: song,
@@ -91,6 +103,7 @@ export function ListenTogetherFullscreenHost() {
   )
 
   useEffect(() => {
+    void hydrateListenTogetherUserAvatarPreference()
     void hydrateNeteaseListenSession().then((session) => {
       setNeteaseCookie(session.cookie)
       setIsGuestMode(session.isGuest)
@@ -118,13 +131,12 @@ export function ListenTogetherFullscreenHost() {
     [progress, durationMs],
   )
 
-  const companion = syncListening
-    ? {
-        name: syncListening.companion.name,
-        avatar: syncListening.companion.avatar,
-        message: '正在与你同频共振',
-      }
-    : null
+  const syncUserAvatar = useListenTogetherUserAvatar(neteaseProfile?.user.avatar).avatar
+
+  const syncUserName =
+    neteaseProfile?.user.nickname?.trim() ||
+    state.profile.displayName?.trim() ||
+    '我'
 
   const currentSongLiked = song.songId ? isNeteaseSongLiked(song.songId) : false
   const canInteractWithSong = Boolean(song.songId && song.title !== '暂无播放')
@@ -143,7 +155,7 @@ export function ListenTogetherFullscreenHost() {
     setCommentsSong(null)
   }, [])
 
-  const showToast = useCallback((message: string) => {
+  const showToast = useCallback((message: ListenTogetherToastInput) => {
     setToastMessage(message)
   }, [])
 
@@ -185,15 +197,19 @@ export function ListenTogetherFullscreenHost() {
       return
     }
 
-    const knownArtistId = song.artistId ?? track?.artistId
-    if (knownArtistId) {
-      setListenFullscreenOpen(false)
-      setOpenArtist({
-        id: knownArtistId,
-        name: song.artist || track?.artist || '歌手',
-        avatar: '',
-      })
-      return
+    const artistLabel = song.artist || track?.artist || ''
+
+    if (!songHasMultipleArtists(artistLabel)) {
+      const knownArtistId = song.artistId ?? track?.artistId
+      if (knownArtistId) {
+        setListenFullscreenOpen(false)
+        setOpenArtist({
+          id: knownArtistId,
+          name: artistLabel || '歌手',
+          avatar: '',
+        })
+        return
+      }
     }
 
     if (!neteaseCookie.trim()) {
@@ -203,17 +219,22 @@ export function ListenTogetherFullscreenHost() {
 
     setResolvingArtist(true)
     try {
-      const resolved = await resolveSongPrimaryArtist(
-        neteaseCookie,
-        songId,
-        song.artist || track?.artist,
-      )
-      if (!resolved) {
+      const artists = await resolveSongArtists(neteaseCookie, songId, artistLabel)
+      if (artists.length === 0) {
         showToast('未找到该歌手')
         return
       }
-      setListenFullscreenOpen(false)
-      setOpenArtist(resolved)
+      if (artists.length === 1) {
+        setListenFullscreenOpen(false)
+        setOpenArtist({
+          id: artists[0].id,
+          name: artists[0].name,
+          avatar: artists[0].avatar,
+        })
+        return
+      }
+      setArtistPickerArtists(artists)
+      setArtistPickerOpen(true)
     } catch {
       showToast('打开歌手页失败')
     } finally {
@@ -231,6 +252,16 @@ export function ListenTogetherFullscreenHost() {
     setListenFullscreenOpen,
   ])
 
+  const handlePickSongArtist = useCallback(
+    (artist: NeteaseArtistItem) => {
+      setArtistPickerOpen(false)
+      setArtistPickerArtists([])
+      setListenFullscreenOpen(false)
+      setOpenArtist({ id: artist.id, name: artist.name, avatar: artist.avatar })
+    },
+    [setListenFullscreenOpen],
+  )
+
   const handleInviteConfirm = useCallback(
     async (contact: InviteableContact) => {
       if (!track || inviteSending) return
@@ -244,7 +275,12 @@ export function ListenTogetherFullscreenHost() {
         })
         useMusicStore.getState().setSyncListening(null)
         setInviteDrawerOpen(false)
-        showToast(`已向 ${contact.remarkName} 发送共听邀约`)
+        showToast(
+          buildMusicSyncInviteSuccessToast({
+            contactName: contact.remarkName,
+            characterId: contact.characterId,
+          }),
+        )
       } catch {
         showToast('发送邀约失败，请稍后重试')
       } finally {
@@ -258,6 +294,10 @@ export function ListenTogetherFullscreenHost() {
     setInviteDrawerOpen(true)
   }, [])
 
+  const openInviteFromSyncFloat = useCallback(() => {
+    setInviteDrawerOpen(true)
+  }, [])
+
   if (!track) return null
 
   const actionSong =
@@ -266,12 +306,14 @@ export function ListenTogetherFullscreenHost() {
           id: song.songId,
           title: song.title,
           artist: song.artist,
+          cover: song.cover || track?.cover,
         }
       : track.id
         ? {
             id: track.id,
             title: track.title,
             artist: track.artist,
+            cover: track.cover,
           }
         : null
 
@@ -292,7 +334,10 @@ export function ListenTogetherFullscreenHost() {
         isPlaying={isPlaying}
         liked={currentSongLiked}
         likeBusy={Boolean(song.songId && likingSongId === song.songId)}
-        companion={companion}
+        syncListening={syncListening}
+        syncUserAvatar={syncUserAvatar}
+        syncUserName={syncUserName}
+        onInviteSync={openInviteFromSyncFloat}
         onTogglePlay={togglePlay}
         onToggleLike={
           neteaseLoggedIn && canInteractWithSong && song.songId
@@ -335,6 +380,17 @@ export function ListenTogetherFullscreenHost() {
         onClose={() => setInviteDrawerOpen(false)}
         onConfirm={handleInviteConfirm}
         sending={inviteSending}
+      />
+
+      <SongArtistPickerDrawer
+        open={artistPickerOpen}
+        artists={artistPickerArtists}
+        loading={resolvingArtist}
+        onClose={() => {
+          setArtistPickerOpen(false)
+          setArtistPickerArtists([])
+        }}
+        onSelect={handlePickSongArtist}
       />
 
       <ListenTogetherActionToast

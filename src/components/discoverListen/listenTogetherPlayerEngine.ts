@@ -18,7 +18,13 @@ import {
 } from './neteaseMusicApi'
 import { formatPlaybackError } from './playbackError'
 import type { ParsedLyricLine } from './listenLyricParse'
-import { clearSongPlaybackCache } from './listenTogetherPersistence'
+import { clearSongPlaybackCache, getCachedSongPlayback, isSongPlayUrlCacheValid } from './listenTogetherPersistence'
+import { recordListenPlayHistory } from './listenTogetherPlayHistory'
+import {
+  getCachedPlayerSession,
+  saveCachedPlayerSession,
+  type CachedPlayerSession,
+} from './listenTogetherPlayerSession'
 import type { ListenAttachedMusic } from './listenTogetherNotesMock'
 import { pauseMusicWidgetSharedAudio } from '../../phone/components/MusicWidget'
 import { isKeepAliveAudioElement } from '../../phone/apps/backgroundNotify/backgroundAudioCoexistence'
@@ -266,6 +272,23 @@ async function loadAndPlayUrl(audio: HTMLAudioElement, url: string, epoch: numbe
   }
 }
 
+async function loadUrlPaused(audio: HTMLAudioElement, url: string, epoch: number): Promise<void> {
+  if (isPlaybackEpochStale(epoch)) return
+  audio.pause()
+  audio.src = url
+  audio.currentTime = 0
+  audio.load()
+  await waitForAudioCanPlay(audio, epoch)
+  if (isPlaybackEpochStale(epoch)) return
+  audio.pause()
+  try {
+    audio.currentTime = 0
+  } catch {
+    /* ignore */
+  }
+  isPlaying = false
+}
+
 async function resolveNextSong(): Promise<NeteaseSongItem | null> {
   const queue = queueRef
   if (queue.length === 0) return null
@@ -384,6 +407,8 @@ async function playSongInternal(
       await tryPlay(url)
     }
     if (isPlaybackEpochStale(epoch)) return false
+    void persistPlayerSession()
+    void recordListenPlayHistory(track)
     return true
   } catch (e) {
     if (isPlaybackEpochStale(epoch)) return false
@@ -415,6 +440,35 @@ function applyPlayContext(song: NeteaseSongItem, context?: PlaySongContext) {
   canUseHeartMode = heart
   playMode = normalizePlayMode(playMode, heart)
   playModeRef = playMode
+}
+
+function hasActiveNowPlaying(): boolean {
+  return Boolean(nowPlaying.songId && nowPlaying.title?.trim() && nowPlaying.title !== '暂无播放')
+}
+
+function attachedMusicToSongItem(music: ListenAttachedMusic): NeteaseSongItem | null {
+  if (!music.songId || !music.title?.trim() || music.title === '暂无播放') return null
+  return {
+    id: music.songId,
+    name: music.title,
+    artist: music.artist,
+    cover: music.cover,
+    artistId: music.artistId,
+  }
+}
+
+async function persistPlayerSession(): Promise<void> {
+  const song = attachedMusicToSongItem(nowPlaying)
+  if (!song) return
+  const payload: CachedPlayerSession = {
+    song,
+    queue: queueRef.length > 0 ? [...queueRef] : [song],
+    queueIndex: queueIndexRef,
+    queueMeta: { ...queueMetaRef },
+    playMode,
+    updatedAt: Date.now(),
+  }
+  await saveCachedPlayerSession(payload)
 }
 
 function createListenAudioElement(): HTMLAudioElement {
@@ -496,6 +550,71 @@ export function ensureListenTogetherPlayerEngine(): void {
 export function getListenTogetherPlayerSnapshot(): EngineSnapshot {
   ensureListenTogetherPlayerEngine()
   return engineSnapshot
+}
+
+/** 刷新后恢复上次曲目：保留歌曲信息与队列，进度归零且暂停 */
+export async function restorePlayerSessionFromCache(): Promise<boolean> {
+  ensureListenTogetherPlayerEngine()
+  if (hasActiveNowPlaying()) return false
+
+  const session = getNeteaseListenSessionSync()
+  if (!session.isActive) return false
+
+  const cached = await getCachedPlayerSession()
+  if (!cached?.song?.id) return false
+
+  const epoch = beginNewPlaybackEpoch()
+
+  queueRef = cached.queue.length > 0 ? cached.queue : [cached.song]
+  queueIndexRef = Math.min(Math.max(0, cached.queueIndex), Math.max(0, queueRef.length - 1))
+  queueMetaRef = cached.queueMeta ?? { ...DEFAULT_QUEUE_META }
+  const heart = Boolean(queueMetaRef.isLikedPlaylist)
+  canUseHeartMode = heart
+  playMode = normalizePlayMode(cached.playMode, heart)
+  playModeRef = playMode
+
+  nowPlaying = songToAttached(cached.song)
+  progress = 0
+  currentTimeMs = 0
+  durationMs = 0
+  isPlaying = false
+  playError = null
+
+  const playback = await getCachedSongPlayback(cached.song.id)
+  lyrics =
+    playback?.lyrics?.length && playback.lyrics.length > 0
+      ? playback.lyrics
+      : [{ timeMs: 0, text: '暂无歌词' }]
+
+  let url =
+    playback && isSongPlayUrlCacheValid(playback) ? playback.playUrl : null
+
+  if (!url && session.cookie.trim()) {
+    try {
+      const resolved = await resolveSongPlayback(session.cookie, cached.song.id)
+      if (isPlaybackEpochStale(epoch)) return false
+      url = resolved.playUrl
+      if (resolved.lyrics.length > 0) lyrics = resolved.lyrics
+    } catch {
+      /* 仅展示元数据也可 */
+    }
+  }
+
+  const audio = audioRef
+  if (url && audio) {
+    try {
+      await loadUrlPaused(audio, url, epoch)
+      if (isPlaybackEpochStale(epoch)) return false
+      const d = audio.duration
+      if (Number.isFinite(d) && d > 0) durationMs = Math.round(d * 1000)
+    } catch {
+      if (isPlaybackEpochStale(epoch)) return false
+    }
+  }
+
+  if (isPlaybackEpochStale(epoch)) return false
+  pushStateToStore()
+  return true
 }
 
 export const listenTogetherPlayerEngine = {

@@ -6,6 +6,7 @@ import {
   buildAnonymousQaPersonaPromptPack,
   type AnonymousQaWechatContext,
 } from '../anonymousQa/buildAnonymousQaPersonaContext'
+import { MOMENT_SONG_SHARE_AI_COMMENT_RULES } from './momentAttachedMusic'
 import { assertMomentsChatApiConfigured } from './momentsChatApiReady'
 import type { MomentComment } from './mockMoments'
 import { MOMENT_TEXT_OUTPUT_HINT, sanitizeMomentText } from './momentTextSanitize'
@@ -19,6 +20,7 @@ const REPLY_TASK_PER_COMMENT = `
 - 每项是自然口语，像微信朋友圈评，1-3 句，直接写正文
 - 禁止在正文里写「回复1」「回复₁」「回复一」等编号、分条标题或序号前缀
 - 仅输出 JSON：{"replies":["对第1条评论的回复","对第2条评论的回复"]}
+${MOMENT_SONG_SHARE_AI_COMMENT_RULES}
 ${MOMENT_TEXT_OUTPUT_HINT}
 `.trim()
 
@@ -30,6 +32,7 @@ const REPLY_TASK_UNIFIED = `
 - 只输出**一条**回复，不要拆成多条、不要编号、不要「回复1/回复2」
 - 1-3 句口语化即可，像微信朋友圈评
 - 仅输出 JSON：{"reply":"你的整体回复"} 或 {"replies":["你的整体回复"]}
+${MOMENT_SONG_SHARE_AI_COMMENT_RULES}
 ${MOMENT_TEXT_OUTPUT_HINT}
 `.trim()
 

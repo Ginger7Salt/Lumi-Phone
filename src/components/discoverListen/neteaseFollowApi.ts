@@ -1,4 +1,5 @@
 import { ncmApiGet } from './neteaseApiClient'
+import { searchNeteaseArtists, type NeteaseArtistItem } from './neteaseMusicApi'
 
 export type NeteaseFollowListKind = 'following' | 'followers'
 
@@ -14,6 +15,8 @@ export type NeteaseFollowListItem = {
   artistId?: number
   userId?: number
   signature?: string
+  /** 网易音乐人 / 歌手等认证身份标签 */
+  musicianLabel?: string
 }
 
 export type NeteaseFollowListPage = {
@@ -75,10 +78,27 @@ function parsePrivacyBlock(body: Record<string, unknown>): { blocked: boolean; r
   return { blocked: false }
 }
 
-function mapFollowRow(raw: unknown): NeteaseFollowListItem | null {
-  if (!raw || typeof raw !== 'object') return null
-  const row = raw as Record<string, unknown>
-  const userId = Number(row.userId ?? row.uid ?? 0)
+function pickFollowArtistId(row: Record<string, unknown>): number {
+  const direct = Number(row.artistId ?? 0)
+  if (direct > 0) return direct
+  if (row.artist && typeof row.artist === 'object') {
+    const nested = Number((row.artist as Record<string, unknown>).id ?? 0)
+    if (nested > 0) return nested
+  }
+  return 0
+}
+
+function pickFollowMusicianLabel(row: Record<string, unknown>, userType: number): string | undefined {
+  const identifyTag = row.identifyTag
+  if (Array.isArray(identifyTag)) {
+    for (const item of identifyTag) {
+      const label = String(item ?? '').trim()
+      if (label) return label
+    }
+  }
+  const authStatus = Number(row.authStatus ?? 0)
+  if (authStatus === 1 || userType === 4) return '音乐人'
+  if (userType === 2) return '歌手'
   const artistId = Number(
     row.artistId ??
       (row.artist && typeof row.artist === 'object'
@@ -86,10 +106,16 @@ function mapFollowRow(raw: unknown): NeteaseFollowListItem | null {
         : undefined) ??
       0,
   )
+  if (artistId > 0) return '音乐人'
+  return undefined
+}
+
+function mapFollowRow(raw: unknown): NeteaseFollowListItem | null {
+  if (!raw || typeof raw !== 'object') return null
+  const row = raw as Record<string, unknown>
+  const userId = Number(row.userId ?? row.uid ?? 0)
+  const artistId = pickFollowArtistId(row)
   const userType = Number(row.userType ?? 0)
-  const isArtist = artistId > 0 || userType === 4 || userType === 2
-  const id = isArtist ? artistId || userId : userId
-  if (!id) return null
   const name = String(
     row.nickname ??
       row.userName ??
@@ -110,18 +136,77 @@ function mapFollowRow(raw: unknown): NeteaseFollowListItem | null {
   )
   const signature =
     typeof row.signature === 'string' ? row.signature.trim().slice(0, 120) : undefined
-  if (isArtist) {
+  const musicianLabel =
+    pickFollowMusicianLabel(row, userType) ?? (artistId > 0 ? '音乐人' : undefined)
+
+  if (artistId > 0) {
     return {
-      id,
+      id: artistId,
       name,
       avatar,
       kind: 'artist',
-      artistId: artistId || id,
+      artistId,
       userId: userId || undefined,
       signature,
+      musicianLabel,
     }
   }
-  return { id, name, avatar, kind: 'user', userId: id, signature }
+
+  if (!userId) return null
+  return {
+    id: userId,
+    name,
+    avatar,
+    kind: 'user',
+    userId,
+    signature,
+    ...(musicianLabel ? { musicianLabel } : {}),
+  }
+}
+
+/** 关注列表项跳转歌手页：仅有用户 id 的网易音乐人需先解析真实歌手 id */
+export async function resolveFollowListItemArtist(
+  cookie: string,
+  item: NeteaseFollowListItem,
+): Promise<NeteaseArtistItem | null> {
+  if (item.artistId && item.artistId > 0) {
+    return { id: item.artistId, name: item.name, avatar: item.avatar }
+  }
+  if (!cookie.trim()) return null
+
+  if (item.userId) {
+    try {
+      const body = await ncmApiGet('/user/detail', cookie, { uid: String(item.userId) })
+      const profile =
+        body.profile && typeof body.profile === 'object'
+          ? (body.profile as Record<string, unknown>)
+          : {}
+      const fromProfile = Number(profile.artistId ?? profile.artist_id ?? 0)
+      if (fromProfile > 0) {
+        return { id: fromProfile, name: item.name, avatar: item.avatar }
+      }
+      const nestedArtist = profile.artist
+      if (nestedArtist && typeof nestedArtist === 'object') {
+        const nestedId = Number((nestedArtist as Record<string, unknown>).id ?? 0)
+        if (nestedId > 0) {
+          return { id: nestedId, name: item.name, avatar: item.avatar }
+        }
+      }
+    } catch {
+      /* 回退搜索 */
+    }
+  }
+
+  const q = item.name.trim()
+  if (!q) return null
+  try {
+    const artists = await searchNeteaseArtists(cookie, q, 12)
+    const exact = artists.find((a) => a.name === q)
+    const pick = exact ?? artists[0]
+    return pick ?? null
+  } catch {
+    return null
+  }
 }
 
 function parseListPage(

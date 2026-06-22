@@ -6,6 +6,7 @@ import {
   applyMentionsToPrivacyMeta,
   resolveCharacterMomentMentions,
 } from './momentMentionUtils'
+import type { MomentAttachedMusic } from './momentAttachedMusic'
 import type { MomentItemModel } from './mockMoments'
 import { normalizeMomentLocation } from './momentLocationUtils'
 import { sanitizeMomentBodyText } from './momentTextSanitize'
@@ -31,6 +32,7 @@ export function draftToMomentItem(
     authorAvatar: author.avatar,
     content: sanitizeMomentBodyText(draft.content),
     images: draft.images.length ? draft.images : undefined,
+    attachedMusic: draft.attachedMusic,
     location: normalizeMomentLocation(draft.location ?? undefined),
     timestamp: Date.now(),
     likes: [],
@@ -83,6 +85,7 @@ export function characterPostToMomentItem(params: {
   mentionUser?: boolean
   mentionCharacterIds?: string[]
   publisherSelfComments?: PublisherSelfCommentDraft[]
+  attachedMusic?: MomentAttachedMusic
 }): MomentItemModel {
   const ts =
     typeof params.timestamp === 'number' && Number.isFinite(params.timestamp)
@@ -111,6 +114,7 @@ export function characterPostToMomentItem(params: {
     authorAvatar: params.authorAvatar,
     content: params.content,
     images: params.imageUrls.length ? params.imageUrls : undefined,
+    attachedMusic: params.attachedMusic,
     location: params.location,
     timestamp: ts,
     likes: [],

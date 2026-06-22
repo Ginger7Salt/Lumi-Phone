@@ -215,6 +215,11 @@ html[data-phone-layout='locked'] #root {
   font-family: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
 }
 
+/** 听一听首页/搜索：中文走手机全局字体栈，避免 font-serif 与正文混用 */
+.listen-together-cn-text {
+  font-family: var(--phone-font);
+}
+
 /** 全局数字衬线：与 tabular-nums 搭配，覆盖 Tailwind 默认仅等宽数字的行为 */
 .tabular-nums,
 .font-num {

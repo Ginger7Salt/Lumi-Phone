@@ -2,6 +2,8 @@ import { emitWeChatStorageChanged, personaDb } from '../newFriendsPersona/idb'
 import type { WeChatListenCommentSharePayload } from '../newFriendsPersona/types'
 import { resolveAccountScopedPrivateConversationKey } from '../wechatAccountPrivateChatStorage'
 import { findAccountById, loadAccountsBundle, resolveAccountSessionIdentityId } from '../wechatAccountPersistence'
+import { loadNeteaseCookie } from '../../../../components/discoverListen/neteaseApiClient'
+import { resolveSongLyricsExcerpt } from './listenShareAiContext'
 
 export type SendListenCommentShareInput = {
   commentId: number
@@ -44,6 +46,13 @@ async function sendOneListenCommentShare(
   const shareId = `lcs-${nowMs}-${Math.random().toString(36).slice(2, 8)}`
   const messageId = `wxm-${nowMs}-lcs-${Math.random().toString(36).slice(2, 8)}`
 
+  const cookie = loadNeteaseCookie().trim()
+  let lyricsExcerpt: string | undefined
+  if (input.targetType === 'song') {
+    const excerpt = await resolveSongLyricsExcerpt(input.targetId, cookie)
+    if (excerpt) lyricsExcerpt = excerpt
+  }
+
   const listenCommentShare: WeChatListenCommentSharePayload = {
     kind: 'listen_comment_share',
     shareId,
@@ -58,6 +67,7 @@ async function sendOneListenCommentShare(
       : {}),
     ...(input.targetArtist?.trim() ? { targetArtist: input.targetArtist.trim() } : {}),
     ...(input.targetCover?.trim() ? { targetCover: input.targetCover.trim() } : {}),
+    ...(lyricsExcerpt ? { lyricsExcerpt } : {}),
   }
 
   await personaDb.appendWeChatChatMessage({

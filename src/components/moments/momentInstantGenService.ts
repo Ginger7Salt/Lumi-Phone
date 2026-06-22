@@ -17,6 +17,7 @@ import type { InstantGenConfig, InstantGenInteractionDraft } from './momentInsta
 import {
   instantGenChoiceToPostType,
   instantGenPostTypeIncludesText,
+  instantGenPostTypeRequiresText,
 } from './momentInstantGenTypes'
 import { fallbackInstantGenBodyContent, MAX_MOMENT_IMAGES } from './momentContentLimits'
 import {
@@ -36,6 +37,7 @@ import type { MomentItemModel } from './mockMoments'
 import { sanitizeMomentBodyText } from './momentTextSanitize'
 import type { MomentContactRef } from './newMomentTypes'
 import { characterPostToMomentItem } from './publishMomentUtils'
+import { resolveCharacterMomentAttachedMusic } from './resolveCharacterMomentAttachedMusic'
 import type { MomentsImageGenSettings } from './useMomentsSettingsStore'
 
 export type InstantGenPublishStage = 'context' | 'writing' | 'imaging' | 'saving' | 'done'
@@ -88,9 +90,10 @@ export async function publishInstantCharacterMoment(
   params.onProgress?.('context')
 
   const imageGenReady = isMomentsImageGenConfigured(params.imageGenSettings)
-  const config = imageGenReady
-    ? params.config
-    : { ...params.config, postType: 'text' as const }
+  const config =
+    imageGenReady || params.config.postType === 'music'
+      ? params.config
+      : { ...params.config, postType: 'text' as const }
 
   const characterId = config.targetCharacterId
   const character = await personaDb.getCharacter(characterId)
@@ -137,9 +140,9 @@ export async function publishInstantCharacterMoment(
     ? config.textLengthTarget
     : undefined
   let content = sanitizeMomentBodyText(aiDraft.content, textLimit)
-  let imagePrompts = postType === 'text' ? [] : aiDraft.imagePrompts
+  let imagePrompts = postType === 'text' || postType === 'music' ? [] : aiDraft.imagePrompts
 
-  if (instantGenPostTypeIncludesText(config.postType) && !content.trim()) {
+  if (instantGenPostTypeRequiresText(config.postType) && !content.trim()) {
     content = sanitizeMomentBodyText(
       fallbackInstantGenBodyContent(config.textLengthTarget),
       textLimit,
@@ -147,28 +150,37 @@ export async function publishInstantCharacterMoment(
   }
 
   let imageUrls: string[] = []
+  let attachedMusic = undefined as Awaited<ReturnType<typeof resolveCharacterMomentAttachedMusic>> | undefined
 
-  const needsImages = postType === 'image' || postType === 'mixed'
-  if (needsImages && imageGenReady && imagePrompts.length) {
-    params.onProgress?.('imaging')
-    imageUrls = await generateImages(imagePrompts, params.imageGenSettings)
-  }
+  if (config.postType === 'music') {
+    if (!aiDraft.attachedMusicDraft) {
+      throw new Error('模型未返回歌曲信息（attachedMusic），请重试或更换模型')
+    }
+    attachedMusic = await resolveCharacterMomentAttachedMusic(aiDraft.attachedMusicDraft)
+    postType = 'music'
+  } else {
+    const needsImages = postType === 'image' || postType === 'mixed'
+    if (needsImages && imageGenReady && imagePrompts.length) {
+      params.onProgress?.('imaging')
+      imageUrls = await generateImages(imagePrompts, params.imageGenSettings)
+    }
 
-  if (needsImages && !imageUrls.length) {
-    if (postType === 'image') {
-      postType = 'text'
-      if (!content.trim()) {
+    if (needsImages && !imageUrls.length) {
+      if (postType === 'image') {
+        postType = 'text'
+        if (!content.trim()) {
+          content = sanitizeMomentBodyText(
+            fallbackInstantGenBodyContent(config.textLengthTarget),
+            textLimit,
+          )
+        }
+      } else if (postType === 'mixed' && !content.trim()) {
+        postType = 'text'
         content = sanitizeMomentBodyText(
           fallbackInstantGenBodyContent(config.textLengthTarget),
           textLimit,
         )
       }
-    } else if (postType === 'mixed' && !content.trim()) {
-      postType = 'text'
-      content = sanitizeMomentBodyText(
-        fallbackInstantGenBodyContent(config.textLengthTarget),
-        textLimit,
-      )
     }
   }
 
@@ -199,7 +211,8 @@ export async function publishInstantCharacterMoment(
     authorAvatar: avatarUrl,
     postType,
     content,
-    imageUrls: postType === 'text' ? [] : imageUrls,
+    imageUrls: postType === 'text' || postType === 'music' ? [] : imageUrls,
+    attachedMusic,
     location: aiDraft.location,
     privacy: aiDraft.privacy,
     userContact,

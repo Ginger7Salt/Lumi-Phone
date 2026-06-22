@@ -2,7 +2,10 @@ import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Re
 import { FloatingMusicOrb } from '../../components/discoverListen/FloatingMusicOrb'
 import { DesktopLyricsWidget } from '../../components/discoverListen/DesktopLyricsWidget'
 import { ListenTogetherFullscreenHost } from '../../components/discoverListen/ListenTogetherFullscreenHost'
+import { ListenTogetherSyncDurationTracker } from '../../components/discoverListen/ListenTogetherSyncDurationTracker'
 import { ListenTogetherCommentsOverlayHost } from '../../components/discoverListen/ListenTogetherCommentsOverlayHost'
+import { ListenTogetherProfileOverlayHost } from '../../components/discoverListen/ListenTogetherProfileOverlayHost'
+import { ListenTogetherTrackOverlayHost } from '../../components/discoverListen/ListenTogetherTrackOverlayHost'
 import { ListenTogetherPlayModeToastHost } from '../../components/discoverListen/ListenTogetherPlayModeToastHost'
 import { WechatMemorySummaryToastHost } from '../apps/wechat/memory/WechatMemorySummaryToastHost'
 import { LinkPreviewQuotaToastHost } from '../apps/wechat/linkPreview/LinkPreviewQuotaToastHost'
@@ -116,8 +119,11 @@ export function PhoneShell({ children }: Props) {
   const innerContent = (
     <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {children}
+      <ListenTogetherSyncDurationTracker />
       <ListenTogetherFullscreenHost />
       <ListenTogetherCommentsOverlayHost />
+      <ListenTogetherProfileOverlayHost />
+      <ListenTogetherTrackOverlayHost />
       <DesktopLyricsWidget />
       <ListenTogetherPlayModeToastHost />
       <WechatMemorySummaryToastHost />

@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 
 import { buildMusicDiscoveryModel } from './musicDiscoveryModel'
 import { ListenNumericText } from './ListenNum'
+import { listenTogetherCnTextClass } from './listenTogetherTypography'
 import type { NeteaseToplistChart } from './neteaseToplistApi'
 import type { NeteaseHomeFeed } from './neteaseHomeApi'
 import type { NeteaseSongItem } from './neteaseMusicApi'
@@ -73,9 +74,9 @@ function SectionTitle({
 }) {
   return (
     <div className="mb-3 px-0.5">
-      <h2 className="font-serif text-[17px] font-medium tracking-tight text-[#2D2422]">{title}</h2>
+      <h2 className="text-[17px] font-medium tracking-tight text-[#2D2422]">{title}</h2>
       {subtitle ? (
-        <p className="mt-1 text-[12px] italic leading-relaxed text-rose-300">{subtitle}</p>
+        <p className="mt-1 text-[12px] leading-relaxed text-rose-300">{subtitle}</p>
       ) : null}
     </div>
   )
@@ -120,7 +121,7 @@ function HeartbeatHero({
         <p className="font-serif text-[11px] uppercase tracking-[0.28em] text-white/75">
           Heartbeat Rhythm
         </p>
-        <p className="mt-1 font-serif text-[20px] font-medium tracking-wide text-white">
+        <p className="mt-1 text-[20px] font-medium tracking-wide text-white">
           心动模式
         </p>
       </div>
@@ -155,7 +156,7 @@ function DualHeroCard({
         <p className="text-[9px] font-medium uppercase tracking-[0.22em] text-rose-100/90">
           {line1}
         </p>
-        <p className="mt-0.5 font-serif text-[15px] text-white/95">{line2}</p>
+        <p className="mt-0.5 text-[15px] text-white/95">{line2}</p>
       </div>
     </motion.button>
   )
@@ -202,7 +203,7 @@ export function MusicDiscoveryPage({
 
   return (
     <motion.div
-      className="pb-4"
+      className={`pb-4 ${listenTogetherCnTextClass}`}
       variants={pageVariants}
       initial="hidden"
       animate="show"
@@ -272,7 +273,7 @@ export function MusicDiscoveryPage({
                 >
                   <CoverImg src={pl.cover} />
                 </div>
-                <p className="mt-2 line-clamp-2 px-0.5 text-[12px] font-extralight leading-snug text-[#2D2422]/85">
+                <p className="mt-2 line-clamp-2 px-0.5 text-[12px] font-normal leading-snug text-[#2D2422]/85">
                   {pl.title}
                 </p>
               </button>
@@ -334,7 +335,7 @@ export function MusicDiscoveryPage({
                   <CoverImg src={chart.cover} alt={chart.name} />
                   <div className="absolute inset-0 bg-gradient-to-t from-[#2D2422]/75 via-[#2D2422]/10 to-transparent" />
                   <div className="absolute inset-x-0 bottom-0 p-3">
-                    <p className="font-serif text-[16px] font-medium leading-tight text-white">
+                    <p className="text-[16px] font-medium leading-tight text-white">
                       {chart.name}
                     </p>
                     {chart.songs[0] ? (

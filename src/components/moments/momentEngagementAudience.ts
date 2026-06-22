@@ -223,8 +223,12 @@ function buildTemplateFallbackComment(
   return '👍'
 }
 
-function momentHasCommentableContent(momentContent: string, imageCount: number): boolean {
-  return momentContent.trim().length > 0 || imageCount > 0
+function momentHasCommentableContent(
+  momentContent: string,
+  imageCount: number,
+  hasAttachedMusic = false,
+): boolean {
+  return momentContent.trim().length > 0 || imageCount > 0 || hasAttachedMusic
 }
 
 /**
@@ -236,6 +240,7 @@ export function injectFallbackCommentDrafts(
   params: {
     momentContent: string
     imageCount: number
+    hasAttachedMusic?: boolean
     playerIdentityId?: string | null
     mentionedCharacterIds?: ReadonlySet<string>
     relationships: ReadonlyArray<Relationship>
@@ -245,7 +250,9 @@ export function injectFallbackCommentDrafts(
   const presetId = params.engagementRules?.presetId as UserMomentEngagementPresetId | undefined
   const minComments = minimumCommentCountForEngagementPreset(presetId)
   if (minComments <= 0) return drafts
-  if (!momentHasCommentableContent(params.momentContent, params.imageCount)) return drafts
+  if (!momentHasCommentableContent(params.momentContent, params.imageCount, params.hasAttachedMusic)) {
+    return drafts
+  }
 
   const commentAuthors = new Set<string>()
   for (const d of drafts) {

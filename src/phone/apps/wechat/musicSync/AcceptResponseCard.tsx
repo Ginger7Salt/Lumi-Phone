@@ -40,8 +40,10 @@ export function AcceptResponseCard({ data, coverUrl: coverUrlProp }: Props) {
           </div>
         )}
         <div className="min-w-0 flex-1 pt-0.5">
-          <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-emerald-500/85">
-            Connected
+          <p className="text-[9px] font-semibold tracking-[0.12em] text-emerald-500/85">
+            <span className="text-[10px] text-emerald-600/90">已加入</span>
+            <span className="mx-1 font-normal text-stone-300">·</span>
+            <span className="uppercase tracking-[0.16em]">Connected</span>
           </p>
           <p className="mt-1 text-[15px] font-medium leading-snug text-[#2D2422]">一起听</p>
           <p className="mt-0.5 truncate text-[12px] text-stone-400">
@@ -50,9 +52,7 @@ export function AcceptResponseCard({ data, coverUrl: coverUrlProp }: Props) {
         </div>
       </div>
       <div className="border-t border-rose-100/50 bg-gradient-to-r from-emerald-50/30 via-rose-50/25 to-white/30 px-3.5 py-2.5">
-        <p className="font-serif text-[11px] italic leading-relaxed tracking-wide text-stone-400/95">
-          Resonance established.
-        </p>
+        <p className="text-[11px] leading-relaxed text-stone-500/95">已开始同步播放</p>
       </div>
     </motion.div>
   )

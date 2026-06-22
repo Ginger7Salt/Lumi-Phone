@@ -1,8 +1,9 @@
 import type { MusicTrack } from '../../../../stores/useMusicStore'
+import { loadNeteaseCookie } from '../../../../components/discoverListen/neteaseApiClient'
 import { emitWeChatStorageChanged, personaDb } from '../newFriendsPersona/idb'
 import { resolveAccountScopedPrivateConversationKey } from '../wechatAccountPrivateChatStorage'
 import { findAccountById, loadAccountsBundle, resolveAccountSessionIdentityId } from '../wechatAccountPersistence'
-import { requestOpenWeChatPersonaChat } from '../wechatFocusChatNavigation'
+import { resolveSongLyricsExcerpt } from './listenShareAiContext'
 
 export type SendMusicSyncInviteParams = {
   characterId: string
@@ -16,7 +17,7 @@ export type SendMusicSyncInviteResult = {
   messageId: string
 }
 
-/** 向微信私聊写入音乐共听邀约卡，并跳转至对应会话 */
+/** 向微信私聊写入音乐共听邀约卡（是否跳转聊天由调用方 toast 提供） */
 export async function sendMusicSyncInvite(
   params: SendMusicSyncInviteParams,
 ): Promise<SendMusicSyncInviteResult> {
@@ -43,6 +44,11 @@ export async function sendMusicSyncInvite(
   const inviteId = `msi-${nowMs}-${Math.random().toString(36).slice(2, 8)}`
   const messageId = `wxm-${nowMs}-msi-${Math.random().toString(36).slice(2, 8)}`
 
+  const cookie = loadNeteaseCookie().trim()
+  const lyricsExcerpt = params.track.id
+    ? await resolveSongLyricsExcerpt(params.track.id, cookie)
+    : ''
+
   await personaDb.appendWeChatChatMessage({
     id: messageId,
     characterId,
@@ -56,6 +62,7 @@ export async function sendMusicSyncInvite(
       trackTitle: params.track.title,
       trackArtist: params.track.artist,
       coverUrl: params.track.cover,
+      ...(lyricsExcerpt ? { lyricsExcerpt } : {}),
     },
     timestamp: nowMs,
     isRead: true,
@@ -64,7 +71,6 @@ export async function sendMusicSyncInvite(
 
   await personaDb.markWeChatConversationReadToLatest(conversationKey)
   emitWeChatStorageChanged()
-  requestOpenWeChatPersonaChat(characterId)
 
   return { inviteId, messageId }
 }

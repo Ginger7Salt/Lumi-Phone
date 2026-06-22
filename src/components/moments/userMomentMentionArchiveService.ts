@@ -5,15 +5,16 @@ import { composeMemoryWithSourcePrefix } from '../../phone/apps/wechat/memory/me
 
 import type { MomentItemModel } from './mockMoments'
 import {
+  buildMomentMemoryBodyText,
   buildUserMomentMentionMemoryContent,
   mergeInteractorMomentMemoryKeywords,
   momentMemoryIdForMomentInteractor,
   summarizeMentionedCharacterMomentResponse,
 } from './momentMemoryContentBuilder'
 import { extractMomentMemoryKeywords } from './momentMemoryKeywordAi'
+import { enrichMomentAttachedMusic } from './momentAttachedMusic'
 import { getUserMomentMentionedContacts } from './momentMentionUtils'
 import type { MomentsContactDirectory } from './momentsContactDirectory'
-import { sanitizeMomentBodyText } from './momentTextSanitize'
 import { formatMomentLocationDisplay } from './momentLocationUtils'
 
 const ARCHIVE_DEBOUNCE_MS = 5000
@@ -51,8 +52,13 @@ async function findMentionMomentMemory(
 }
 
 async function flushUserMomentMentionArchive(job: UserMomentMentionArchiveJob): Promise<void> {
-  const moment = job.moment
+  let moment = job.moment
   if (!moment.isUserAuthored) return
+
+  if (moment.attachedMusic) {
+    const enrichedMusic = await enrichMomentAttachedMusic(moment.attachedMusic)
+    moment = { ...moment, attachedMusic: enrichedMusic }
+  }
 
   const mentioned = getUserMomentMentionedContacts(moment)
   if (!mentioned.length) return
@@ -60,7 +66,7 @@ async function flushUserMomentMentionArchive(job: UserMomentMentionArchiveJob): 
   const interactionNow = job.now ?? Date.now()
   const archivedAt = Date.now()
   const playerDisplayName = job.playerDisplayName.trim() || '用户'
-  const originalText = sanitizeMomentBodyText(moment.content) || '（图片动态）'
+  const originalText = buildMomentMemoryBodyText(moment) || '（图片动态）'
   const locationLabel = formatMomentLocationDisplay(moment.location)
 
   const keywords = await extractMomentMemoryKeywords({

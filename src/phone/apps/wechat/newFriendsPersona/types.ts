@@ -215,6 +215,10 @@ export type ChatConversationSettingsRow = {
   proactiveMessageLastFiredAtMs?: number
   /** 灵动间隔：开启后每次随机等待，不固定频率 */
   proactiveMessageVariableIntervalEnabled?: boolean
+  /** 灵动间隔：空闲时随机下限（秒）；未设置则用系统默认 */
+  proactiveMessageVariableIntervalMinSeconds?: number
+  /** 灵动间隔：空闲时随机上限（秒）；未设置则用系统默认 */
+  proactiveMessageVariableIntervalMaxSeconds?: number
   /** 灵动间隔：当前周期已抽中的等待秒数（下次触达用） */
   proactiveMessageNextIntervalSeconds?: number
   /** 最后一条消息时间戳，用于会话列表排序（与消息表同步更新） */
@@ -660,6 +664,10 @@ export type WeChatMusicSyncInvitePayload = {
   trackTitle: string
   trackArtist: string
   coverUrl: string
+  /** 曲目歌词节选 */
+  lyricsExcerpt?: string
+  /** 角色主动邀约：用户点选接受/拒绝后的状态 */
+  userResponded?: 'accepted' | 'declined'
 }
 
 export type WeChatMusicSyncAcceptPayload = {
@@ -696,6 +704,59 @@ export type WeChatListenCommentSharePayload = {
   targetTitle: string
   targetArtist?: string
   targetCover?: string
+  /** 单曲歌词节选（targetType=song 时） */
+  lyricsExcerpt?: string
+}
+
+/** 听一听分享摘录中的单曲行（供角色读歌单曲目） */
+export type WeChatListenShareTrackLine = {
+  title: string
+  artist?: string
+  songId?: number
+  /** 曲目歌词节选（歌单分享时仅前几首） */
+  lyricsExcerpt?: string
+}
+
+/** 听一听歌手/用户主页分享卡片（持久化于 chatMessages.listenProfileShare） */
+export type WeChatListenProfileSharePayload = {
+  kind: 'listen_profile_share'
+  shareId: string
+  profileType: 'artist' | 'user'
+  profileId: number
+  displayName: string
+  avatar?: string
+  subtitle?: string
+  /** 歌手简介（分享时从网易云拉取） */
+  briefDesc?: string
+  aliases?: string[]
+  identities?: string[]
+  musicSize?: number
+  albumSize?: number
+  followers?: number
+  /** 热门曲目名 */
+  topSongTitles?: string[]
+  /** 代表专辑名 */
+  albumTitles?: string[]
+}
+
+/** 听一听单曲/歌单分享卡片（持久化于 chatMessages.listenTrackShare） */
+export type WeChatListenTrackSharePayload = {
+  kind: 'listen_track_share'
+  shareId: string
+  targetType: 'song' | 'playlist'
+  targetId: number
+  targetTitle: string
+  targetArtist?: string
+  targetCover?: string
+  trackCount?: number
+  /** 歌单创建者 */
+  playlistCreator?: string
+  /** 歌单简介 */
+  playlistDescription?: string
+  /** 歌单曲目摘录（最多若干首，供 AI 阅读） */
+  trackLines?: WeChatListenShareTrackLine[]
+  /** 单曲歌词节选（targetType=song 时） */
+  lyricsExcerpt?: string
 }
 
 /** 收藏记忆切片转发卡（持久化于 chatMessages.sharedRecord） */
@@ -779,6 +840,9 @@ export type WeChatChatMessage = {
   musicSync?: WeChatMusicSyncPayload
   /** 听一听评论分享卡片 */
   listenCommentShare?: WeChatListenCommentSharePayload
+  listenProfileShare?: WeChatListenProfileSharePayload
+  /** 听一听单曲/歌单分享卡片 */
+  listenTrackShare?: WeChatListenTrackSharePayload
   /** 收藏记忆切片转发卡 */
   sharedRecord?: WeChatSharedRecordPayload
   /** 合并转发聊天记录卡片 */

@@ -22,7 +22,9 @@ import { MomentVisitorRecordButton, type MomentRevealPendingResult } from './Mom
 import { MomentInteractionGeneratingStrip } from './MomentInteractionGeneratingStrip'
 import { useMomentInteractionGenerationState } from './useMomentInteractionGenerationPending'
 import { MomentImageViewer } from './MomentImageViewer'
+import { MomentMusicCapsule } from './MomentMusicCapsule'
 import { useResolvedMomentImages } from './resolveMomentImageSrc'
+import { requestOpenListenTogetherTrack } from '../discoverListen/listenTogetherTrackNavigation'
 
 type MomentItemProps = {
   item: MomentItemModel
@@ -118,6 +120,7 @@ export function MomentItem({
       ? `${cleanedContent.slice(0, MOMENT_BODY_COLLAPSE_CHARS)}...`
       : cleanedContent
   const images = useResolvedMomentImages(item.images)
+  const attachedMusic = item.attachedMusic
   const locationLabel = formatMomentLocationDisplay(item.location)
   const feedComments = !isUserAuthored ? (item.comments ?? []) : undefined
   const legacyComments = isUserAuthored ? [] : []
@@ -271,6 +274,25 @@ export function MomentItem({
                 </motion.button>
               ))}
             </div>
+          ) : null}
+
+          {attachedMusic ? (
+            <MomentMusicCapsule
+              music={attachedMusic}
+              className="mt-2 max-w-[280px]"
+              onPlay={
+                attachedMusic.songId
+                  ? () =>
+                      requestOpenListenTogetherTrack({
+                        targetType: 'song',
+                        targetId: attachedMusic.songId!,
+                        targetTitle: attachedMusic.title,
+                        targetArtist: attachedMusic.artist,
+                        targetCover: attachedMusic.cover,
+                      })
+                  : undefined
+              }
+            />
           ) : null}
 
           <div className="mt-2 flex items-start gap-2">

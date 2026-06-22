@@ -35,6 +35,8 @@ import type {
   WeChatVoicePayload,
   WeChatMusicSyncPayload,
   WeChatListenCommentSharePayload,
+  WeChatListenProfileSharePayload,
+  WeChatListenTrackSharePayload,
   WeChatSharedRecordPayload,
   WeChatChatHistoryPayload,
   WeChatChatHistoryParticipantRef,
@@ -56,8 +58,12 @@ import {
   clampProactiveMessageIntervalSeconds,
   resolveProactiveMessageIntervalSeconds,
 } from '../proactivePrivateMessageTypes'
-import { clampProactiveVariableIntervalSeconds } from '../proactiveVariableInterval'
+import { clampProactiveVariableBoundSeconds, clampProactiveVariableIntervalSeconds } from '../proactiveVariableInterval'
 import { normalizeForwardedMessageItem } from '../chatHistory/normalizeForwardedMessageItem'
+import {
+  parseListenProfileShareAiFieldsFromDb,
+  parseListenShareTrackLinesFromDb,
+} from '../musicSync/listenShareAiContext'
 import { buildCharacterFullTrashArchive, type PersonaDbTrashSource } from '../../recycleBin/archiveCharacterDeletion'
 import { suppressMomentMemoryArchiveFromMemory } from '../memory/momentMemoryArchiveSuppression'
 import { INDEXED_TRASH_RETENTION_MS, emitIndexedTrashChanged } from '../../recycleBin/recycleBinEvents'
@@ -1054,6 +1060,11 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
       const trackArtist = typeof r.trackArtist === 'string' ? r.trackArtist.trim().slice(0, 120) : ''
       const coverUrl = typeof r.coverUrl === 'string' ? r.coverUrl.trim().slice(0, 2000) : ''
       if (!Number.isFinite(trackIdRaw) || !trackTitle) return undefined
+      const lyricsExcerpt =
+        typeof r.lyricsExcerpt === 'string' ? r.lyricsExcerpt.trim().slice(0, 3600) : ''
+      const userRespondedRaw = typeof r.userResponded === 'string' ? r.userResponded.trim() : ''
+      const userResponded =
+        userRespondedRaw === 'accepted' || userRespondedRaw === 'declined' ? userRespondedRaw : undefined
       return {
         kind: 'music_invite',
         inviteId,
@@ -1061,6 +1072,8 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
         trackTitle,
         trackArtist,
         coverUrl,
+        ...(lyricsExcerpt ? { lyricsExcerpt } : {}),
+        ...(userResponded ? { userResponded } : {}),
       }
     }
     const replyText = typeof r.replyText === 'string' ? r.replyText.trim().slice(0, 500) : ''
@@ -1101,6 +1114,8 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
       typeof r.commentAuthorAvatar === 'string' ? r.commentAuthorAvatar.trim().slice(0, 2000) : ''
     const targetArtist = typeof r.targetArtist === 'string' ? r.targetArtist.trim().slice(0, 120) : ''
     const targetCover = typeof r.targetCover === 'string' ? r.targetCover.trim().slice(0, 2000) : ''
+    const lyricsExcerpt =
+      typeof r.lyricsExcerpt === 'string' ? r.lyricsExcerpt.trim().slice(0, 3600) : ''
     return {
       kind: 'listen_comment_share',
       shareId,
@@ -1113,6 +1128,69 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
       targetTitle,
       ...(targetArtist ? { targetArtist } : {}),
       ...(targetCover ? { targetCover } : {}),
+      ...(lyricsExcerpt ? { lyricsExcerpt } : {}),
+    }
+  })()
+  const rawListenProfileShare = (m as { listenProfileShare?: unknown }).listenProfileShare
+  const listenProfileShare: WeChatListenProfileSharePayload | undefined = (() => {
+    if (!rawListenProfileShare || typeof rawListenProfileShare !== 'object') return undefined
+    const r = rawListenProfileShare as Record<string, unknown>
+    const kind = typeof r.kind === 'string' ? r.kind.trim() : ''
+    if (kind !== 'listen_profile_share') return undefined
+    const shareId = typeof r.shareId === 'string' ? r.shareId.trim() : ''
+    const displayName = typeof r.displayName === 'string' ? r.displayName.trim().slice(0, 120) : ''
+    const profileType = r.profileType === 'user' ? 'user' : r.profileType === 'artist' ? 'artist' : null
+    const profileIdRaw = typeof r.profileId === 'number' ? r.profileId : Number(r.profileId)
+    if (!shareId || !displayName || !profileType) return undefined
+    if (!Number.isFinite(profileIdRaw)) return undefined
+    const avatar = typeof r.avatar === 'string' ? r.avatar.trim().slice(0, 2000) : ''
+    const subtitle = typeof r.subtitle === 'string' ? r.subtitle.trim().slice(0, 120) : ''
+    const aiFields = parseListenProfileShareAiFieldsFromDb(r)
+    return {
+      kind: 'listen_profile_share',
+      shareId,
+      profileType,
+      profileId: Math.floor(profileIdRaw),
+      displayName,
+      ...(avatar ? { avatar } : {}),
+      ...(subtitle ? { subtitle } : {}),
+      ...aiFields,
+    }
+  })()
+  const rawListenTrackShare = (m as { listenTrackShare?: unknown }).listenTrackShare
+  const listenTrackShare: WeChatListenTrackSharePayload | undefined = (() => {
+    if (!rawListenTrackShare || typeof rawListenTrackShare !== 'object') return undefined
+    const r = rawListenTrackShare as Record<string, unknown>
+    const kind = typeof r.kind === 'string' ? r.kind.trim() : ''
+    if (kind !== 'listen_track_share') return undefined
+    const shareId = typeof r.shareId === 'string' ? r.shareId.trim() : ''
+    const targetTitle = typeof r.targetTitle === 'string' ? r.targetTitle.trim().slice(0, 120) : ''
+    const targetType = r.targetType === 'playlist' ? 'playlist' : r.targetType === 'song' ? 'song' : null
+    const targetIdRaw = typeof r.targetId === 'number' ? r.targetId : Number(r.targetId)
+    if (!shareId || !targetTitle || !targetType) return undefined
+    if (!Number.isFinite(targetIdRaw)) return undefined
+    const targetArtist = typeof r.targetArtist === 'string' ? r.targetArtist.trim().slice(0, 120) : ''
+    const targetCover = typeof r.targetCover === 'string' ? r.targetCover.trim().slice(0, 2000) : ''
+    const trackCountRaw = typeof r.trackCount === 'number' ? r.trackCount : Number(r.trackCount)
+    const playlistCreator = typeof r.playlistCreator === 'string' ? r.playlistCreator.trim().slice(0, 80) : ''
+    const playlistDescription =
+      typeof r.playlistDescription === 'string' ? r.playlistDescription.trim().slice(0, 320) : ''
+    const trackLines = parseListenShareTrackLinesFromDb(r.trackLines)
+    const lyricsExcerpt =
+      typeof r.lyricsExcerpt === 'string' ? r.lyricsExcerpt.trim().slice(0, 3600) : ''
+    return {
+      kind: 'listen_track_share',
+      shareId,
+      targetType,
+      targetId: Math.floor(targetIdRaw),
+      targetTitle,
+      ...(targetArtist ? { targetArtist } : {}),
+      ...(targetCover ? { targetCover } : {}),
+      ...(Number.isFinite(trackCountRaw) ? { trackCount: Math.max(0, Math.floor(trackCountRaw)) } : {}),
+      ...(playlistCreator ? { playlistCreator } : {}),
+      ...(playlistDescription ? { playlistDescription } : {}),
+      ...(trackLines ? { trackLines } : {}),
+      ...(lyricsExcerpt ? { lyricsExcerpt } : {}),
     }
   })()
   const rawSharedRecord = (m as { sharedRecord?: unknown }).sharedRecord
@@ -1268,6 +1346,8 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     voice,
     musicSync,
     listenCommentShare,
+    listenProfileShare,
+    listenTrackShare,
     sharedRecord,
     chatHistory,
     images: images.length ? images : undefined,
@@ -1408,6 +1488,26 @@ function normalizeChatConversationSettingsRow(input: unknown): ChatConversationS
       ? {
           proactiveMessageVariableIntervalEnabled: !!(r as { proactiveMessageVariableIntervalEnabled?: boolean })
             .proactiveMessageVariableIntervalEnabled,
+        }
+      : {}),
+    ...(typeof (r as { proactiveMessageVariableIntervalMinSeconds?: unknown }).proactiveMessageVariableIntervalMinSeconds ===
+      'number' &&
+    Number.isFinite((r as { proactiveMessageVariableIntervalMinSeconds?: number }).proactiveMessageVariableIntervalMinSeconds) &&
+    ((r as { proactiveMessageVariableIntervalMinSeconds?: number }).proactiveMessageVariableIntervalMinSeconds ?? 0) > 0
+      ? {
+          proactiveMessageVariableIntervalMinSeconds: clampProactiveVariableBoundSeconds(
+            (r as { proactiveMessageVariableIntervalMinSeconds: number }).proactiveMessageVariableIntervalMinSeconds,
+          ),
+        }
+      : {}),
+    ...(typeof (r as { proactiveMessageVariableIntervalMaxSeconds?: unknown }).proactiveMessageVariableIntervalMaxSeconds ===
+      'number' &&
+    Number.isFinite((r as { proactiveMessageVariableIntervalMaxSeconds?: number }).proactiveMessageVariableIntervalMaxSeconds) &&
+    ((r as { proactiveMessageVariableIntervalMaxSeconds?: number }).proactiveMessageVariableIntervalMaxSeconds ?? 0) > 0
+      ? {
+          proactiveMessageVariableIntervalMaxSeconds: clampProactiveVariableBoundSeconds(
+            (r as { proactiveMessageVariableIntervalMaxSeconds: number }).proactiveMessageVariableIntervalMaxSeconds,
+          ),
         }
       : {}),
     ...(typeof (r as { proactiveMessageNextIntervalSeconds?: unknown }).proactiveMessageNextIntervalSeconds ===
@@ -4241,7 +4341,8 @@ export class PersonaDb {
       >
     > & {
       redPacket?: Partial<WeChatRedPacketPayload>
-    voice?: Partial<WeChatVoicePayload>
+      voice?: Partial<WeChatVoicePayload>
+      musicSync?: Partial<WeChatMusicSyncPayload>
     },
   ): Promise<void> {
     const tid = messageId.trim()
@@ -4263,6 +4364,12 @@ export class PersonaDb {
             ? ({ ...existing.voice, ...patch.voice } as WeChatVoicePayload)
             : (patch.voice as WeChatVoicePayload)
           : existing.voice,
+      musicSync:
+        patch.musicSync !== undefined
+          ? existing.musicSync
+            ? ({ ...existing.musicSync, ...patch.musicSync } as WeChatMusicSyncPayload)
+            : (patch.musicSync as WeChatMusicSyncPayload)
+          : existing.musicSync,
     }
     const normalized = normalizeWeChatChatMessage(merged)
     if (!normalized) return
@@ -7472,6 +7579,7 @@ export class PersonaDb {
       clearImageRoundTriggerPercent?: boolean
       clearImageRoundCountRange?: boolean
       clearProactiveMessageIntervalSeconds?: boolean
+      clearProactiveMessageVariableIntervalBounds?: boolean
     } & Partial<
       Pick<
         ChatConversationSettingsRow,
@@ -7493,6 +7601,8 @@ export class PersonaDb {
         | 'proactiveMessageIntervalSeconds'
         | 'proactiveMessageLastFiredAtMs'
         | 'proactiveMessageVariableIntervalEnabled'
+        | 'proactiveMessageVariableIntervalMinSeconds'
+        | 'proactiveMessageVariableIntervalMaxSeconds'
         | 'proactiveMessageNextIntervalSeconds'
         | 'lastMessageTime'
         | 'uiOnlyHiddenBeforeTimestamp'
@@ -7615,6 +7725,32 @@ export class PersonaDb {
         : existing?.proactiveMessageVariableIntervalEnabled !== undefined
           ? { proactiveMessageVariableIntervalEnabled: existing.proactiveMessageVariableIntervalEnabled }
           : {}),
+      ...(params.clearProactiveMessageVariableIntervalBounds
+        ? {}
+        : typeof params.proactiveMessageVariableIntervalMinSeconds === 'number' &&
+            Number.isFinite(params.proactiveMessageVariableIntervalMinSeconds) &&
+            params.proactiveMessageVariableIntervalMinSeconds > 0
+          ? {
+              proactiveMessageVariableIntervalMinSeconds: clampProactiveVariableBoundSeconds(
+                params.proactiveMessageVariableIntervalMinSeconds,
+              ),
+            }
+          : existing?.proactiveMessageVariableIntervalMinSeconds !== undefined
+            ? { proactiveMessageVariableIntervalMinSeconds: existing.proactiveMessageVariableIntervalMinSeconds }
+            : {}),
+      ...(params.clearProactiveMessageVariableIntervalBounds
+        ? {}
+        : typeof params.proactiveMessageVariableIntervalMaxSeconds === 'number' &&
+            Number.isFinite(params.proactiveMessageVariableIntervalMaxSeconds) &&
+            params.proactiveMessageVariableIntervalMaxSeconds > 0
+          ? {
+              proactiveMessageVariableIntervalMaxSeconds: clampProactiveVariableBoundSeconds(
+                params.proactiveMessageVariableIntervalMaxSeconds,
+              ),
+            }
+          : existing?.proactiveMessageVariableIntervalMaxSeconds !== undefined
+            ? { proactiveMessageVariableIntervalMaxSeconds: existing.proactiveMessageVariableIntervalMaxSeconds }
+            : {}),
       ...(typeof params.proactiveMessageNextIntervalSeconds === 'number' &&
       Number.isFinite(params.proactiveMessageNextIntervalSeconds) &&
       params.proactiveMessageNextIntervalSeconds > 0

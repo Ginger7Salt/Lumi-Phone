@@ -20,6 +20,7 @@ import type { MomentComment, MomentItemModel } from './mockMoments'
 import type { ElicitReplyInteractionDraft, MomentInteraction } from './momentInteractionTypes'
 import { materializeElicitReplyInteractions } from './momentInteractionTypes'
 import type { MomentContactRef } from './newMomentTypes'
+import { resolveMomentItemContentForAi } from './momentAttachedMusic'
 
 export type RunMomentCommentReplyPipelineParams = {
   wechatCtx: AnonymousQaWechatContext
@@ -68,6 +69,8 @@ export async function runMomentCommentReplyPipeline(
     return { comments, interactions, highlightInteractionId: null }
   }
 
+  const momentContentForAi = await resolveMomentItemContentForAi(moment)
+
   const authorName = charId
     ? contactDirectory.getDisplayName(charId)
     : moment.authorName.trim() || userDisplayName
@@ -104,7 +107,7 @@ export async function runMomentCommentReplyPipeline(
     const replyTexts = await generateMomentAuthorReplies({
       wechatCtx,
       characterId: charId,
-      momentContent: moment.content,
+      momentContent: momentContentForAi,
       momentImages: moment.images,
       userDisplayName,
       pendingComments: publisherPending,
@@ -143,7 +146,7 @@ export async function runMomentCommentReplyPipeline(
 
     const rawDrafts = await generateMomentThreadReplies({
       wechatCtx,
-      momentContent: moment.content,
+      momentContent: momentContentForAi,
       momentImages: moment.images,
       publisherDisplayName: authorName,
       publisherCharacterId: charId ?? targetCharId,
@@ -154,6 +157,7 @@ export async function runMomentCommentReplyPipeline(
       commentCatalog,
       participants,
       momentRelationships,
+      momentPublishedAt: moment.timestamp,
     })
 
     let drafts = filterThreadRepliesByRelationshipBinding(

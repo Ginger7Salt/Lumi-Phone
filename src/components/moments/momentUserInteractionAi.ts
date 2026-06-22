@@ -36,11 +36,16 @@ import { finalizeMomentInteractionDrafts } from './momentVisitorFootprints'
 import { MOMENT_TEXT_OUTPUT_HINT, sanitizeMomentText } from './momentTextSanitize'
 import { runMomentsVisionChat } from './momentVisionChat'
 import { personaDb } from '../../phone/apps/wechat/newFriendsPersona/idb'
+import { MOMENT_SONG_SHARE_AI_COMMENT_RULES } from './momentAttachedMusic'
 
 const ENGAGEMENT_AI_CONCURRENCY = 4
 
-function momentHasCommentableContent(momentContent: string, imageCount: number): boolean {
-  return momentContent.trim().length > 0 || imageCount > 0
+function momentHasCommentableContent(
+  momentContent: string,
+  imageCount: number,
+  hasAttachedMusic = false,
+): boolean {
+  return momentContent.trim().length > 0 || imageCount > 0 || hasAttachedMusic
 }
 
 function draftsHaveComment(drafts: AiMomentInteractionDraft[]): boolean {
@@ -104,6 +109,8 @@ const USER_MOMENT_INTERACTION_TASK = `
 - **禁止**因角色名/昵称含「狗/猫」等就写「帮你咬他」「哇太乖了」式模板，除非私聊里你本就这种说话方式。
 - comment 最多 1～2 句，像真人随手评，不要戏精表演。
 - comment **必须**承接上方朋友圈正文的具体内容/情绪（如用户说困→关心睡觉、调侃熬夜等），**禁止**「看到了」「收到」「不错哦」等空话。
+- 若正文含「分享单曲」及歌词节选：评论须基于**该曲名、歌手与已给出的歌词**有感而发；**禁止**编造未出现的歌词或乱评。
+${MOMENT_SONG_SHARE_AI_COMMENT_RULES}
 - 若 system 中【人脉关系】写明你如何称呼其他角色，评区提到对方时必须用该称呼，禁止臆造「学姐/学长」等与关系不符的叫法。
 - 只输出 JSON，不要 Markdown。
 ${MOMENT_TEXT_OUTPUT_HINT}
@@ -149,6 +156,7 @@ function buildSingleCharacterInteractionTask(params: {
   privateChatToneAnchor: string
   engagementRules?: ResolvedUserMomentEngagementRules
   commentOnly?: boolean
+  hasAttachedMusic?: boolean
 }): string {
   const mentionLine = params.mentioned
     ? '\n- 用户在这条朋友圈里 @ 提醒了你；你知晓被提及，但互动深浅仍须符合关系与人设。'
@@ -178,6 +186,9 @@ function buildSingleCharacterInteractionTask(params: {
         : isHighCommentEngagementPreset(params.engagementRules?.presetId)
         ? '可 0～2 条；高互动模式下优先 comment 或 like+comment，**不要只点赞**；有 comment 时须回应正文。'
         : '可 0～2 条；有 comment 时须回应正文具体内容。',
+    params.hasAttachedMusic
+      ? '本条含分享歌曲；评论须聊歌/歌词/歌手，勿写与歌曲无关的客套。'
+      : null,
     'delaySeconds 15～600（10 分钟内），**每条须明显错开**（可 20 秒、1 分半、4 分钟等，勿整分钟机械递增）。',
     '禁止 type=viewed；静默浏览由系统另行记录，你只需决定要不要点赞/评论。',
   ]
@@ -255,13 +266,13 @@ async function generatePersonaBoundInteractionForCharacter(params: {
   relationships: ReadonlyArray<Relationship>
   engagementRules?: ResolvedUserMomentEngagementRules
   commentOnly?: boolean
+  hasAttachedMusic?: boolean
 }): Promise<AiMomentInteractionDraft[]> {
   const haystack = [params.momentContent.trim(), '朋友圈 动态 互动 评论'].filter(Boolean).join('\n')
   const pack = await buildAnonymousQaPersonaPromptPack({
     characterId: params.character.charId,
     wechatCtx: params.wechatCtx,
     relevanceHaystack: haystack,
-    disableMemoryVectorRecall: true,
   })
   if (!pack.character) return []
 
@@ -313,6 +324,7 @@ async function generatePersonaBoundInteractionForCharacter(params: {
     privateChatToneAnchor,
     engagementRules: params.engagementRules,
     commentOnly: params.commentOnly,
+    hasAttachedMusic: params.hasAttachedMusic,
   })
 
   const runOnce = async (retryNote?: string) => {
@@ -344,7 +356,7 @@ async function generatePersonaBoundInteractionForCharacter(params: {
 
   const highComment = isHighCommentEngagementPreset(params.engagementRules?.presetId)
   const canComment =
-    momentHasCommentableContent(params.momentContent, params.imageCount) &&
+    momentHasCommentableContent(params.momentContent, params.imageCount, params.hasAttachedMusic) &&
     (engagementTier !== 'distant' || params.mentioned)
 
   if (
@@ -379,12 +391,15 @@ async function supplementUserMomentEngagementComments(params: {
   momentContent: string
   momentImages?: string[]
   imageCount: number
+  hasAttachedMusic?: boolean
   momentPublishedAt: number
   engagementRules?: ResolvedUserMomentEngagementRules
 }): Promise<AiMomentInteractionDraft[]> {
   const minComments = minimumCommentCountForEngagementPreset(params.engagementRules?.presetId)
   if (minComments <= 0) return params.drafts
-  if (!momentHasCommentableContent(params.momentContent, params.imageCount)) return params.drafts
+  if (!momentHasCommentableContent(params.momentContent, params.imageCount, params.hasAttachedMusic)) {
+    return params.drafts
+  }
 
   const commentAuthors = collectCommentAuthorIds(params.drafts)
   let commentCount = commentAuthors.size
@@ -431,6 +446,7 @@ async function supplementUserMomentEngagementComments(params: {
         relationships: params.relationships,
         engagementRules: params.engagementRules,
         commentOnly: true,
+        hasAttachedMusic: params.hasAttachedMusic,
       })
       for (const d of extra) {
         if (d.type !== 'comment' || !d.content?.trim()) continue
@@ -460,6 +476,7 @@ export async function generatePersonaBoundUserMomentInteractions(params: {
   mentionedCharacterIds?: Set<string>
   momentPublishedAt: number
   engagementRules?: ResolvedUserMomentEngagementRules
+  hasAttachedMusic?: boolean
 }): Promise<AiMomentInteractionDraft[]> {
   const cfg = params.wechatCtx.apiConfig
   assertMomentsChatApiConfigured(cfg)
@@ -494,6 +511,7 @@ export async function generatePersonaBoundUserMomentInteractions(params: {
           mentioned: mentionedIds.has(character.charId.trim()),
           relationships,
           engagementRules: params.engagementRules,
+          hasAttachedMusic: params.hasAttachedMusic,
         })
       } catch (err) {
         console.error(
@@ -520,6 +538,7 @@ export async function finalizeUserMomentEngagementDrafts(params: {
   momentContent: string
   momentImages?: string[]
   imageCount: number
+  hasAttachedMusic?: boolean
   momentPublishedAt: number
 }): Promise<AiMomentInteractionDraft[]> {
   const next = finalizeMomentInteractionDrafts(params.drafts, params.allowed, {
@@ -533,6 +552,7 @@ export async function finalizeUserMomentEngagementDrafts(params: {
     injectFallbackCommentDrafts(drafts, params.allowed, {
       momentContent: params.momentContent,
       imageCount: params.imageCount,
+      hasAttachedMusic: params.hasAttachedMusic,
       playerIdentityId: params.playerIdentityId,
       mentionedCharacterIds: params.mentionedCharacterIds,
       relationships: params.relationships,
@@ -576,6 +596,7 @@ export async function finalizeUserMomentEngagementDrafts(params: {
       momentContent: params.momentContent,
       momentImages: params.momentImages,
       imageCount: params.imageCount,
+      hasAttachedMusic: params.hasAttachedMusic,
       momentPublishedAt: params.momentPublishedAt,
       engagementRules: params.engagementRules,
     })

@@ -6,6 +6,7 @@ import { findAccountById, loadAccountsBundle } from '../../phone/apps/wechat/wec
 import type { WeChatPersonaContact } from '../../phone/types'
 import { MomentsMinimalSwitch } from './MomentsMinimalSwitch'
 import { ProactiveCharacterMomentIntervalControl } from './ProactiveCharacterMomentIntervalControl'
+import { ProactiveCharacterMomentMusicLanguageRatioPanel } from './ProactiveCharacterMomentMusicLanguageRatioPanel'
 import {
   ProactiveMomentGlobalSavedSummary,
   ProactiveMomentPerCharacterSavedSummary,
@@ -30,10 +31,18 @@ type Props = {
   accountId?: string | null
 }
 
+type ProactivePublishSubTab = 'schedule' | 'music'
+
+const PROACTIVE_PUBLISH_SUB_TABS: { id: ProactivePublishSubTab; label: string }[] = [
+  { id: 'schedule', label: '调度设置' },
+  { id: 'music', label: '分享歌曲' },
+]
+
 export function MomentsProactivePublishPanel({ accountId }: Props) {
   const { settings, patchProactiveCharacterMoments, patchCharacterProactiveMomentSchedule } =
     useMomentsSettingsStore()
   const pm = settings.proactiveCharacterMoments
+  const [activeSubTab, setActiveSubTab] = useState<ProactivePublishSubTab>('schedule')
   const [savingGlobal, setSavingGlobal] = useState(false)
   const [savingCharacterKey, setSavingCharacterKey] = useState<string | null>(null)
   const [contacts, setContacts] = useState<ContactRow[]>([])
@@ -141,7 +150,43 @@ export function MomentsProactivePublishPanel({ accountId }: Props) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      <div className="sticky top-0 z-[1] -mx-1 bg-white/95 px-1 pb-1 pt-0.5 backdrop-blur-sm">
+        <div className="flex gap-1 rounded-full bg-[#F3F4F6] p-1">
+          {PROACTIVE_PUBLISH_SUB_TABS.map((tab) => {
+            const active = activeSubTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveSubTab(tab.id)}
+                className={`flex-1 rounded-full py-2 text-[12px] font-medium transition-colors outline-none ${
+                  active ? 'bg-white text-[#111827] shadow-sm' : 'text-[#6B7280]'
+                }`}
+              >
+                {tab.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {activeSubTab === 'music' ? (
+        <ProactiveCharacterMomentMusicLanguageRatioPanel
+          accountId={accId}
+          ratio={pm.musicShareLanguageRatio}
+          followUserMusicTaste={pm.followUserMusicTaste}
+          onRatioChange={(next) => {
+            patchProactiveCharacterMoments({ musicShareLanguageRatio: next })
+            window.dispatchEvent(new Event('moments-settings-changed'))
+          }}
+          onFollowUserMusicTasteChange={(next) => {
+            patchProactiveCharacterMoments({ followUserMusicTaste: next })
+            window.dispatchEvent(new Event('moments-settings-changed'))
+          }}
+        />
+      ) : (
+        <div className="space-y-6">
       <section className="rounded-3xl bg-white px-5 py-5 shadow-[0_8px_32px_rgba(0,0,0,0.04)]">
         <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-[#9CA3AF]">SCOPE</p>
         <h2 className="mt-1 text-[16px] font-semibold text-[#111827]">调度方式</h2>
@@ -347,6 +392,8 @@ export function MomentsProactivePublishPanel({ accountId }: Props) {
           主动发布与私聊中「帮我发个朋友圈」互不冲突。全局模式与指定角色模式二选一；指定角色模式下仅调度你已开启的角色。
         </p>
       </section>
+        </div>
+      )}
     </div>
   )
 }

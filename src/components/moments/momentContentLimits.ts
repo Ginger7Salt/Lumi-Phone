@@ -183,12 +183,6 @@ export function fallbackInstantGenBodyContent(targetChars: number): string {
   return '有些话说出来就轻了，写在这里当作给自己留档。'
 }
 
-export function estimateInstantGenMaxTokens(textLengthTarget: number): number {
-  const target = clampInstantGenTextLength(textLengthTarget)
-  const floor = target <= 5 ? 500 : 900
-  return Math.min(4800, Math.max(floor, Math.round(target * 2.4 + 1000)))
-}
-
 export function clampMomentBodyText(text: string, maxChars = MOMENT_BODY_MAX_CHARS): string {
   if (text.length <= maxChars) return text
   return text.slice(0, maxChars)

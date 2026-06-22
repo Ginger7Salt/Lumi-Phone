@@ -1,4 +1,5 @@
 import type { CharacterMomentPostType } from './momentCharacterPublishTypes'
+import type { MomentAttachedMusic } from './momentAttachedMusic'
 import type { MomentPrivacyMeta } from './newMomentTypes'
 import type { MomentInteraction } from './momentInteractionTypes'
 
@@ -24,6 +25,8 @@ export type MomentItemModel = {
   authorAvatar: string
   content: string
   images?: string[]
+  /** 附带的单曲分享（听一听） */
+  attachedMusic?: MomentAttachedMusic
   location?: string
   timestamp: number
   likes?: string[]

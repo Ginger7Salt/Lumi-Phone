@@ -2,11 +2,15 @@ import { generateMomentsImage } from '../../../components/moments/momentsImageGe
 import type { MomentsImageGenSettings } from '../../../components/moments/useMomentsSettingsStore'
 import { isCharacterImageGenEnabled } from '../api/imageGenPresetUtils'
 import { loadResolvedImageGenSettings } from '../api/loadResolvedImageGenSettings'
-import type { WeChatChatMessage, WeChatImageMime, WeChatVoicePayload } from './newFriendsPersona/types'
+import type { WeChatChatMessage, WeChatImageMime, WeChatVoicePayload, WeChatMusicSyncInvitePayload } from './newFriendsPersona/types'
 import type { ProactiveMessageRevealBubble } from './proactiveMessageRevealBridge'
 import { parseCharacterStickerLine, ensureStickerStoreHydrated } from './stickers/stickerStore'
 import { imageGenDataUrlToPayload, parseCharacterImageGenLine } from './wechatCharacterImageGen'
 import { stickerUrlToImagePayload } from './wechatStickerImagePayload'
+import {
+  isCharacterMusicSyncDirectiveArtifactLine,
+  parseCharacterMusicSyncDirectiveFromArtifactLine,
+} from './musicSync/wechatCharacterMusicSyncAi'
 import {
   normalizeVoiceScriptForTts,
   sanitizeVoiceControlForTextBubble,
@@ -21,6 +25,7 @@ export type PlannedProactiveBubble = {
   timestamp: number
   voice?: WeChatVoicePayload
   images?: { base64: string; type: WeChatImageMime }[]
+  musicSync?: WeChatMusicSyncInvitePayload
 }
 
 function flattenProactiveBubbleContent(content: string): string[] {
@@ -42,6 +47,12 @@ async function planProactiveBubbleLineAsync(
 ): Promise<PlannedProactiveBubble | null> {
   const trimmed = String(line ?? '').trim()
   if (!trimmed) return null
+  if (
+    parseCharacterMusicSyncDirectiveFromArtifactLine(trimmed) ||
+    isCharacterMusicSyncDirectiveArtifactLine(trimmed)
+  ) {
+    return null
+  }
 
   const voiceLineMatch = trimmed.match(/^(?:\[语音\]|【语音】)\s*(.*)$/)
   if (voiceLineMatch) {
@@ -123,6 +134,16 @@ export async function planProactiveRevealBubblesAsync(
   const out: PlannedProactiveBubble[] = []
   const plainTextsThisBatch: string[] = []
   for (const bubble of bubbles) {
+    if (bubble.musicSync) {
+      out.push({
+        id: bubble.id,
+        content: bubble.content.trim() || '[音乐共听邀约]',
+        thinking: bubble.thinking,
+        timestamp: bubble.timestamp,
+        musicSync: bubble.musicSync,
+      })
+      continue
+    }
     const lines = flattenProactiveBubbleContent(bubble.content)
     if (!lines.length) continue
     for (let i = 0; i < lines.length; i += 1) {

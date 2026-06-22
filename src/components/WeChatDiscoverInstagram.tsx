@@ -13,8 +13,8 @@ import { AnonymousQnAApp } from './anonymousQa/AnonymousQnAApp'
 import type { AnonymousQaWechatContext } from './anonymousQa/buildAnonymousQaPersonaContext'
 import type { MockContact } from './anonymousQa/types'
 import { DiscoverListenTogetherApp } from './discoverListen/DiscoverListenTogetherApp'
-import { LISTEN_TOGETHER_UNDER_DEV } from './discoverListen/listenTogetherConstants'
 import { LISTEN_TOGETHER_NAVIGATE_EVENT } from './discoverListen/listenTogetherNavigation'
+import { LISTEN_TOGETHER_SHARE_TO_MOMENTS_EVENT } from './discoverListen/listenTogetherMomentShareNavigation'
 import { useMomentsInteractionUnreadCount } from './moments/MomentsNoticeRuntime'
 import { MomentsSerifNumericText } from './moments/ArchiveTimelineDateColumn'
 import type { OnOpenMomentParticipantProfile } from './moments/momentProfileNavigation'
@@ -138,6 +138,11 @@ export function WeChatDiscoverInstagram({
     return () => window.removeEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigate)
   }, [])
   useEffect(() => {
+    const onShareToMoments = () => setActiveView('moments')
+    window.addEventListener(LISTEN_TOGETHER_SHARE_TO_MOMENTS_EVENT, onShareToMoments)
+    return () => window.removeEventListener(LISTEN_TOGETHER_SHARE_TO_MOMENTS_EVENT, onShareToMoments)
+  }, [])
+  useEffect(() => {
     if (restoreView !== 'moments') return
     setActiveView('moments')
     onRestoreViewConsumed?.()
@@ -161,16 +166,6 @@ export function WeChatDiscoverInstagram({
     )
   }
   if (activeView === 'listen-together') {
-    if (LISTEN_TOGETHER_UNDER_DEV) {
-      return (
-        <DiscoverFeatureUnderDev
-          className={`h-full min-h-0 ${className}`}
-          title="听一听"
-          hint="一起听、乐评互动与网易云联动功能正在开发，完整播放与分享流程将在此接入。"
-          onBack={() => setActiveView('list')}
-        />
-      )
-    }
     return (
       <DiscoverListenTogetherApp
         className={`h-full min-h-0 ${className}`}

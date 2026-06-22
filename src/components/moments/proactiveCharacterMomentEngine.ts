@@ -167,6 +167,7 @@ async function publishProactiveMomentForCharacter(params: {
   if (!ctx) return false
 
   const imageGenSettings = await loadResolvedMomentsImageGenSettings(loadResolvedImageGenSettings)
+  const settings = loadMomentsSettings()
 
   const result = await publishCharacterMoment({
     wechatCtx: ctx.wechatCtx,
@@ -176,6 +177,8 @@ async function publishProactiveMomentForCharacter(params: {
     blockedCharacterIds: ctx.blockedCharacterIds,
     imageGenSettings,
     triggeredByUserRequest: false,
+    musicShareLanguageRatio: settings.proactiveCharacterMoments.musicShareLanguageRatio,
+    followUserMusicTaste: settings.proactiveCharacterMoments.followUserMusicTaste,
   })
 
   await upsertUserMoment(params.accountId, result.item)

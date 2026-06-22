@@ -8,9 +8,12 @@ import {
   Music2,
   Pause,
   Play,
+  Search,
+  Share2,
   User,
+  X,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
 import { ListenTogetherSongCommentsPage } from './ListenTogetherSongCommentsPage'
@@ -32,6 +35,10 @@ import {
   type CachedArtistPage,
 } from './listenTogetherPageCache'
 import { ListenTogetherPageBackground } from './listenTogetherPageBg'
+import { ShareCommentContactsDrawer } from './ShareCommentContactsDrawer'
+import { ListenTogetherActionToast } from './ListenTogetherActionToast'
+import { sendListenProfileShareToContacts } from '../../phone/apps/wechat/musicSync/sendListenProfileShare'
+import type { InviteableContact } from './useInviteableWeChatContacts'
 import {
   fetchArtistAlbumsPage,
   fetchArtistDetail,
@@ -39,6 +46,7 @@ import {
   fetchArtistPartners,
   fetchArtistSongsPage,
   fetchArtistTopSongs,
+  filterPlaylistTracks,
   type NeteaseAlbumItem,
   type NeteaseArtistDetail,
   type NeteaseArtistItem,
@@ -417,6 +425,10 @@ export function ListenTogetherArtistDetailPage({
     null,
   )
   const [pageRefreshing, setPageRefreshing] = useState(false)
+  const [shareDrawerOpen, setShareDrawerOpen] = useState(false)
+  const [shareSending, setShareSending] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const songsLoadedRef = useRef(false)
   const albumsLoadedRef = useRef(false)
@@ -556,6 +568,7 @@ export function ListenTogetherArtistDetailPage({
     setNotes([])
     setOpenAlbum(null)
     setActiveTab('home')
+    setSearchQuery('')
     void loadCoreData(false)
   }, [artist.id, cookie, sessionActive])
 
@@ -657,6 +670,12 @@ export function ListenTogetherArtistDetailPage({
   }, [cookie, detail?.accountUserId, sessionActive, artist.id, persistArtistCache])
 
   useEffect(() => {
+    const q = searchQuery.trim()
+    if (!q || songsLoadedRef.current || songsLoading) return
+    void loadAllSongs(false)
+  }, [searchQuery, songsLoading, loadAllSongs])
+
+  useEffect(() => {
     if (activeTab === 'songs' && !songsLoadedRef.current && !songsLoading) {
       void loadAllSongs(false)
     }
@@ -679,6 +698,7 @@ export function ListenTogetherArtistDetailPage({
 
   const handlePageRefresh = useCallback(async () => {
     setPageRefreshing(true)
+    setSearchQuery('')
     songsLoadedRef.current = false
     albumsLoadedRef.current = false
     notesLoadedRef.current = false
@@ -696,6 +716,32 @@ export function ListenTogetherArtistDetailPage({
   const displayAvatar = detail?.avatar || artist.avatar
   const displayCover = detail?.cover ?? ''
   const hasBanner = Boolean(displayCover)
+
+  const handleShareConfirm = useCallback(
+    async (contacts: InviteableContact[]) => {
+      if (!artist.id) return
+      setShareSending(true)
+      try {
+        const result = await sendListenProfileShareToContacts(
+          contacts.map((c) => c.characterId),
+          {
+            profileType: 'artist',
+            profileId: artist.id,
+            displayName,
+            avatar: displayAvatar,
+            subtitle: '歌手主页',
+          },
+        )
+        setToast(`已分享给 ${result.sent} 位好友，可在微信查看`)
+        setShareDrawerOpen(false)
+      } catch (e) {
+        setToast(e instanceof Error ? e.message : '分享失败')
+      } finally {
+        setShareSending(false)
+      }
+    },
+    [artist.id, displayName, displayAvatar],
+  )
 
   const openArtistFollowList = (listKind: 'following' | 'followers') => {
     if (!sessionActive) {
@@ -726,6 +772,14 @@ export function ListenTogetherArtistDetailPage({
 
   const playQueue =
     activeTab === 'songs' && allSongs.length > 0 ? allSongs : hotSongs.length > 0 ? hotSongs : allSongs
+
+  const songSearchBase = allSongs.length > 0 ? allSongs : hotSongs
+  const filteredSongs = useMemo(
+    () => filterPlaylistTracks(songSearchBase, searchQuery),
+    [songSearchBase, searchQuery],
+  )
+  const searching = searchQuery.trim().length > 0
+  const songPlayQueue = allSongs.length > 0 ? allSongs : hotSongs
 
   const playAll = () => {
     if (playQueue[0]) onPlaySong(playQueue[0], playQueue)
@@ -767,6 +821,56 @@ export function ListenTogetherArtistDetailPage({
       })}
     </ul>
   )
+
+  const renderSongSearchBar = () => (
+    <label className="relative mt-2 flex items-center">
+      <Search
+        className="pointer-events-none absolute left-3.5 size-[17px] text-stone-400"
+        strokeWidth={1.5}
+        aria-hidden
+      />
+      <input
+        type="search"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder="搜索歌手歌曲…"
+        className="h-10 w-full rounded-full border-0 bg-white py-2 pl-10 pr-9 text-[14px] text-stone-800 shadow-sm outline-none ring-1 ring-stone-100/90 placeholder:text-stone-400 focus:shadow-[0_4px_20px_rgba(251,207,232,0.2)]"
+        aria-label="搜索歌手歌曲"
+      />
+      {searchQuery ? (
+        <button
+          type="button"
+          aria-label="清除搜索"
+          onClick={() => setSearchQuery('')}
+          className="absolute right-2 flex h-7 w-7 items-center justify-center rounded-full text-stone-400 hover:bg-stone-100 hover:text-stone-600"
+        >
+          <X className="size-4" strokeWidth={1.5} />
+        </button>
+      ) : null}
+    </label>
+  )
+
+  const renderSongSearchMeta = (loadedCount: number) => {
+    if (!searching) return null
+    return (
+      <p className="mb-3 text-[12px] text-stone-400">
+        {filteredSongs.length > 0 ? (
+          <>
+            在已加载的 <ListenNum>{loadedCount}</ListenNum> 首中找到{' '}
+            <ListenNum>{filteredSongs.length}</ListenNum> 首
+          </>
+        ) : (
+          <>未找到匹配歌曲</>
+        )}
+        {songsMore ? (
+          <span className="text-stone-300">
+            {' '}
+            · 还有更多歌曲未加载
+          </span>
+        ) : null}
+      </p>
+    )
+  }
 
   const renderHomeTab = () => (
     <div className="space-y-5">
@@ -814,13 +918,34 @@ export function ListenTogetherArtistDetailPage({
 
       <div>
         <SectionHeader
-          title="热门歌曲"
-          action={hotSongs.length > HOME_HOT_PREVIEW ? '查看全部' : undefined}
+          title={searching ? '搜索结果' : '热门歌曲'}
+          action={
+            !searching && hotSongs.length > HOME_HOT_PREVIEW ? '查看全部' : undefined
+          }
           onAction={
-            hotSongs.length > HOME_HOT_PREVIEW ? () => setActiveTab('songs') : undefined
+            !searching && hotSongs.length > HOME_HOT_PREVIEW ? () => setActiveTab('songs') : undefined
           }
         />
-        {hotSongsLoading ? (
+        {searching ? renderSongSearchMeta(songSearchBase.length) : null}
+        {searching && filteredSongs.length === 0 && !songsLoading ? (
+          <div className="py-8 text-center">
+            <p className="text-[13px] text-stone-500">
+              已加载歌曲中没有「{searchQuery.trim()}」
+            </p>
+            {songsMore ? (
+              <button
+                type="button"
+                onClick={() => void loadAllSongs(true)}
+                disabled={songsLoading}
+                className="mt-3 text-[12px] text-stone-500 underline disabled:opacity-50"
+              >
+                {songsLoading ? '加载中…' : '加载更多以扩大搜索'}
+              </button>
+            ) : null}
+          </div>
+        ) : searching && filteredSongs.length > 0 ? (
+          renderSongList(filteredSongs, songPlayQueue)
+        ) : hotSongsLoading ? (
           <p className="flex items-center justify-center gap-2 py-10 text-[13px] text-stone-400">
             <Loader2 className="size-4 animate-spin" aria-hidden />
             加载热门歌曲…
@@ -830,6 +955,16 @@ export function ListenTogetherArtistDetailPage({
         ) : (
           <p className="py-8 text-center text-[13px] text-stone-400">暂无热门歌曲</p>
         )}
+        {searching && songsMore && filteredSongs.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => void loadAllSongs(true)}
+            disabled={songsLoading}
+            className="mt-4 w-full rounded-2xl bg-white/80 py-2.5 text-[13px] text-stone-500 ring-1 ring-stone-100/90 disabled:opacity-50"
+          >
+            {songsLoading ? '加载中…' : '加载更多以扩大搜索'}
+          </button>
+        ) : null}
       </div>
     </div>
   )
@@ -841,10 +976,32 @@ export function ListenTogetherArtistDetailPage({
           <Loader2 className="size-4 animate-spin" aria-hidden />
           加载歌曲…
         </p>
-      ) : allSongs.length > 0 ? (
+      ) : allSongs.length > 0 || hotSongs.length > 0 ? (
         <>
-          {renderSongList(allSongs, allSongs)}
-          {songsMore ? (
+          {renderSongSearchMeta(songSearchBase.length)}
+          {searching && filteredSongs.length === 0 && !songsLoading ? (
+            <div className="py-8 text-center">
+              <p className="text-[13px] text-stone-500">
+                已加载歌曲中没有「{searchQuery.trim()}」
+              </p>
+              {songsMore ? (
+                <button
+                  type="button"
+                  onClick={() => void loadAllSongs(true)}
+                  disabled={songsLoading}
+                  className="mt-3 text-[12px] text-stone-500 underline disabled:opacity-50"
+                >
+                  {songsLoading ? '加载中…' : '加载更多以扩大搜索'}
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            renderSongList(
+              searching ? filteredSongs : allSongs.length > 0 ? allSongs : hotSongs,
+              songPlayQueue,
+            )
+          )}
+          {!searching && songsMore ? (
             <button
               type="button"
               onClick={() => void loadAllSongs(true)}
@@ -852,6 +1009,16 @@ export function ListenTogetherArtistDetailPage({
               className="mt-4 w-full rounded-2xl bg-white/80 py-2.5 text-[13px] text-stone-500 ring-1 ring-stone-100/90 disabled:opacity-50"
             >
               {songsLoading ? '加载中…' : '加载更多'}
+            </button>
+          ) : null}
+          {searching && songsMore && filteredSongs.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => void loadAllSongs(true)}
+              disabled={songsLoading}
+              className="mt-4 w-full rounded-2xl bg-white/80 py-2.5 text-[13px] text-stone-500 ring-1 ring-stone-100/90 disabled:opacity-50"
+            >
+              {songsLoading ? '加载中…' : '加载更多以扩大搜索'}
             </button>
           ) : null}
         </>
@@ -975,6 +1142,15 @@ export function ListenTogetherArtistDetailPage({
               />
               <button
                 type="button"
+                aria-label="分享歌手主页"
+                title="分享到微信好友"
+                onClick={() => setShareDrawerOpen(true)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/25 text-white backdrop-blur-sm transition-colors hover:bg-black/40"
+              >
+                <Share2 className="size-4" strokeWidth={1.75} />
+              </button>
+              <button
+                type="button"
                 onClick={playAll}
                 disabled={playQueue.length === 0 || hotSongsLoading}
                 className="shrink-0 rounded-full bg-white/92 px-3 py-1.5 text-[12px] font-medium text-rose-500 shadow-sm transition-colors hover:bg-white disabled:opacity-40"
@@ -1075,6 +1251,9 @@ export function ListenTogetherArtistDetailPage({
 
         <div className="sticky top-0 z-10 border-b border-white/30 bg-white/45 pb-2 pt-3 backdrop-blur-md">
           <ArtistTabs active={activeTab} onChange={setActiveTab} />
+          {activeTab === 'home' || activeTab === 'songs' ? (
+            <div className="px-4">{renderSongSearchBar()}</div>
+          ) : null}
         </div>
 
         <motion.div
@@ -1141,6 +1320,16 @@ export function ListenTogetherArtistDetailPage({
         onRequireLogin={onRequireLogin}
         className="!z-[120]"
       />
+
+      <ShareCommentContactsDrawer
+        open={shareDrawerOpen}
+        onClose={() => setShareDrawerOpen(false)}
+        onConfirm={handleShareConfirm}
+        sending={shareSending}
+        dialogTitle="SHARE PROFILE | 分享主页给好友"
+        dialogSubtitle="分享歌手主页到微信私聊"
+      />
+      <ListenTogetherActionToast message={toast} onClear={() => setToast(null)} />
     </div>
   )
 }

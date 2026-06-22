@@ -23,9 +23,15 @@ import {
   type InstantGenConfig,
   instantGenChoiceToPostType,
   instantGenPostTypeIncludesText,
+  instantGenPostTypeRequiresText,
 } from './momentInstantGenTypes'
 import { PUBLISHER_SELF_COMMENT_PROMPT_RULES } from './momentCharacterPublishTypes'
 import { buildInstantGenContentTypePromptBlock } from './momentInstantGenContentTypes'
+import {
+  CHARACTER_MOMENT_MUSIC_POST_JSON_HINT,
+  CHARACTER_MOMENT_MUSIC_POST_PROMPT,
+  CHARACTER_MOMENT_MUSIC_LOCALE_HINT,
+} from './momentAttachedMusic'
 import { type MutualFriendRef } from './momentInstantGenContext'
 import { MOMENT_LOCATION_PROMPT_HINT } from './momentLocationUtils'
 import {
@@ -37,7 +43,6 @@ import {
 import { buildCharacterMomentImagePromptRules } from './momentCharacterImageRules'
 import {
   buildInstantGenTextLengthHint,
-  estimateInstantGenMaxTokens,
   MOMENT_BODY_LENGTH_HINT,
   MOMENT_IMAGE_COUNT_PROMPT,
 } from './momentContentLimits'
@@ -57,10 +62,11 @@ ${PUBLISHER_SELF_COMMENT_PROMPT_RULES}
 
 仅输出一个 JSON 对象，严禁 Markdown：
 {
-  "postType": "text"|"mixed"|"image",
-  "content": "极具活人感的朋友圈正文（text/mixed 时必填且不得为空；禁止仅写 [图片] 等占位符；纯 image 可留空）",
+  "postType": "text"|"mixed"|"image"|"music",
+  "content": "极具活人感的朋友圈正文（text/mixed 时必填且不得为空；music 时可选配文；禁止仅写 [图片] 等占位符；纯 image 可留空）",
   "location": null,
   "imagePrompts": ["英文 SD 提示词1","英文 SD 提示词2"],
+  ${CHARACTER_MOMENT_MUSIC_POST_JSON_HINT},
   "publisherSelfComments": [{ "content": "追评补充", "delaySeconds": 60 }],
   "interactions": [
     { "type": "like", "authorId": "与发布者有绑定关系的角色characterId", "delaySeconds": 45 },
@@ -90,6 +96,8 @@ ${MOMENT_TEXT_OUTPUT_HINT}
 ${MOMENT_BODY_LENGTH_HINT}
 
 ${MOMENT_IMAGE_COUNT_PROMPT}
+
+${CHARACTER_MOMENT_MUSIC_POST_PROMPT}
 
 生成时须兼顾用户指定的「内容气质」与「载体形式」：严肃通知/爆瓜/小作文等可写长文；日常吐槽宜短促；暗恋吃醋宜留白暗示。
 `.trim()
@@ -163,12 +171,10 @@ export async function generateInstantMomentWithInteractions(params: {
     : '写实摄影'
   const isAnimeStyle = styleHint.includes('二次元') || styleHint.toLowerCase().includes('anime')
   const includesText = instantGenPostTypeIncludesText(params.config.postType)
+  const requiresText = instantGenPostTypeRequiresText(params.config.postType)
   const textLengthHint = includesText
     ? buildInstantGenTextLengthHint(params.config.textLengthTarget)
     : ''
-  const maxTokens = includesText
-    ? estimateInstantGenMaxTokens(params.config.textLengthTarget)
-    : 3600
 
   const privacyPrompt = buildCharacterMomentPrivacyPromptSection({
     publisherCharacterId: params.config.targetCharacterId,
@@ -179,15 +185,19 @@ export async function generateInstantMomentWithInteractions(params: {
 
   const userTask = [
     `你的身份是：【${params.targetDisplayName}】`,
-    `用户选定的载体形式：${instantGenChoiceToPostType(params.config.postType)}（text=纯文字，mixed=图文，image=纯图片）`,
+    `用户选定的载体形式：${instantGenChoiceToPostType(params.config.postType)}（text=纯文字，mixed=图文，image=纯图片，music=分享歌曲）`,
     buildInstantGenContentTypePromptBlock(
       params.config.contentType,
       params.config.customContentDirection,
     ),
-    includesText
-      ? `【正文字数】${textLengthHint}\n载体含文字时 content 必填、不得为空，禁止只输出 [图片] 等协议占位符；须直接写可读正文（标点/emoji 均可）。`
-      : '纯图片动态：content 留空，只填 imagePrompts。',
-    `配图引擎风格：${styleHint}`,
+    params.config.postType === 'music'
+      ? `【分享歌曲】postType 必须为 music；必填 attachedMusic（网易云真实歌名+歌手）；content 可选 1～2 句配文；禁止 imagePrompts。\n${CHARACTER_MOMENT_MUSIC_LOCALE_HINT}`
+      : requiresText
+        ? `【正文字数】${textLengthHint}\n载体含文字时 content 必填、不得为空，禁止只输出 [图片] 等协议占位符；须直接写可读正文（标点/emoji 均可）。`
+        : includesText
+          ? `【配文字数】${textLengthHint}\ncontent 可选，用于补充分享心情。`
+          : '纯图片动态：content 留空，只填 imagePrompts。',
+    params.config.postType === 'music' ? '' : `配图引擎风格：${styleHint}`,
     (params.config.postType === 'mixed' || params.config.postType === 'image')
       ? '载体含图时 imagePrompts 须按场景给出 1~9 个不同画面的英文 prompt，勿习惯性只输出 1 个。'
       : '',
@@ -209,7 +219,7 @@ export async function generateInstantMomentWithInteractions(params: {
       { role: 'system', content: `${system}\n\n${INSTANT_GEN_TASK}\n\n${CHARACTER_MOMENT_PRIVACY_RULES}` },
       { role: 'user', content: userTask },
     ],
-    { temperature: 0.9, max_tokens: maxTokens },
+    { temperature: 0.9 },
   )
   const trimmedRaw = raw.trim()
   const payload = parseMomentsModelJsonPayload(trimmedRaw)

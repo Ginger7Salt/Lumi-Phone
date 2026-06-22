@@ -11,18 +11,23 @@ import {
   SkipBack,
   SkipForward,
 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { useCustomization } from '../../phone/CustomizationContext'
 import { sendMusicSyncInvite } from '../../phone/apps/wechat/musicSync/sendMusicSyncInvite'
-import { resolveCharacterAvatarUrl } from '../../phone/utils/characterAvatarUrl'
 import { useMusicStore } from '../../stores/useMusicStore'
 import type { ListenPlayMode } from './listenPlayMode'
 import { InviteListenerDrawer } from './InviteListenerDrawer'
+import { ListenTogetherActionToast } from './ListenTogetherActionToast'
+import {
+  buildMusicSyncInviteSuccessToast,
+  type ListenTogetherToastInput,
+} from './listenShareToast'
 import { listenTogetherPlayerEngine } from './listenTogetherPlayerEngine'
 import { navigateToListenTogetherFullscreen } from './listenTogetherNavigation'
 import { SyncCapsule } from './SyncCapsule'
 import type { InviteableContact } from './useInviteableWeChatContacts'
+import { useListenTogetherUserAvatar } from './useListenTogetherUserAvatar'
 
 const SPRING = { type: 'spring' as const, stiffness: 300, damping: 25, mass: 0.8 }
 
@@ -73,14 +78,9 @@ export function MiniPlayerPopover({
   const { state } = useCustomization()
   const [inviteDrawerOpen, setInviteDrawerOpen] = useState(false)
   const [inviteSending, setInviteSending] = useState(false)
+  const [toastMessage, setToastMessage] = useState<ListenTogetherToastInput | null>(null)
 
-  const userAvatar = useMemo(
-    () =>
-      resolveCharacterAvatarUrl({ avatarUrl: state.profile.avatarImageUrl }) ||
-      state.profile.avatarImageUrl ||
-      'https://api.dicebear.com/7.x/notionists/svg?seed=me-rose',
-    [state.profile.avatarImageUrl],
-  )
+  const { avatar: userAvatar } = useListenTogetherUserAvatar()
   const userName = state.profile.displayName?.trim() || '我'
 
   const handleInviteConfirm = useCallback(
@@ -97,8 +97,14 @@ export function MiniPlayerPopover({
         setSyncListening(null)
         setInviteDrawerOpen(false)
         onClose()
+        setToastMessage(
+          buildMusicSyncInviteSuccessToast({
+            contactName: contact.remarkName,
+            characterId: contact.characterId,
+          }),
+        )
       } catch {
-        // 静默失败；后续可接 toast
+        setToastMessage('发送邀约失败，请稍后重试')
       } finally {
         setInviteSending(false)
       }
@@ -260,6 +266,10 @@ export function MiniPlayerPopover({
       onClose={() => setInviteDrawerOpen(false)}
       onConfirm={handleInviteConfirm}
       sending={inviteSending}
+    />
+    <ListenTogetherActionToast
+      message={toastMessage}
+      onClear={() => setToastMessage(null)}
     />
     </>
   )

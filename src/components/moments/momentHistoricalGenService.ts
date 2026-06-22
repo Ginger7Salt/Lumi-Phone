@@ -13,6 +13,7 @@ import { pickHistoricalPoolItem, pickHistoricalPinnedIndices } from './momentHis
 import { distributeHistoricalTimestamps } from './momentHistoricalGenUtils'
 import type { MomentContactRef } from './newMomentTypes'
 import { characterPostToMomentItem } from './publishMomentUtils'
+import { resolveCharacterMomentAttachedMusic } from './resolveCharacterMomentAttachedMusic'
 import { MAX_MOMENT_IMAGES, pickHistoricalTextLengthTarget, trimHistoricalMomentBody } from './momentContentLimits'
 import { sanitizeMomentBodyText } from './momentTextSanitize'
 import type { MomentsImageGenSettings } from './useMomentsSettingsStore'
@@ -39,7 +40,7 @@ function resolvePostImages(
   postType: CharacterMomentPostType,
   imageUrls: string[],
 ): string[] | undefined {
-  if (postType === 'text') return undefined
+  if (postType === 'text' || postType === 'music') return undefined
   return imageUrls.length ? imageUrls : undefined
 }
 
@@ -71,6 +72,9 @@ function summarizeMomentForDedup(item: MomentItemModel): string {
   const content = sanitizeMomentBodyText(item.content).slice(0, 48)
   const date = new Date(item.timestamp)
   const label = `${date.getMonth() + 1}/${date.getDate()}`
+  if (item.attachedMusic?.title) {
+    return `[${label}] 🎵 ${item.attachedMusic.title}${content ? ` · ${content}` : ''}`
+  }
   if (content) return `[${label}] ${content}`
   if (item.images?.length) return `[${label}] 图片动态`
   return `[${label}] 无文字动态`
@@ -153,23 +157,32 @@ export async function publishHistoricalCharacterMoments(
         sanitizeMomentBodyText(aiDraft.content),
         itemTextLengthTarget,
       )
-      const needsImages = postType === 'image' || postType === 'mixed'
-      if (
-        needsImages &&
-        isMomentsImageGenConfigured(params.imageGenSettings) &&
-        aiDraft.images.length
-      ) {
-        params.onProgress?.('imaging', i + 1, timestamps.length)
-        imageUrls = await generateHistoricalMomentImages(aiDraft.images, params.imageGenSettings)
-      }
+      let attachedMusic = undefined as Awaited<ReturnType<typeof resolveCharacterMomentAttachedMusic>> | undefined
 
-      if (needsImages && !imageUrls.length) {
-        if (postType === 'image') {
-          postType = 'text'
-          content = content || '。'
-        } else if (postType === 'mixed' && !content.trim()) {
-          postType = 'text'
-          content = '。'
+      if (postType === 'music') {
+        if (!aiDraft.attachedMusicDraft) {
+          throw new Error('模型未返回歌曲信息（attachedMusic）')
+        }
+        attachedMusic = await resolveCharacterMomentAttachedMusic(aiDraft.attachedMusicDraft)
+      } else {
+        const needsImages = postType === 'image' || postType === 'mixed'
+        if (
+          needsImages &&
+          isMomentsImageGenConfigured(params.imageGenSettings) &&
+          aiDraft.images.length
+        ) {
+          params.onProgress?.('imaging', i + 1, timestamps.length)
+          imageUrls = await generateHistoricalMomentImages(aiDraft.images, params.imageGenSettings)
+        }
+
+        if (needsImages && !imageUrls.length) {
+          if (postType === 'image') {
+            postType = 'text'
+            content = content || '。'
+          } else if (postType === 'mixed' && !content.trim()) {
+            postType = 'text'
+            content = '。'
+          }
         }
       }
 
@@ -181,6 +194,7 @@ export async function publishHistoricalCharacterMoments(
         postType,
         content,
         imageUrls: resolvePostImages(postType, imageUrls) ?? [],
+        attachedMusic,
         location: aiDraft.location,
         privacy: aiDraft.privacy,
         userContact,

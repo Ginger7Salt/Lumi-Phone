@@ -18,6 +18,8 @@ export type MusicTrack = {
 export type SyncListeningProfile = {
   name: string
   avatar: string
+  /** 微信角色 id，用于累计共听时长 */
+  characterId?: string
 }
 
 export type SyncListeningState = {

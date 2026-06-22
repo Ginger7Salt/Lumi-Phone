@@ -3,8 +3,9 @@ import {
   ChatGroupSenderNicknameWithRank,
   ChatGroupSpeakerRankOnAvatar,
 } from '../group/ChatGroupSpeakerAvatarWrap'
-import type { WeChatMusicSyncPayload } from '../newFriendsPersona/types'
+import type { WeChatMusicSyncPayload, WeChatMusicSyncInvitePayload } from '../newFriendsPersona/types'
 import { AcceptResponseCard } from './AcceptResponseCard'
+import { CharacterInviteReceivedCard } from './CharacterInviteReceivedCard'
 import { DeclineResponseCard } from './DeclineResponseCard'
 import { InviteSentCard } from './InviteSentCard'
 
@@ -24,16 +25,47 @@ type Props = {
   animated?: boolean
   /** music_accept：邀约曲目封面（可来自 data 或会话内邀约卡） */
   inviteCoverUrl?: string
+  musicInviteRespondBusy?: boolean
+  onRespondToCharacterInvite?: (
+    messageId: string,
+    invite: WeChatMusicSyncInvitePayload,
+    response: 'accept' | 'decline',
+  ) => void
 }
 
 function MusicSyncCardBody({
+  messageId,
+  isSelf,
   data,
   inviteCoverUrl,
+  peerName,
+  musicInviteRespondBusy,
+  onRespondToCharacterInvite,
 }: {
+  messageId: string
+  isSelf: boolean
   data: WeChatMusicSyncPayload
   inviteCoverUrl?: string
+  peerName?: string
+  musicInviteRespondBusy?: boolean
+  onRespondToCharacterInvite?: (
+    messageId: string,
+    invite: WeChatMusicSyncInvitePayload,
+    response: 'accept' | 'decline',
+  ) => void
 }) {
-  if (data.kind === 'music_invite') return <InviteSentCard data={data} />
+  if (data.kind === 'music_invite') {
+    if (isSelf) return <InviteSentCard data={data} />
+    return (
+      <CharacterInviteReceivedCard
+        data={data}
+        peerName={peerName}
+        busy={musicInviteRespondBusy}
+        onAccept={() => onRespondToCharacterInvite?.(messageId, data, 'accept')}
+        onDecline={() => onRespondToCharacterInvite?.(messageId, data, 'decline')}
+      />
+    )
+  }
   if (data.kind === 'music_accept') {
     return <AcceptResponseCard data={data} coverUrl={inviteCoverUrl} />
   }
@@ -55,9 +87,21 @@ export function MusicInviteChatRow({
   chatSelfAvatarRankBadge: _chatSelfAvatarRankBadge = null,
   groupRankShowBesideNickname = true,
   inviteCoverUrl,
+  musicInviteRespondBusy,
+  onRespondToCharacterInvite,
 }: Props) {
   const avatarPx = 40
-  const card = <MusicSyncCardBody data={data} inviteCoverUrl={inviteCoverUrl} />
+  const card = (
+    <MusicSyncCardBody
+      messageId={id}
+      isSelf={isSelf}
+      data={data}
+      inviteCoverUrl={inviteCoverUrl}
+      peerName={chatOtherSenderNickname}
+      musicInviteRespondBusy={musicInviteRespondBusy}
+      onRespondToCharacterInvite={onRespondToCharacterInvite}
+    />
+  )
   const showAvatarVisual = showAvatar && showAvatarColumn
   const reserveAvatarGutter = showAvatar
   const rankBeside = groupRankShowBesideNickname !== false

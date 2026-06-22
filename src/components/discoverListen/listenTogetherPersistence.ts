@@ -541,6 +541,8 @@ export async function clearListenTogetherSyncCaches(): Promise<void> {
     clearCachedRecentSongs(),
     clearListenTogetherPageCaches(),
   ])
+  const { clearCachedPlayerSession } = await import('./listenTogetherPlayerSession')
+  await clearCachedPlayerSession()
 }
 
 /** 进入听一听时预加载 IndexedDB 缓存到内存，避免每次打开重复请求 */

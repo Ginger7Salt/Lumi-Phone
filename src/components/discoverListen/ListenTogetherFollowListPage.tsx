@@ -3,9 +3,11 @@ import { ArrowLeft, Loader2, Lock, User } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { ListenNum, ListenNumericText } from './ListenNum'
+import { listenNumClass } from './listenTogetherTypography'
 import {
   fetchFollowListPage,
   followListPageTitle,
+  resolveFollowListItemArtist,
   type NeteaseFollowListItem,
   type NeteaseFollowListKind,
   type NeteaseFollowListPage as NeteaseFollowListPageResult,
@@ -32,18 +34,70 @@ export type ListenTogetherFollowListPageProps = {
   className?: string
 }
 
+function MusicianIdentityBadge({ label }: { label: string }) {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full bg-gradient-to-r from-rose-400 to-red-400 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white shadow-sm ring-1 ring-white/90"
+      title={label}
+    >
+      {label}
+    </span>
+  )
+}
+
 function FollowListRow({
   item,
+  cookie,
   onOpenArtist,
   onOpenUser,
 }: {
   item: NeteaseFollowListItem
+  cookie: string
   onOpenArtist?: (artist: NeteaseArtistItem) => void
   onOpenUser?: (user: UserDetailInfo) => void
 }) {
-  const canOpenArtist = item.kind === 'artist' && item.artistId && onOpenArtist
-  const canOpenUser = item.kind === 'user' && item.userId && onOpenUser
+  const [opening, setOpening] = useState(false)
+  const canOpenArtist = Boolean(onOpenArtist && (item.artistId || item.musicianLabel))
+  const canOpenUser = Boolean(item.userId && onOpenUser)
   const canOpen = canOpenArtist || canOpenUser
+
+  const handleOpen = async () => {
+    if (opening) return
+    if (item.artistId && onOpenArtist) {
+      onOpenArtist({
+        id: item.artistId,
+        name: item.name,
+        avatar: item.avatar,
+      })
+      return
+    }
+    if (!item.musicianLabel && item.userId && onOpenUser) {
+      onOpenUser({
+        userId: item.userId,
+        nickname: item.name,
+        avatar: item.avatar,
+      })
+      return
+    }
+    if (!onOpenArtist) return
+    setOpening(true)
+    try {
+      const resolved = await resolveFollowListItemArtist(cookie, item)
+      if (resolved) {
+        onOpenArtist(resolved)
+        return
+      }
+      if (item.userId && onOpenUser) {
+        onOpenUser({
+          userId: item.userId,
+          nickname: item.name,
+          avatar: item.avatar,
+        })
+      }
+    } finally {
+      setOpening(false)
+    }
+  }
   const inner = (
     <>
       <div className="h-12 w-12 shrink-0 overflow-hidden rounded-full bg-stone-100 ring-1 ring-stone-100">
@@ -61,13 +115,14 @@ function FollowListRow({
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[15px] font-medium text-stone-800">
-          <ListenNumericText text={item.name} />
-        </p>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <p className="min-w-0 truncate text-[15px] font-medium text-stone-800">
+            <ListenNumericText text={item.name} />
+          </p>
+          {item.musicianLabel ? <MusicianIdentityBadge label={item.musicianLabel} /> : null}
+        </div>
         {item.signature ? (
           <p className="mt-0.5 truncate text-[12px] text-stone-400">{item.signature}</p>
-        ) : item.kind === 'artist' ? (
-          <p className="mt-0.5 text-[12px] text-stone-400">歌手</p>
         ) : null}
       </div>
     </>
@@ -77,22 +132,9 @@ function FollowListRow({
     return (
       <button
         type="button"
-        onClick={() => {
-          if (canOpenArtist) {
-            onOpenArtist!({
-              id: item.artistId!,
-              name: item.name,
-              avatar: item.avatar,
-            })
-          } else if (canOpenUser) {
-            onOpenUser!({
-              userId: item.userId!,
-              nickname: item.name,
-              avatar: item.avatar,
-            })
-          }
-        }}
-        className="flex w-full items-center gap-3 rounded-2xl bg-white/90 px-3 py-3 text-left shadow-sm ring-1 ring-stone-100/80 transition-colors hover:bg-rose-50/40 active:scale-[0.99]"
+        disabled={opening}
+        onClick={() => void handleOpen()}
+        className="flex w-full items-center gap-3 rounded-2xl bg-white/90 px-3 py-3 text-left shadow-sm ring-1 ring-stone-100/80 transition-colors hover:bg-rose-50/40 active:scale-[0.99] disabled:opacity-70"
       >
         {inner}
       </button>
@@ -226,10 +268,10 @@ export function ListenTogetherFollowListPage({
                 <ArrowLeft className="size-5" strokeWidth={1.5} />
               </button>
               <h1 className="min-w-0 flex-1 truncate text-[17px] font-semibold text-stone-800">
-                {title}
+                <ListenNumericText text={title} />
               </h1>
               {total > 0 ? (
-                <span className="shrink-0 text-[13px] text-stone-400">
+                <span className={`shrink-0 text-[13px] text-stone-400 ${listenNumClass}`}>
                   共 <ListenNum>{total.toLocaleString()}</ListenNum> 人
                 </span>
               ) : null}
@@ -278,6 +320,7 @@ export function ListenTogetherFollowListPage({
                   <FollowListRow
                     key={`${item.kind}-${item.id}`}
                     item={item}
+                    cookie={cookie}
                     onOpenArtist={onOpenArtist}
                     onOpenUser={onOpenUser}
                   />

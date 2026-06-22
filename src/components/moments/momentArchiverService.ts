@@ -14,6 +14,7 @@ import {
   summarizeInteractorOwnMomentActions,
 } from './momentMemoryContentBuilder'
 import { extractMomentMemoryKeywords } from './momentMemoryKeywordAi'
+import { enrichMomentAttachedMusic } from './momentAttachedMusic'
 import type { MomentsContactDirectory } from './momentsContactDirectory'
 import { isMomentMemoryArchiveSuppressed, MOMENT_MEMORY_ARCHIVE_SUPPRESSED_EVENT } from '../../phone/apps/wechat/memory/momentMemoryArchiveSuppression'
 
@@ -92,9 +93,14 @@ async function pruneStaleInteractorMomentMemories(
 }
 
 async function flushCharacterMomentArchive(job: CharacterMomentArchiveJob): Promise<void> {
-  const moment = job.moment
+  let moment = job.moment
   if (!isArchivableCharacterMoment(moment)) return
   if (await isMomentMemoryArchiveSuppressed(moment.id)) return
+
+  if (moment.attachedMusic) {
+    const enrichedMusic = await enrichMomentAttachedMusic(moment.attachedMusic)
+    moment = { ...moment, attachedMusic: enrichedMusic }
+  }
 
   const publisherCharacterId = moment.authorCharacterId!.trim()
   const publisherDisplayName = moment.authorName.trim() || '未命名'

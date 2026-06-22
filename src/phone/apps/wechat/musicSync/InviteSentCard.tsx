@@ -28,17 +28,17 @@ export function InviteSentCard({ data }: Props) {
           <div className="h-[52px] w-[52px] shrink-0 rounded-[10px] bg-gradient-to-br from-rose-50 to-[#FFF0F3] ring-1 ring-rose-100/60" />
         )}
         <div className="min-w-0 flex-1 pt-0.5">
-          <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-rose-400/90">
-            Listen Together
+          <p className="text-[9px] font-semibold tracking-[0.12em] text-rose-400/90">
+            <span className="text-[10px] text-rose-500/95">一起听</span>
+            <span className="mx-1 font-normal text-stone-300">·</span>
+            <span className="uppercase tracking-[0.16em]">Listen Together</span>
           </p>
           <p className="mt-1 truncate text-[15px] font-medium leading-snug text-[#2D2422]">{data.trackTitle}</p>
-          <p className="mt-0.5 truncate text-[12px] text-stone-400">{data.trackArtist || 'Unknown Artist'}</p>
+          <p className="mt-0.5 truncate text-[12px] text-stone-400">{data.trackArtist || '未知歌手'}</p>
         </div>
       </div>
       <div className="border-t border-rose-100/50 bg-gradient-to-r from-rose-50/40 to-white/30 px-3.5 py-2.5">
-        <p className="font-serif text-[11px] italic leading-relaxed tracking-wide text-stone-400/95">
-          I want to share this frequency with you.
-        </p>
+        <p className="text-[11px] leading-relaxed text-stone-500/95">邀请你一起听这首歌</p>
       </div>
     </motion.div>
   )

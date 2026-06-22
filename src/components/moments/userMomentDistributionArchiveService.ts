@@ -10,16 +10,17 @@ import {
 import type { MomentItemModel } from './mockMoments'
 import {
   buildMomentInteractionsSnapshot,
+  buildMomentMemoryBodyText,
   buildUserMomentViewerMemoryPayload,
   collectUserMomentInteractionRowsForPanel,
   userMomentViewerMemoryId,
 } from './momentMemoryContentBuilder'
 import { extractMomentMemoryKeywords } from './momentMemoryKeywordAi'
+import { enrichMomentAttachedMusic } from './momentAttachedMusic'
 import type { MomentsContactDirectory } from './momentsContactDirectory'
 import { buildMomentsContactDirectoryWithPersonaNames } from './momentsContactDirectory'
 import { loadMomentRelationships } from './momentRelationshipGraph'
 import { getUserMomentMentionedContacts } from './momentMentionUtils'
-import { sanitizeMomentBodyText } from './momentTextSanitize'
 import type { ContactTag, MomentContactRef } from './newMomentTypes'
 import { resolveUserMomentAudience } from './userMomentDistributionAudience'
 import {
@@ -86,9 +87,14 @@ async function pruneStaleViewerMomentMemories(
 }
 
 async function flushUserMomentDistributionArchive(job: UserMomentDistributionArchiveJob): Promise<void> {
-  const moment = job.moment
+  let moment = job.moment
   if (!moment.isUserAuthored) return
   if (await isMomentMemoryArchiveSuppressed(moment.id)) return
+
+  if (moment.attachedMusic) {
+    const enrichedMusic = await enrichMomentAttachedMusic(moment.attachedMusic)
+    moment = { ...moment, attachedMusic: enrichedMusic }
+  }
 
   const interactionNow = job.now ?? Date.now()
   const archivedAt = Date.now()
@@ -109,7 +115,7 @@ async function flushUserMomentDistributionArchive(job: UserMomentDistributionArc
       .filter(Boolean) as string[],
   )
 
-  const previewText = sanitizeMomentBodyText(moment.content) || '（图片动态）'
+  const previewText = buildMomentMemoryBodyText(moment) || '（图片动态）'
   const visibilityLabel = moment.privacy?.visibilityLabel?.trim() || '公开'
   const keywords = await extractMomentMemoryKeywords({
     apiConfig: job.apiConfig,

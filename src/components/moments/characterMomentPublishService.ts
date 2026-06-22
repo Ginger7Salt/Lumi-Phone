@@ -10,9 +10,17 @@ import { isMomentsImageGenConfigured } from './momentsImageGenAvailability'
 import { generateMomentsImage } from './momentsImageGen'
 import type { MomentContactRef } from './newMomentTypes'
 import { characterPostToMomentItem } from './publishMomentUtils'
+import { resolveCharacterMomentAttachedMusic } from './resolveCharacterMomentAttachedMusic'
 import { MAX_MOMENT_IMAGES } from './momentContentLimits'
 import { sanitizeMomentBodyText } from './momentTextSanitize'
 import type { MomentsImageGenSettings } from './useMomentsSettingsStore'
+import type { ProactiveMomentMusicLanguageRatioSettings } from './proactiveCharacterMomentMusicLanguageRatio'
+import { buildProactiveMomentMusicLanguageRatioPrompt } from './proactiveCharacterMomentMusicLanguageRatio'
+import type { ProactiveMomentFollowUserMusicTasteSettings } from './proactiveCharacterMomentUserMusicTaste'
+import {
+  buildProactiveMomentUserMusicTastePrompt,
+  collectUserMusicTasteProfile,
+} from './proactiveCharacterMomentUserMusicTaste'
 
 export type PublishCharacterMomentParams = {
   wechatCtx: AnonymousQaWechatContext
@@ -23,6 +31,10 @@ export type PublishCharacterMomentParams = {
   imageGenSettings: MomentsImageGenSettings
   chatRequestHint?: string
   triggeredByUserRequest?: boolean
+  /** 主动发布：分享歌曲语种权重 */
+  musicShareLanguageRatio?: ProactiveMomentMusicLanguageRatioSettings
+  /** 主动发布：向用户听歌偏好靠拢 */
+  followUserMusicTaste?: ProactiveMomentFollowUserMusicTasteSettings
   onProgress?: (stage: 'writing' | 'imaging' | 'done') => void
 }
 
@@ -35,7 +47,7 @@ function resolvePostImages(
   postType: CharacterMomentPostType,
   imageUrls: string[],
 ): string[] | undefined {
-  if (postType === 'text') return undefined
+  if (postType === 'text' || postType === 'music') return undefined
   return imageUrls.length ? imageUrls : undefined
 }
 
@@ -81,6 +93,24 @@ export async function publishCharacterMoment(
       avatarUrl: params.characterContact.avatarUrl ?? character?.avatarUrl,
     }) || resolveCharacterAvatarUrl({ avatarUrl: '' })
 
+  const musicShareLanguageRatioPrompt =
+    !params.triggeredByUserRequest && params.musicShareLanguageRatio
+      ? buildProactiveMomentMusicLanguageRatioPrompt(params.musicShareLanguageRatio)
+      : undefined
+
+  let musicShareUserTastePrompt: string | undefined
+  if (
+    !params.triggeredByUserRequest &&
+    params.followUserMusicTaste?.enabled &&
+    params.followUserMusicTaste.weight > 0
+  ) {
+    const tasteProfile = await collectUserMusicTasteProfile(params.wechatCtx.wechatAccountId)
+    musicShareUserTastePrompt = buildProactiveMomentUserMusicTastePrompt(
+      tasteProfile,
+      params.followUserMusicTaste.weight,
+    )
+  }
+
   const aiDraft = await generateCharacterMomentPost({
     wechatCtx: params.wechatCtx,
     characterId: params.characterId,
@@ -89,24 +119,35 @@ export async function publishCharacterMoment(
     blockedCharacterIds: params.blockedCharacterIds,
     chatRequestHint: params.chatRequestHint,
     triggeredByUserRequest: params.triggeredByUserRequest,
+    musicShareLanguageRatioPrompt,
+    musicShareUserTastePrompt,
   })
 
   let imageUrls: string[] = []
   let postType = aiDraft.postType
   let content = sanitizeMomentBodyText(aiDraft.content)
-  const needsImages = postType === 'image' || postType === 'mixed'
-  if (needsImages && isMomentsImageGenConfigured(params.imageGenSettings) && aiDraft.images.length) {
-    params.onProgress?.('imaging')
-    imageUrls = await generateCharacterMomentImages(aiDraft.images, params.imageGenSettings)
-  }
+  let attachedMusic = undefined as Awaited<ReturnType<typeof resolveCharacterMomentAttachedMusic>> | undefined
 
-  if (needsImages && !imageUrls.length) {
-    if (postType === 'image') {
-      postType = 'text'
-      content = content || '。'
-    } else if (postType === 'mixed' && !content.trim()) {
-      postType = 'text'
-      content = '。'
+  if (postType === 'music') {
+    if (!aiDraft.attachedMusicDraft) {
+      throw new Error('模型未返回歌曲信息（attachedMusic）')
+    }
+    attachedMusic = await resolveCharacterMomentAttachedMusic(aiDraft.attachedMusicDraft)
+  } else {
+    const needsImages = postType === 'image' || postType === 'mixed'
+    if (needsImages && isMomentsImageGenConfigured(params.imageGenSettings) && aiDraft.images.length) {
+      params.onProgress?.('imaging')
+      imageUrls = await generateCharacterMomentImages(aiDraft.images, params.imageGenSettings)
+    }
+
+    if (needsImages && !imageUrls.length) {
+      if (postType === 'image') {
+        postType = 'text'
+        content = content || '。'
+      } else if (postType === 'mixed' && !content.trim()) {
+        postType = 'text'
+        content = '。'
+      }
     }
   }
 
@@ -119,6 +160,7 @@ export async function publishCharacterMoment(
     postType,
     content,
     imageUrls: resolvePostImages(postType, imageUrls) ?? [],
+    attachedMusic,
     location: aiDraft.location,
     privacy: aiDraft.privacy,
     userContact,

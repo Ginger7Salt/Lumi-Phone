@@ -206,9 +206,12 @@ function MemoryTriggerModePicker({
 export function MemoryEngineConfig({
   loading,
   currentWechatAccountId,
+  coachActive = true,
 }: {
   loading?: boolean
   currentWechatAccountId?: string
+  /** 仅当前 Tab 可见时允许自动/展示高亮引导，避免与记忆管理引导叠层 */
+  coachActive?: boolean
 }) {
   const chatApiConfig = useCurrentApiConfig('chatCard')
 
@@ -353,11 +356,16 @@ export function MemoryEngineConfig({
   }, [])
 
   useEffect(() => {
+    if (!coachActive) {
+      setCoachOpen(false)
+      setCoachStepIndex(0)
+      return
+    }
     if (loading) return
     if (readMemoryCoachSeen(MEMORY_ENGINE_COACH_SEEN_KEY)) return
     const id = window.setTimeout(() => startLiveCoach(), 640)
     return () => window.clearTimeout(id)
-  }, [loading, startLiveCoach])
+  }, [loading, startLiveCoach, coachActive])
 
   useEffect(() => {
     const onStart = () => startLiveCoach()
@@ -943,7 +951,7 @@ export function MemoryEngineConfig({
       />
 
       <MemoryCoachPortal
-        open={coachOpen}
+        open={coachOpen && coachActive}
         steps={MEMORY_ENGINE_COACH_STEPS}
         stepIndex={coachStepIndex}
         onStepChange={setCoachStepIndex}

@@ -27,6 +27,8 @@ export function computeProactiveMessageRemainingMs(
     | 'proactiveMessageEnabled'
     | 'proactiveMessageVariableIntervalEnabled'
     | 'proactiveMessageNextIntervalSeconds'
+    | 'proactiveMessageVariableIntervalMinSeconds'
+    | 'proactiveMessageVariableIntervalMaxSeconds'
     | 'proactiveMessageIntervalSeconds'
     | 'proactiveMessageIntervalMinutes'
     | 'proactiveMessageLastFiredAtMs'

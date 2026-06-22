@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { Check } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import type { InviteableContact } from './useInviteableWeChatContacts'
 import { useInviteableWeChatContacts } from './useInviteableWeChatContacts'
@@ -10,10 +11,19 @@ type Props = {
   onClose: () => void
   onConfirm: (contacts: InviteableContact[]) => void | Promise<void>
   sending?: boolean
+  dialogTitle?: string
+  dialogSubtitle?: string
 }
 
-/** 底部抽屉：多选微信通讯录联系人，分享听一听评论 */
-export function ShareCommentContactsDrawer({ open, onClose, onConfirm, sending = false }: Props) {
+/** 底部抽屉：多选微信通讯录联系人，分享听一听内容 */
+export function ShareCommentContactsDrawer({
+  open,
+  onClose,
+  onConfirm,
+  sending = false,
+  dialogTitle = 'SHARE COMMENT | 分享评论给好友',
+  dialogSubtitle = '可多选通讯录好友',
+}: Props) {
   const { contacts, loading } = useInviteableWeChatContacts(open)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
@@ -45,14 +55,16 @@ export function ShareCommentContactsDrawer({ open, onClose, onConfirm, sending =
     setSelectedIds(new Set())
   }
 
-  return (
+  if (typeof document === 'undefined') return null
+
+  return createPortal(
     <AnimatePresence>
       {open ? (
         <>
           <motion.button
             type="button"
             aria-label="关闭"
-            className="fixed inset-0 z-[10030] bg-black/20 backdrop-blur-[2px]"
+            className="fixed inset-0 z-[10050] bg-black/20 backdrop-blur-[2px]"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -62,25 +74,25 @@ export function ShareCommentContactsDrawer({ open, onClose, onConfirm, sending =
             role="dialog"
             aria-modal="true"
             aria-labelledby="share-comment-title"
-            className="fixed inset-x-0 bottom-0 z-[10031] max-h-[72vh] overflow-hidden rounded-t-[24px] border border-white/60 bg-white/85 shadow-[0_-8px_40px_rgba(45,36,34,0.12)] backdrop-blur-xl"
+            className="fixed inset-x-0 bottom-0 z-[10051] mx-auto flex max-h-[min(78vh,640px)] max-w-[560px] flex-col overflow-hidden rounded-t-[24px] border border-white/60 bg-white/90 shadow-[0_-8px_40px_rgba(45,36,34,0.12)] backdrop-blur-xl"
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', stiffness: 320, damping: 32 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-stone-200/80" />
-            <div className="border-b border-stone-100/80 px-5 pb-3 pt-4">
+            <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-stone-200/80" />
+            <div className="shrink-0 border-b border-stone-100/80 px-5 pb-3 pt-4">
               <h2
                 id="share-comment-title"
                 className="text-center text-[11px] font-medium uppercase tracking-[0.18em] text-stone-400"
               >
-                SHARE COMMENT | 分享评论给好友
+                {dialogTitle}
               </h2>
-              <p className="mt-1 text-center text-[12px] text-stone-500">可多选通讯录好友</p>
+              <p className="mt-1 text-center text-[12px] text-stone-500">{dialogSubtitle}</p>
             </div>
 
-            <div className="max-h-[calc(72vh-156px)] overflow-y-auto px-3 py-2">
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
               {loading ? (
                 <p className="py-8 text-center text-[13px] text-stone-400">加载通讯录…</p>
               ) : contacts.length === 0 ? (
@@ -134,12 +146,12 @@ export function ShareCommentContactsDrawer({ open, onClose, onConfirm, sending =
               )}
             </div>
 
-            <div className="border-t border-stone-100/80 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+            <div className="shrink-0 border-t border-rose-100/60 bg-white/95 px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 backdrop-blur-sm">
               <button
                 type="button"
                 disabled={selectedCount === 0 || sending}
                 onClick={() => void handleConfirm()}
-                className="w-full rounded-full bg-[#1A1A1A] py-3.5 text-[14px] font-medium tracking-wide text-white transition-opacity disabled:opacity-40"
+                className="w-full rounded-full bg-gradient-to-br from-[#FFD6DE] via-[#FFE8EE] to-[#FFF5F7] py-3.5 text-[14px] font-medium tracking-wide text-[#2D2422] shadow-[0_8px_24px_rgba(255,192,203,0.32)] ring-1 ring-rose-200/70 transition-all active:scale-[0.98] disabled:opacity-45 disabled:shadow-none disabled:ring-rose-100/50"
               >
                 {sending
                   ? '发送中…'
@@ -151,6 +163,7 @@ export function ShareCommentContactsDrawer({ open, onClose, onConfirm, sending =
           </motion.div>
         </>
       ) : null}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }

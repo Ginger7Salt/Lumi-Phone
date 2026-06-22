@@ -19,6 +19,10 @@ import { formatUserMomentFirstCommentLine } from './momentCommentThreadContext'
 import { MOMENT_TEXT_OUTPUT_HINT, sanitizeMomentText } from './momentTextSanitize'
 import { runMomentsVisionChat } from './momentVisionChat'
 import type { ResolvedUserMomentEngagementRules } from './userMomentEngagementRules'
+import {
+  buildUserMomentInteractionCharacterContexts,
+  formatUserMomentCharacterContextsPrompt,
+} from './momentUserInteractionContext'
 
 const USER_MOMENT_THREAD_TASK = `
 【朋友圈评区接话】
@@ -121,6 +125,7 @@ export async function supplementUserMomentCharacterThreads(params: {
   allowedCharacters: AllowedMomentCharacter[]
   baseDrafts: AiMomentInteractionDraft[]
   userDisplayName: string
+  momentPublishedAt?: number
   engagementRules?: ResolvedUserMomentEngagementRules
 }): Promise<AiMomentInteractionDraft[]> {
   const maxThreadReplies = params.engagementRules?.maxThreadReplies ?? 4
@@ -144,6 +149,19 @@ export async function supplementUserMomentCharacterThreads(params: {
     relationships,
   )
 
+  let characterContextPrompt = ''
+  try {
+    const contexts = await buildUserMomentInteractionCharacterContexts({
+      wechatCtx: params.wechatCtx,
+      allowedCharacters: params.allowedCharacters,
+      momentContent: params.momentContent,
+      momentPublishedAt: params.momentPublishedAt ?? Date.now(),
+    })
+    characterContextPrompt = formatUserMomentCharacterContextsPrompt(contexts)
+  } catch (err) {
+    console.error('[momentUserMomentPublishThreadAi] character contexts failed', err)
+  }
+
   const userTask = [
     `用户 ${userDisplayName} 的朋友圈正文：${params.momentContent.trim() || '（无文字）'}`,
     `配图数：${params.imageCount}`,
@@ -154,6 +172,7 @@ export async function supplementUserMomentCharacterThreads(params: {
     '',
     relationshipBlock,
     relationshipBlock ? '' : null,
+    characterContextPrompt || null,
     '【已有首评】',
     lines,
     '',

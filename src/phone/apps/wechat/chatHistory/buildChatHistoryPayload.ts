@@ -17,6 +17,11 @@ export function messageContentSummary(m: WeChatChatMessage): string {
   if (m.callStatus) return '[通话]'
   if (m.musicSync) return '[音乐]'
   if (m.listenCommentShare) return `[分享评论] ${m.listenCommentShare.targetTitle}`
+  if (m.listenProfileShare) return `[分享主页] ${m.listenProfileShare.displayName}`
+  if (m.listenTrackShare) {
+    const prefix = m.listenTrackShare.targetType === 'song' ? '[分享单曲]' : '[分享歌单]'
+    return `${prefix} ${m.listenTrackShare.targetTitle}`
+  }
   const text = (m.content ?? '').trim()
   if (text.startsWith(LEGACY_MERGE_FORWARD_PREFIX)) return '[聊天记录]'
   return text || '...'

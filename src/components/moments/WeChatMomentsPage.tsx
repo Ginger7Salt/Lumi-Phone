@@ -58,6 +58,14 @@ import {
   upsertUserMoment,
 } from './momentsFeedStorage'
 import type { MomentContactRef, NewMomentDraft } from './newMomentTypes'
+import { createEmptyNewMoment } from './newMomentTypes'
+import { buildMomentContentForAi, enrichMomentAttachedMusic } from './momentAttachedMusic'
+import {
+  consumePendingShareSongToMoments,
+  LISTEN_TOGETHER_SHARE_TO_MOMENTS_EVENT,
+  shareSongDetailToMomentMusic,
+  type ShareSongToMomentsDetail,
+} from '../discoverListen/listenTogetherMomentShareNavigation'
 import type { OnOpenMomentParticipantProfile } from './momentProfileNavigation'
 import { MomentInstantGenModal } from './MomentInstantGenModal'
 import { PublishMomentPage } from './PublishMomentPage'
@@ -140,6 +148,7 @@ export function WeChatMomentsPage({
   const [headerOpacity, setHeaderOpacity] = useState(0)
   const [coverEditorOpen, setCoverEditorOpen] = useState(false)
   const [publishOpen, setPublishOpen] = useState(false)
+  const [publishInitialDraft, setPublishInitialDraft] = useState<NewMomentDraft | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [instantGenOpen, setInstantGenOpen] = useState(false)
   const [userMoments, setUserMoments] = useState<MomentItemModel[]>([])
@@ -159,6 +168,30 @@ export function WeChatMomentsPage({
     () => resolveUserMomentEngagementRules(settings.userMomentEngagement),
     [settings.userMomentEngagement],
   )
+
+  const openPublishWithSongShare = useCallback((detail: ShareSongToMomentsDetail) => {
+    setPublishInitialDraft({
+      ...createEmptyNewMoment(),
+      attachedMusic: shareSongDetailToMomentMusic(detail),
+    })
+    setPublishOpen(true)
+  }, [])
+
+  useEffect(() => {
+    const pending = consumePendingShareSongToMoments()
+    if (pending) openPublishWithSongShare(pending)
+  }, [openPublishWithSongShare])
+
+  useEffect(() => {
+    const onShare = (event: Event) => {
+      const detail = (event as CustomEvent<ShareSongToMomentsDetail>).detail
+      if (!detail?.songId || !detail.title?.trim()) return
+      openPublishWithSongShare(detail)
+    }
+    window.addEventListener(LISTEN_TOGETHER_SHARE_TO_MOMENTS_EVENT, onShare)
+    return () => window.removeEventListener(LISTEN_TOGETHER_SHARE_TO_MOMENTS_EVENT, onShare)
+  }, [openPublishWithSongShare])
+
   const bindNoticeAccount = useMomentsStore((s) => s.bindAccount)
   const interactionUnreadCount = useMomentsStore((s) => s.notices.filter((n) => !n.isRead).length)
   const interactionNow = useMomentInteractionClock(5000)
@@ -432,11 +465,21 @@ export function WeChatMomentsPage({
       void (async () => {
         let aiDrafts: AiMomentInteractionDraft[] = []
         try {
-          const next = await upsertUserMoment(currentAccountId, item)
+          let persistedItem = item
+          if (item.attachedMusic) {
+            const enrichedMusic = await enrichMomentAttachedMusic(item.attachedMusic)
+            persistedItem = { ...item, attachedMusic: enrichedMusic }
+          }
+          const momentContentForAi = buildMomentContentForAi({
+            content: persistedItem.content,
+            attachedMusic: persistedItem.attachedMusic,
+          })
+
+          const next = await upsertUserMoment(currentAccountId, persistedItem)
           setUserMoments(next)
 
           scheduleMomentInteractionMemoryArchive({
-            moment: item,
+            moment: persistedItem,
             apiConfig,
             wechatAccountId: currentAccountId,
             playerIdentityId: qnaWechatCtx?.playerIdentityId ?? '__none__',
@@ -452,9 +495,10 @@ export function WeChatMomentsPage({
           try {
             aiDrafts = await generateMomentInteractions({
               apiConfig,
-              momentContent: draft.content,
+              momentContent: momentContentForAi,
               imageCount: draft.images.length,
               momentImages: draft.images,
+              hasAttachedMusic: !!persistedItem.attachedMusic,
               allowedCharacters: allowed,
               mentionedCharacters,
               wechatCtx: qnaWechatCtx,
@@ -477,9 +521,10 @@ export function WeChatMomentsPage({
             relationships: momentRelationships,
             engagementRules: userMomentEngagementRules,
             wechatCtx: qnaWechatCtx,
-            momentContent: draft.content,
+            momentContent: momentContentForAi,
             momentImages: draft.images,
             imageCount: draft.images.length,
+            hasAttachedMusic: !!persistedItem.attachedMusic,
             momentPublishedAt: publishedAt,
           })
 
@@ -491,7 +536,7 @@ export function WeChatMomentsPage({
             !settings.enableDelayedInteraction,
           )
           interactions = applyQueuedRevealAfterGeneration(item.id, interactions)
-          const withInteractions = { ...item, interactions }
+          const withInteractions = { ...persistedItem, interactions }
           const patched = await patchUserMoment(currentAccountId, item.id, { interactions })
           if (shouldGenerateInteractions) {
             markMomentInteractionGenerationEnd(item.id, countAiEngagementDrafts(aiDrafts))
@@ -945,7 +990,11 @@ export function WeChatMomentsPage({
       <PublishMomentPage
         open={publishOpen}
         contacts={momentContacts}
-        onClose={() => setPublishOpen(false)}
+        initialDraft={publishInitialDraft}
+        onClose={() => {
+          setPublishOpen(false)
+          setPublishInitialDraft(null)
+        }}
         onPublish={handlePublish}
       />
 

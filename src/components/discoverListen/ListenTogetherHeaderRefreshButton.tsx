@@ -8,7 +8,7 @@ const VARIANT_CLASS: Record<ListenTogetherHeaderRefreshVariant, string> = {
   dark: 'bg-black/25 text-white backdrop-blur-sm hover:bg-black/40 disabled:opacity-50',
   ghost:
     'text-stone-600 hover:bg-white hover:text-rose-500 disabled:opacity-50',
-  rose: 'border border-rose-100 bg-rose-50/80 text-rose-400 shadow-sm hover:bg-rose-100 disabled:opacity-50',
+  rose: 'border border-rose-100 bg-rose-50 text-rose-400 shadow-sm hover:bg-rose-100 disabled:opacity-50',
 }
 
 export type ListenTogetherHeaderRefreshButtonProps = {

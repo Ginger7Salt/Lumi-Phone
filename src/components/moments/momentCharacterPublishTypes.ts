@@ -3,9 +3,10 @@ import { normalizeCharacterMomentPrivacyDraft } from './momentCharacterPrivacyAi
 import { unwrapMomentJsonPayload } from '../anonymousQa/qnaDirectedJsonParse'
 import { MAX_MOMENT_IMAGES } from './momentContentLimits'
 import { normalizeMomentLocation } from './momentLocationUtils'
+import { parseCharacterMomentSongDraftFromAi, type CharacterMomentSongDraft } from './momentAttachedMusic'
 import { sanitizeMomentBodyText } from './momentTextSanitize'
 
-export type CharacterMomentPostType = 'text' | 'image' | 'mixed'
+export type CharacterMomentPostType = 'text' | 'image' | 'mixed' | 'music'
 
 /** @deprecated 使用 CharacterMomentPrivacyDraft */
 export type CharacterMomentPrivacyHint = 'only_user' | 'public'
@@ -31,6 +32,8 @@ export type CharacterMomentAiDraft = {
   mentionCharacterIds?: string[]
   /** 发布者在自己动态下的评论区自评补充（0~3 条） */
   publisherSelfComments?: PublisherSelfCommentDraft[]
+  /** postType=music 时 AI 给出的歌曲信息（发布前会解析为 attachedMusic） */
+  attachedMusicDraft?: CharacterMomentSongDraft
 }
 
 export const PUBLISHER_SELF_COMMENT_JSON_HINT =
@@ -51,7 +54,7 @@ export const PUBLISHER_SELF_COMMENT_PROMPT_RULES = `
 `.trim()
 
 export function normalizeCharacterMomentPostType(raw: unknown): CharacterMomentPostType {
-  if (raw === 'text' || raw === 'image' || raw === 'mixed') return raw
+  if (raw === 'text' || raw === 'image' || raw === 'mixed' || raw === 'music') return raw
   return 'mixed'
 }
 
@@ -99,10 +102,12 @@ export function normalizeCharacterMomentAiDraft(
     .filter(Boolean)
     .slice(0, MAX_MOMENT_IMAGES)
   const privacy = normalizeCharacterMomentPrivacyDraft(o, publisherCharacterId)
+  const attachedMusicDraft = parseCharacterMomentSongDraftFromAi(o.attachedMusic)
 
   if (postType === 'text' && !content) return null
   if (postType === 'image' && !images.length) return null
   if (postType === 'mixed' && !content && !images.length) return null
+  if (postType === 'music' && !attachedMusicDraft) return null
 
   const location = normalizeMomentLocation(o.location)
   const isPinned = o.isPinned === true
@@ -127,5 +132,6 @@ export function normalizeCharacterMomentAiDraft(
     mentionUser,
     mentionCharacterIds,
     ...(publisherSelfComments.length ? { publisherSelfComments } : {}),
+    ...(attachedMusicDraft ? { attachedMusicDraft } : {}),
   }
 }

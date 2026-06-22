@@ -99,6 +99,12 @@ import {
   buildUserMomentPublishRequestBias,
   filterCharacterMomentPublishDirectives,
 } from './wechatCharacterMomentPublishApply'
+import {
+  applyCharacterMomentSongShareDirectives,
+  filterCharacterMomentSongShareDirectives,
+  mergeCharacterMomentSongShareDirectiveLines,
+  WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX,
+} from './wechatCharacterMomentSongShareApply'
 import { buildCharacterMomentsPinCatalogBlock } from '../../../components/moments/momentPinService'
 import { buildUserMomentsVisibleToCharacterCatalogBlock } from '../../../components/moments/userMomentChatCatalog'
 import { contactEntryFromCharacter } from './wechatPersonaContactsSync'
@@ -126,6 +132,8 @@ import type {
   WeChatTransferPayload,
   WeChatMusicSyncPayload,
   WeChatListenCommentSharePayload,
+  WeChatListenProfileSharePayload,
+  WeChatListenTrackSharePayload,
   WeChatSharedRecordPayload,
   WeChatChatHistoryPayload,
   WeChatMusicSyncInvitePayload,
@@ -291,6 +299,13 @@ import type { CharacterPsycheMetricsSnapshot, CharacterPsycheState } from './cha
 import { RedPacketChatRow } from './redPacket/RedPacketChatRow'
 import { MusicInviteChatRow } from './musicSync/MusicInviteChatRow'
 import { ListenCommentShareChatRow } from './musicSync/ListenCommentShareChatRow'
+import { ListenProfileShareChatRow } from './musicSync/ListenProfileShareChatRow'
+import { ListenTrackShareChatRow } from './musicSync/ListenTrackShareChatRow'
+import {
+  formatListenCommentShareAiTranscriptLine,
+  formatListenProfileShareAiTranscriptLine,
+  formatListenTrackShareAiTranscriptLine,
+} from './musicSync/listenShareAiContext'
 import { SharedRecordChatRow } from './favorites/SharedRecordChatRow'
 import { ShareContactSheet } from './favorites/ShareContactSheet'
 import { ChatHistoryChatRow } from './chatHistory/ChatHistoryChatRow'
@@ -317,9 +332,12 @@ import { buildSharedRecordPayloadFromFavorite } from './favorites/buildSharedRec
 import type { FavoriteItem } from './favorites/favoriteItemTypes'
 import { sendSharedRecordToContact } from './favorites/sendSharedRecord'
 import { requestOpenListenCommentShareCard } from '../../../components/discoverListen/listenTogetherCommentNavigation'
+import { requestOpenListenProfileShareCard } from '../../../components/discoverListen/listenTogetherProfileNavigation'
+import { requestOpenListenTrackShareCard } from '../../../components/discoverListen/listenTogetherTrackNavigation'
 import {
   adjudicateMusicSyncFromCharacterText,
   buildMusicSyncInviteReplyBias,
+  expandMultilineReplyBubbles,
   formatMusicSyncInviteTranscriptLine,
   findLatestPendingMusicInvite,
   isMusicSyncDirectiveArtifactLine,
@@ -327,7 +345,21 @@ import {
   parseMusicSyncIncomingActionDirective,
   resolveMusicSyncInviteCover,
   resolvePendingMusicInviteMessageId,
+  WECHAT_LISTEN_TRACK_SHARE_OUTPUT_BLOCK,
 } from './musicSync/wechatMusicSyncAi'
+import { buildSyncListeningLyricHumBias, buildSyncListeningPlaybackBias } from './musicSync/syncListeningPlaybackBias'
+import { preprocessCharacterMusicSyncBubblesForChat, applyCharacterMusicSeek, applyCharacterMusicSyncDirective, startCharacterMusicSyncInvitePlayback, type PendingCharacterMusicSyncInvite, type PendingCharacterMusicSyncPlay, type PendingCharacterMusicSyncSeek } from './musicSync/applyCharacterMusicSyncDirective'
+import {
+  buildCharacterMusicSyncInviteStateBias,
+  formatCharacterMusicSyncInviteTranscriptLine,
+  isCharacterMusicSyncDirectiveArtifactLine,
+  mergeCharacterMusicSyncDirectiveLines,
+  parseCharacterMusicSyncDirectiveFromArtifactLine,
+  WECHAT_CHARACTER_MUSIC_SYNC_OUTPUT_BLOCK,
+} from './musicSync/wechatCharacterMusicSyncAi'
+import { shouldEngageMusicSyncInviteFlow } from './musicSync/findLatestSelfListenTrackShareInBurst'
+import { resolveListenTogetherSyncUserAvatar } from '../../../components/discoverListen/useListenTogetherUserAvatar'
+import { resolveWechatAppAvatar } from '../../../components/discoverListen/listenTogetherUserAvatarPreference'
 import { useMusicStore } from '../../../stores/useMusicStore'
 import { RedPacketModal } from './redPacket/RedPacketModal'
 import type { TransferBubblePerspective } from './transfer/TransferBubble'
@@ -483,7 +515,10 @@ function itemsToTranscript(items: ChatItem[], opts?: { groupSpeakerLabel?: (m: C
           return {
             id: m.id,
             from: m.from,
-            text: formatMusicSyncInviteTranscriptLine(m.id, ms),
+            text:
+              m.from === 'self'
+                ? formatMusicSyncInviteTranscriptLine(m.id, ms)
+                : formatCharacterMusicSyncInviteTranscriptLine(m.id, ms),
             replyTo: m.replyTo,
             speakerLabel,
           }
@@ -512,7 +547,27 @@ function itemsToTranscript(items: ChatItem[], opts?: { groupSpeakerLabel?: (m: C
         return {
           id: m.id,
           from: m.from,
-          text: `（分享评论）${lc.commentAuthor}：${lc.commentText} · 《${lc.targetTitle}》`,
+          text: formatListenCommentShareAiTranscriptLine(lc),
+          replyTo: m.replyTo,
+          speakerLabel,
+        }
+      }
+      if (m.listenProfileShare) {
+        const lp = m.listenProfileShare
+        return {
+          id: m.id,
+          from: m.from,
+          text: formatListenProfileShareAiTranscriptLine(lp),
+          replyTo: m.replyTo,
+          speakerLabel,
+        }
+      }
+      if (m.listenTrackShare) {
+        const lt = m.listenTrackShare
+        return {
+          id: m.id,
+          from: m.from,
+          text: formatListenTrackShareAiTranscriptLine(lt),
           replyTo: m.replyTo,
           speakerLabel,
         }
@@ -627,6 +682,8 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
         voice: m.voice,
         musicSync: m.musicSync,
         listenCommentShare: m.listenCommentShare,
+        listenProfileShare: m.listenProfileShare,
+        listenTrackShare: m.listenTrackShare,
         sharedRecord: m.sharedRecord,
         originalText: m.originalContent,
         isRecalled: m.isRecalled,
@@ -640,6 +697,14 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
     }
     const ext = m.ext
     let bodyText = m.content
+    if (
+      m.type === 'character' &&
+      !m.musicSync &&
+      typeof bodyText === 'string' &&
+      (isMusicSyncDirectiveArtifactLine(bodyText) || isCharacterMusicSyncDirectiveArtifactLine(bodyText))
+    ) {
+      continue
+    }
     if (
       m.type === 'character' &&
       m.characterId?.trim() === WECHAT_GROUP_BOT_CHARACTER_ID &&
@@ -664,6 +729,8 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
       voice: m.voice,
       musicSync: m.musicSync,
       listenCommentShare: m.listenCommentShare,
+      listenProfileShare: m.listenProfileShare,
+      listenTrackShare: m.listenTrackShare,
       sharedRecord: m.sharedRecord,
       chatHistory: resolvedChatHistory,
       originalText: m.originalContent,
@@ -724,7 +791,7 @@ function rebuildChatItemsWithTimestamps(msgs: ChatMsg[], formatWxTimeLabel: (ts:
 function messagePlainPreview(
   msg: Pick<
     ChatMsg,
-    'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'listenCommentShare' | 'sharedRecord' | 'chatHistory' | 'isRecalled' | 'isGroupEventStrip'
+    'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'listenCommentShare' | 'listenProfileShare' | 'listenTrackShare' | 'sharedRecord' | 'chatHistory' | 'isRecalled' | 'isGroupEventStrip'
   >,
 ): string {
   if (msg.isGroupEventStrip && msg.text?.trim()) return msg.text.trim()
@@ -737,6 +804,11 @@ function messagePlainPreview(
   if (ms?.kind === 'music_accept') return '[频率已接轨]'
   if (ms?.kind === 'music_decline') return '[错失的波段]'
   if (msg.listenCommentShare) return `[分享评论] ${msg.listenCommentShare.targetTitle}`
+  if (msg.listenProfileShare) return `[分享主页] ${msg.listenProfileShare.displayName}`
+  if (msg.listenTrackShare) {
+    const prefix = msg.listenTrackShare.targetType === 'song' ? '[分享单曲]' : '[分享歌单]'
+    return `${prefix} ${msg.listenTrackShare.targetTitle}`
+  }
   if (msg.sharedRecord) return '[收藏]'
   if (msg.chatHistory) return '[聊天记录]'
   const rp = msg.redPacket
@@ -816,6 +888,10 @@ function bubbleLineNeedsSpecialBubbleHandler(line: string): boolean {
   if (parseCharacterProfileImageApplyDirective(t)) return true
   if (parseCharacterWechatProfileUpdateDirective(t)) return true
   if (parseCharacterMomentPinDirective(t)) return true
+  if (parseMusicSyncIncomingActionDirective(t)) return true
+  if (isMusicSyncDirectiveArtifactLine(t)) return true
+  if (parseCharacterMusicSyncDirectiveFromArtifactLine(t)) return true
+  if (isCharacterMusicSyncDirectiveArtifactLine(t)) return true
   return false
 }
 
@@ -1278,6 +1354,8 @@ type ChatMsg = {
   }
   musicSync?: WeChatMusicSyncPayload
   listenCommentShare?: WeChatListenCommentSharePayload
+  listenProfileShare?: WeChatListenProfileSharePayload
+  listenTrackShare?: WeChatListenTrackSharePayload
   sharedRecord?: WeChatSharedRecordPayload
   chatHistory?: WeChatChatHistoryPayload
   status?: MsgStatus
@@ -1338,6 +1416,9 @@ type OpponentRevealJob = {
   opponentRevealFlushSync?: boolean
   persist: () => void
   afterReveal?: () => void
+  /** 不展示气泡，仅按 delay 执行 beforeReveal / afterReveal（共听指令等在可见气泡露出后收尾） */
+  revealCallbackOnly?: boolean
+  revealCallbackDelayMs?: number
 }
 
 /** AI 对方消息逐条露出前的动态间隔（毫秒）：短句偏快，长句偏慢；语音按时长。 */
@@ -1703,6 +1784,7 @@ export function ChatRoom({
   onOpenGroupInfo: _onOpenGroupInfo,
   psycheRadarOpen = false,
   onPsycheRadarOpenChange,
+  onCheckPhoneOpenChange,
   embedMode,
   onEmbedSendReady,
 }: {
@@ -1776,6 +1858,8 @@ export function ChatRoom({
   /** 私聊顶栏「体征监测」抽屉开关（由 WeChatApp 承载入口） */
   psycheRadarOpen?: boolean
   onPsycheRadarOpenChange?: (open: boolean) => void
+  /** 查手机全屏模式：通知上层隐藏微信顶栏，避免遮挡镜像 App 内页标题 */
+  onCheckPhoneOpenChange?: (open: boolean) => void
   /** 隐藏 UI，仅保留发送与 AI 管线（全局快捷回复引擎） */
   embedMode?: 'quick-reply'
   onEmbedSendReady?: (api: { sendText: (text: string) => void }) => void
@@ -2231,6 +2315,7 @@ export function ChatRoom({
 
   /** 聊天列表（含时间行）；对方 AI 气泡经 `pendingQueue` 逐条并入此 state，避免大批量 setState 卡死 */
   const [items, setItems] = useState<ChatItem[]>([])
+  const [musicInviteRespondBusy, setMusicInviteRespondBusy] = useState(false)
   const itemsRef = useRef(items)
   itemsRef.current = items
   /** 当前会话从 DB 拉取窗口内的完整消息（含「仅 UI 隐藏」），供 AI 转写；与气泡列表展示可不同步 */
@@ -2694,16 +2779,18 @@ export function ChatRoom({
         msg: ackMsg,
         beforeReveal: () => {
           const userName = playerDisplayName.trim() || state.profile.displayName.trim() || '我'
-          const userAvatar =
-            playerAvatarUrl?.trim() ||
-            resolveCharacterAvatarUrl({ avatarUrl: state.profile.avatarImageUrl }) ||
-            state.profile.avatarImageUrl ||
-            ''
+          const wechatAvatar =
+            playerAvatarUrl?.trim() || resolveWechatAppAvatar(state.profile.avatarImageUrl)
+          const userAvatar = resolveListenTogetherSyncUserAvatar({ wechatAvatarUrl: wechatAvatar })
           const companionName = peerNotifyTitle.trim() || '对方'
           const companionAvatar = peerAvatarResolved?.trim() || ''
           useMusicStore.getState().setSyncListening({
             user: { name: userName, avatar: userAvatar },
-            companion: { name: companionName, avatar: companionAvatar },
+            companion: {
+              name: companionName,
+              avatar: companionAvatar,
+              characterId: conversationCharacterId,
+            },
           })
         },
         persist: () => {
@@ -2716,7 +2803,7 @@ export function ChatRoom({
                 type: 'character',
                 content: body,
                 musicSync: acceptSync,
-                timestamp: ts,
+                timestamp: ackMsg.timestamp,
                 isRead: true,
                 conversationKey,
               })
@@ -2771,7 +2858,83 @@ export function ChatRoom({
                 type: 'character',
                 content: body,
                 musicSync: { kind: 'music_decline', inviteId: invite.inviteId, replyText: body },
-                timestamp: ts,
+                timestamp: ackMsg.timestamp,
+                isRead: true,
+                conversationKey,
+              })
+              emitWeChatStorageChanged()
+            } catch {
+              /* ignore */
+            }
+          })()
+        },
+      }
+    },
+    [conversationCharacterId, conversationKey, getCurrentTimeMs, playerIdentityId],
+  )
+
+  const buildCharacterMusicSyncSessionContext = useCallback(() => {
+    const userName = playerDisplayName.trim() || state.profile.displayName.trim() || '我'
+    const wechatAvatar =
+      playerAvatarUrl?.trim() || resolveWechatAppAvatar(state.profile.avatarImageUrl)
+    const userAvatar = resolveListenTogetherSyncUserAvatar({ wechatAvatarUrl: wechatAvatar })
+    const companionName = peerNotifyTitle.trim() || '对方'
+    const companionAvatar = peerAvatarResolved?.trim() || ''
+    return {
+      characterId: conversationCharacterId,
+      user: { name: userName, avatar: userAvatar },
+      companion: {
+        name: companionName,
+        avatar: companionAvatar,
+        characterId: conversationCharacterId,
+      },
+    }
+  }, [
+    conversationCharacterId,
+    peerAvatarResolved,
+    peerNotifyTitle,
+    playerAvatarUrl,
+    playerDisplayName,
+    state.profile.avatarImageUrl,
+    state.profile.displayName,
+  ])
+
+  const createCharacterMusicSyncInviteRevealJob = useCallback(
+    (
+      invite: WeChatMusicSyncInvitePayload,
+      replyText?: string,
+      characterId?: string,
+    ): OpponentRevealJob => {
+      const charId = characterId?.trim() || conversationCharacterId
+      const ts = getCurrentTimeMs()
+      const msgId = `wxm-${ts}-cmi-${Math.random().toString(36).slice(2, 8)}`
+      const body = replyText?.trim() || '[音乐共听邀约]'
+      const ackMsg: ChatMsg = {
+        id: msgId,
+        kind: 'msg',
+        from: 'other',
+        senderCharacterId: charId,
+        text: body,
+        timestamp: ts,
+        status: 'sent',
+        otherAnimated: true,
+        musicSync: invite,
+      }
+      return {
+        forConversationKey: conversationKey,
+        msg: ackMsg,
+        opponentRevealFlushSync: true,
+        persist: () => {
+          void (async () => {
+            try {
+              await personaDb.appendWeChatChatMessage({
+                id: msgId,
+                characterId: charId,
+                playerIdentityId,
+                type: 'character',
+                content: body,
+                musicSync: invite,
+                timestamp: ackMsg.timestamp,
                 isRead: true,
                 conversationKey,
               })
@@ -3731,6 +3894,14 @@ export function ChatRoom({
   const [shareForwardMode, setShareForwardMode] = useState<'multi-item' | 'multi-merge'>('multi-merge')
   const [checkPhoneOpen, setCheckPhoneOpen] = useState(false)
 
+  useEffect(() => {
+    onCheckPhoneOpenChange?.(checkPhoneOpen)
+  }, [checkPhoneOpen, onCheckPhoneOpenChange])
+
+  useEffect(() => {
+    return () => onCheckPhoneOpenChange?.(false)
+  }, [onCheckPhoneOpenChange])
+
   const openHeartWhisperPanel = useCallback(() => {
     if (isMultiSelectMode) return
     setPlusMenuOpen(false)
@@ -4008,6 +4179,9 @@ export function ChatRoom({
   }, [items, conversationKey, setTypingVisible])
 
   const opponentRevealJobsRef = useRef<OpponentRevealJob[]>([])
+  /** 单轮气泡循环内暂不入队，避免逐条 enqueue 与露出处理器交错导致顺序错乱 */
+  const deferBubbleRevealEnqueueRef = useRef(false)
+  const deferredBubbleRevealJobsRef = useRef<OpponentRevealJob[]>([])
   const syncAiReplyPipelineActiveRef = useRef<(ck?: string) => boolean>(() => false)
   const [pendingQueue, setPendingQueue] = useState<ChatMsg[]>([])
 
@@ -4116,7 +4290,6 @@ export function ChatRoom({
   ])
 
   const kickOpponentRevealProcessor = useCallback(() => {
-    if (opponentRevealTimerRef.current != null) return
     const run = () => {
       const q = opponentRevealJobsRef.current
       if (q.length === 0) {
@@ -4126,7 +4299,9 @@ export function ChatRoom({
         return
       }
       const head = q[0]!
-      const delay = computeOpponentStaggerDelayMs(head.msg)
+      const delay = head.revealCallbackOnly
+        ? Math.max(0, head.revealCallbackDelayMs ?? 0)
+        : computeOpponentStaggerDelayMs(head.msg)
       opponentRevealTimerRef.current = window.setTimeout(() => {
         opponentRevealTimerRef.current = null
         const job = opponentRevealJobsRef.current.shift()
@@ -4139,10 +4314,30 @@ export function ChatRoom({
           run()
           return
         }
+        if (job.revealCallbackOnly) {
+          try {
+            job.beforeReveal?.()
+          } catch {
+            /* ignore */
+          }
+          try {
+            job.afterReveal?.()
+          } catch {
+            /* ignore */
+          }
+          run()
+          return
+        }
         setPendingQueue(
           opponentRevealJobsRef.current.filter(isOpponentRevealJobForLiveConversation).map((j) => j.msg),
         )
         const incoming = { ...job.msg, otherAnimated: true }
+        if (job.msg.musicSync?.kind === 'music_invite') {
+          logConsole(
+            'ai',
+            `[music_sync] 露出共听邀约卡：${job.msg.id} 《${job.msg.musicSync.trackTitle}》`,
+          )
+        }
         const el = scrollRef.current
         const atBottomNow = el ? isScrollNearBottom(el) : isAtBottomRef.current
         const browsingHistory = !!el && userScrolledRef.current && !atBottomNow
@@ -4184,6 +4379,7 @@ export function ChatRoom({
     if (opponentRevealJobsRef.current.some(isOpponentRevealJobForLiveConversation)) {
       onOpponentRevealQueueActive?.(true)
     }
+    if (opponentRevealTimerRef.current != null) return
     run()
   }, [
     isOpponentRevealJobForLiveConversation,
@@ -4206,6 +4402,10 @@ export function ChatRoom({
         ...j,
         forConversationKey: j.forConversationKey?.trim() || liveConvKey,
       }))
+      if (deferBubbleRevealEnqueueRef.current) {
+        deferredBubbleRevealJobsRef.current.push(...stamped)
+        return
+      }
       const persistOnly: OpponentRevealJob[] = []
       const forLive: OpponentRevealJob[] = []
       for (const j of stamped) {
@@ -4242,6 +4442,12 @@ export function ChatRoom({
     ],
   )
 
+  const flushDeferredBubbleRevealJobs = useCallback(() => {
+    if (!deferredBubbleRevealJobsRef.current.length) return
+    const jobs = deferredBubbleRevealJobsRef.current.splice(0)
+    enqueueOpponentMessagesSequential(jobs)
+  }, [enqueueOpponentMessagesSequential])
+
   /** 前台聊天页：主动消息走与普通 AI 相同的逐条露出 + 顶栏「对方正在输入」 */
   useEffect(() => {
     if (!proactiveCountdownEnabled) return
@@ -4268,6 +4474,7 @@ export function ChatRoom({
             senderCharacterId: payload.characterId,
             voice: p.voice,
             images: p.images,
+            musicSync: p.musicSync,
             otherAnimated: true,
           }
           return {
@@ -4288,6 +4495,7 @@ export function ChatRoom({
                   notifyPeerTitle: payload.notifyPeerTitle,
                   voice: p.voice,
                   images: p.images,
+                  musicSync: p.musicSync,
                 })
                 .catch(() => {})
             },
@@ -4685,6 +4893,66 @@ export function ChatRoom({
       toastTimerRef.current = null
     }, 2200)
   }, [])
+
+  const handleRespondToCharacterMusicInvite = useCallback(
+    async (
+      messageId: string,
+      invite: WeChatMusicSyncInvitePayload,
+      response: 'accept' | 'decline',
+    ) => {
+      if (invite.userResponded || musicInviteRespondBusy) return
+      const msgId = messageId.trim()
+      if (!msgId) return
+      setMusicInviteRespondBusy(true)
+      const updatedInvite: WeChatMusicSyncInvitePayload = {
+        ...invite,
+        userResponded: response === 'accept' ? 'accepted' : 'declined',
+      }
+      try {
+        setItems((prev) => {
+          const next = rebuildWithCurrentTime(
+            extractMessages(prev).map((msg) =>
+              msg.id === msgId ? { ...msg, musicSync: updatedInvite } : msg,
+            ),
+          )
+          itemsRef.current = next
+          return next
+        })
+        await personaDb.patchWeChatChatMessageById(msgId, { musicSync: updatedInvite })
+        if (response === 'accept') {
+          const started = await startCharacterMusicSyncInvitePlayback(
+            invite,
+            buildCharacterMusicSyncSessionContext(),
+          )
+          if (!started) {
+            showComposerToast('暂时无法播放这首歌，请稍后再试')
+          }
+        } else {
+          const ctx = buildCharacterMusicSyncSessionContext()
+          const { syncListening, setSyncListening } = useMusicStore.getState()
+          if (syncListening?.companion.characterId === ctx.characterId) {
+            setSyncListening(null)
+          }
+        }
+      } catch (err) {
+        logger.log(
+          'error',
+          `角色共听邀约回应失败 id=${msgId} err=${err instanceof Error ? err.message : String(err)}`,
+        )
+        showComposerToast('操作失败，请稍后再试')
+      } finally {
+        setMusicInviteRespondBusy(false)
+      }
+    },
+    [
+      buildCharacterMusicSyncSessionContext,
+      extractMessages,
+      logger,
+      musicInviteRespondBusy,
+      rebuildWithCurrentTime,
+      showComposerToast,
+    ],
+  )
 
   useEffect(() => {
     return () => {
@@ -5851,7 +6119,15 @@ export function ChatRoom({
             })()
             traceReplyBias = [mergedReplyBias, recallBias, groupCtxBias, atYouBias].filter((x) => x.trim()).join('\n\n')
             if (roomType !== 'group' && !lumiAssistantChat && personaCharacterId?.trim()) {
-              const pendingInvite = findLatestPendingMusicInvite(extractMessages(buildChatItemsForAiTranscript()))
+              const engageMusicSync = shouldEngageMusicSyncInviteFlow(reversed)
+              if (!engageMusicSync) {
+                traceReplyBias = [traceReplyBias, WECHAT_LISTEN_TRACK_SHARE_OUTPUT_BLOCK]
+                  .filter((x) => x.trim())
+                  .join('\n\n')
+              }
+              const pendingInvite = engageMusicSync
+                ? findLatestPendingMusicInvite(extractMessages(buildChatItemsForAiTranscript()))
+                : null
               if (pendingInvite) {
                 const msBias = buildMusicSyncInviteReplyBias({
                   messageId: pendingInvite.messageId,
@@ -5890,6 +6166,31 @@ export function ChatRoom({
               if (fhBias.trim()) {
                 traceReplyBias = [traceReplyBias, fhBias].filter((x) => x.trim()).join('\n\n')
               }
+              const syncPlaybackBias = buildSyncListeningPlaybackBias(personaCharacterId)
+              if (syncPlaybackBias.trim()) {
+                traceReplyBias = [traceReplyBias, syncPlaybackBias].filter((x) => x.trim()).join('\n\n')
+              }
+              const characterInviteStateBias = buildCharacterMusicSyncInviteStateBias(
+                personaCharacterId,
+                extractMessages(buildChatItemsForAiTranscript()),
+              )
+              if (characterInviteStateBias.trim()) {
+                traceReplyBias = [traceReplyBias, characterInviteStateBias].filter((x) => x.trim()).join('\n\n')
+              }
+              const lastUserSelfTextForSync = [...transcript].reverse().find((t) => t.from === 'self')?.text ?? ''
+              const syncLyricHumBias = buildSyncListeningLyricHumBias(
+                personaCharacterId,
+                lastUserSelfTextForSync,
+              )
+              if (syncLyricHumBias.trim()) {
+                traceReplyBias = [traceReplyBias, syncLyricHumBias].filter((x) => x.trim()).join('\n\n')
+              }
+              traceReplyBias = [traceReplyBias, WECHAT_CHARACTER_MUSIC_SYNC_OUTPUT_BLOCK]
+                .filter((x) => x.trim())
+                .join('\n\n')
+              traceReplyBias = [traceReplyBias, WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX]
+                .filter((x) => x.trim())
+                .join('\n\n')
             }
             pendingRecalledUserTextRef.current = null
             let sharedLinkPreviewBlock = ''
@@ -6815,9 +7116,116 @@ export function ChatRoom({
               showComposerToast(pinned ? '已发布朋友圈（已置顶）' : '已发布朋友圈')
             }
           }
+          let mergedSongShareBubbles = [...bubbles]
+          for (let i = 0; i < mergedSongShareBubbles.length; i += 1) {
+            const merged = mergeCharacterMomentSongShareDirectiveLines(
+              mergedSongShareBubbles[i]!,
+              mergedSongShareBubbles[i + 1] != null
+                ? String(mergedSongShareBubbles[i + 1] ?? '')
+                : undefined,
+            )
+            if (merged !== mergedSongShareBubbles[i]) {
+              mergedSongShareBubbles[i] = merged
+              mergedSongShareBubbles.splice(i + 1, 1)
+            }
+          }
+          const songShareFiltered = filterCharacterMomentSongShareDirectives(mergedSongShareBubbles)
+          bubbles = songShareFiltered.bubbles
+          if (songShareFiltered.directives.length) {
+            const songShareResult = await applyCharacterMomentSongShareDirectives({
+              accountId: currentAccountId,
+              characterId: character.id,
+              playerIdentityId,
+              playerDisplayName,
+              apiConfig,
+              directives: songShareFiltered.directives,
+            })
+            if (songShareResult.published > 0) {
+              showComposerToast('已分享歌曲到朋友圈')
+            }
+          }
         }
         const bubbleExtraction = extractDanmakuFromBubbleText(bubbles)
-        bubbles = bubbleExtraction.cleaned
+        bubbles = expandMultilineReplyBubbles(bubbleExtraction.cleaned)
+        let pendingMusicSyncInvitesThisRound: PendingCharacterMusicSyncInvite[] = []
+        let pendingMusicSyncSeeksThisRound: PendingCharacterMusicSyncSeek[] = []
+        let pendingMusicSyncPlaysThisRound: PendingCharacterMusicSyncPlay[] = []
+        if (roomType !== 'group' && !lumiAssistantChat && pm === 'persona') {
+          const musicPre = await preprocessCharacterMusicSyncBubblesForChat({
+            bubbles,
+            ctx: buildCharacterMusicSyncSessionContext(),
+            onInviteResolved: (invite) => {
+              const enriched = invite.trackId > 0 ? '已匹配网易云曲目' : '未匹配曲目 id，按指令展示卡片'
+              logConsole(
+                'ai',
+                `[music_sync] 共听邀约卡就绪：《${invite.trackTitle}》— ${invite.trackArtist || '未知歌手'}（trackId=${invite.trackId}；${enriched}）`,
+              )
+            },
+            onInviteFailed: ({ title, artist }) => {
+              const label = [title, artist].filter(Boolean).join(' · ') || '未指定歌名/歌手'
+              logConsole('ai', `[music_sync] MUSIC_SYNC_INVITE 缺少歌名/歌手，未生成邀约卡：${label}`)
+            },
+            onSeekPlanned: (seek) => {
+              const sec = (seek.timeMs / 1000).toFixed(1)
+              const hint = seek.lyricHint ? `；${seek.lyricHint}` : ''
+              logConsole(
+                'ai',
+                `[music_sync] 计划在第 ${seek.insertAfterBubbleStep} 条气泡后拉进度：${sec}s${hint}`,
+              )
+            },
+            onPlayPlanned: (play) => {
+              const label = [play.directive.title, play.directive.artist].filter(Boolean).join(' · ') || '当前曲'
+              logConsole(
+                'ai',
+                `[music_sync] 计划在第 ${play.insertAfterBubbleStep} 条气泡后点播：《${label}》`,
+              )
+            },
+            onPlayConvertedToInvite: (play) => {
+              const label = [play.title, play.artist].filter(Boolean).join(' · ') || '指定曲目'
+              logConsole(
+                'ai',
+                `[music_sync] 未处于共听会话，MUSIC_PLAY 已转为 MUSIC_SYNC_INVITE：《${label}》`,
+              )
+            },
+          })
+          bubbles = musicPre.bubbles
+          rebuildOrderedSegmentsFromBubbles(bubbles)
+          pendingMusicSyncInvitesThisRound = musicPre.pendingInvites
+          pendingMusicSyncSeeksThisRound = musicPre.pendingSeeks
+          pendingMusicSyncPlaysThisRound = musicPre.pendingPlays
+          if (musicPre.bubbles.length !== (aiReply.bubbles ?? []).length) {
+            logConsole(
+              'ai',
+              `[music_sync] 预处理后可见气泡(count=${musicPre.bubbles.length}): ${musicPre.bubbles.map((b, i) => `${i + 1}. ${b}`).join(' | ')}`,
+            )
+          }
+          if (musicPre.pendingInvites.length) {
+            for (const p of musicPre.pendingInvites) {
+              logConsole(
+                'ai',
+                `[music_sync] 计划在第 ${p.insertAfterBubbleStep} 条气泡后插入共听卡：《${p.invite.trackTitle}》`,
+              )
+            }
+          } else if (
+            (aiReply.bubbles ?? []).some((b) =>
+              /\[MUSIC_SYNC_INVITE\]/i.test(String(b ?? '')),
+            )
+          ) {
+            logConsole(
+              'ai',
+              '[music_sync] 模型输出了 MUSIC_SYNC_INVITE 但未能生成邀约卡（请检查指令是否含 title/artist 或 trackId）',
+            )
+          }
+          if (
+            !musicPre.pendingSeeks.length &&
+            (aiReply.bubbles ?? []).some((b) => /\[MUSIC_SEEK\]/i.test(String(b ?? '')))
+          ) {
+            logConsole(
+              'ai',
+              '[music_sync] MUSIC_SEEK 未能解析进度（需 lyric/time/timeMs，且须正在与该角色一起听）',
+            )
+          }
+        }
         const danmakuLinesCollected = [
           ...(aiReply.danmakuLines ?? []).map((s) => String(s ?? '').trim()).filter(Boolean),
           ...bubbleExtraction.danmakuLines,
@@ -6848,7 +7256,7 @@ export function ChatRoom({
                 conversationKey,
                 peerCharacterId: convSettings.peerCharacterId,
                 playerIdentityId: convSettings.playerIdentityId,
-                proactiveMessageNextIntervalSeconds: drawProactiveVariableIntervalSeconds(true),
+                proactiveMessageNextIntervalSeconds: drawProactiveVariableIntervalSeconds(true, convSettings),
                 proactiveMessageLastFiredAtMs: nowTs,
               })
             }
@@ -6914,6 +7322,7 @@ export function ChatRoom({
             .map((s) => String(s ?? '').trim())
             .filter(Boolean)
             .filter((s) => !/^\[BUSY\]/i.test(s) && !/^["'“”‘’]\s*,?\s*"duration"\s*:/i.test(s))
+            .filter((s) => !isCharacterMusicSyncDirectiveArtifactLine(s) && !isMusicSyncDirectiveArtifactLine(s))
             .reduce<string[]>((acc, cur) => {
               const prev = acc.length ? acc[acc.length - 1] : ''
               if (prev && prev === cur) return acc
@@ -7052,8 +7461,102 @@ export function ChatRoom({
           }
           persistCharacterId = br.characterId
           notifyPeerRound = br.notifyTitle
-          const bubbles = [...br.bubbles]
+          let bubbles = [...br.bubbles]
           if (opponentQueueStopRef.current) break bubbleRunLoop
+
+        let pendingCharacterMusicSyncInvites = pendingMusicSyncInvitesThisRound
+        let pendingCharacterMusicSyncSeeks = pendingMusicSyncSeeksThisRound
+        let pendingCharacterMusicSyncPlays = pendingMusicSyncPlaysThisRound
+        const flushedCharacterMusicSyncInviteIdx = new Set<number>()
+        const flushedCharacterMusicSyncSeekIdx = new Set<number>()
+        const flushedCharacterMusicSyncPlayIdx = new Set<number>()
+        let bubbleRevealStepCount = 0
+        const flushCharacterMusicSyncPlayAt = (pending: PendingCharacterMusicSyncPlay, idx: number) => {
+          if (flushedCharacterMusicSyncPlayIdx.has(idx)) return
+          flushedCharacterMusicSyncPlayIdx.add(idx)
+          void applyCharacterMusicSyncDirective(pending.directive, buildCharacterMusicSyncSessionContext()).then(
+            (result) => {
+              const label = [pending.directive.title, pending.directive.artist].filter(Boolean).join(' · ')
+              logConsole(
+                'ai',
+                `[music_sync] 共听点播${result.playedTrack ? '成功' : '失败'}：${label || '指定曲目'}`,
+              )
+            },
+          )
+        }
+        const flushCharacterMusicSyncPlaysThroughStep = (step: number) => {
+          for (let pi = 0; pi < pendingCharacterMusicSyncPlays.length; pi += 1) {
+            const pending = pendingCharacterMusicSyncPlays[pi]!
+            if (pending.insertAfterBubbleStep !== step) continue
+            flushCharacterMusicSyncPlayAt(pending, pi)
+          }
+        }
+        const flushRemainingCharacterMusicSyncPlays = () => {
+          for (let pi = 0; pi < pendingCharacterMusicSyncPlays.length; pi += 1) {
+            flushCharacterMusicSyncPlayAt(pendingCharacterMusicSyncPlays[pi]!, pi)
+          }
+        }
+        const flushCharacterMusicSyncSeekAt = (pending: PendingCharacterMusicSyncSeek, idx: number) => {
+          if (flushedCharacterMusicSyncSeekIdx.has(idx)) return
+          flushedCharacterMusicSyncSeekIdx.add(idx)
+          const ok = applyCharacterMusicSeek(pending.timeMs)
+          const sec = (pending.timeMs / 1000).toFixed(1)
+          const hint = pending.lyricHint ? `（${pending.lyricHint}）` : ''
+          logConsole(
+            'ai',
+            `[music_sync] 共听拉进度${ok ? '成功' : '失败'}：${sec}s${hint}`,
+          )
+        }
+        const flushCharacterMusicSyncSeeksThroughStep = (step: number) => {
+          for (let si = 0; si < pendingCharacterMusicSyncSeeks.length; si += 1) {
+            const pending = pendingCharacterMusicSyncSeeks[si]!
+            if (pending.insertAfterBubbleStep !== step) continue
+            flushCharacterMusicSyncSeekAt(pending, si)
+          }
+        }
+        const flushRemainingCharacterMusicSyncSeeks = () => {
+          for (let si = 0; si < pendingCharacterMusicSyncSeeks.length; si += 1) {
+            flushCharacterMusicSyncSeekAt(pendingCharacterMusicSyncSeeks[si]!, si)
+          }
+        }
+        const enqueueCharacterMusicSyncInviteAt = (pending: PendingCharacterMusicSyncInvite, idx: number) => {
+          if (flushedCharacterMusicSyncInviteIdx.has(idx)) return
+          flushedCharacterMusicSyncInviteIdx.add(idx)
+          const replyText =
+            pending.replyText?.trim() ||
+            (() => {
+              const order = emittedMessageOrderThisRound
+              for (let oi = order.length - 1; oi >= 0; oi -= 1) {
+                const mid = order[oi]!
+                const meta = emittedMessageMetaThisRound.get(mid)
+                if (meta?.preview?.trim()) return meta.preview.trim()
+              }
+              return ''
+            })()
+          logConsole(
+            'ai',
+            `[music_sync] 共听邀约卡入队：《${pending.invite.trackTitle}》— ${pending.invite.trackArtist || '未知歌手'}（id=${pending.invite.trackId}）`,
+          )
+          logConsole(
+            'frontend',
+            `角色共听邀约卡入队：《${pending.invite.trackTitle}》— ${pending.invite.trackArtist || '未知歌手'}（id=${pending.invite.trackId}）`,
+          )
+          enqueueOpponentMessagesSequential([
+            createCharacterMusicSyncInviteRevealJob(pending.invite, replyText, persistCharacterId),
+          ])
+        }
+        const flushCharacterMusicSyncInvitesThroughStep = (step: number) => {
+          for (let pi = 0; pi < pendingCharacterMusicSyncInvites.length; pi += 1) {
+            const pending = pendingCharacterMusicSyncInvites[pi]!
+            if (pending.insertAfterBubbleStep !== step) continue
+            enqueueCharacterMusicSyncInviteAt(pending, pi)
+          }
+        }
+        const flushRemainingCharacterMusicSyncInvites = () => {
+          for (let pi = 0; pi < pendingCharacterMusicSyncInvites.length; pi += 1) {
+            enqueueCharacterMusicSyncInviteAt(pendingCharacterMusicSyncInvites[pi]!, pi)
+          }
+        }
 
         let pendingReplyMessageId: string | undefined
         let thinkingAttached = false
@@ -7068,10 +7571,40 @@ export function ChatRoom({
         let roundImagesEmittedCount = 0
         const emittedMessageOrderThisRound: string[] = []
         const emittedMessageMetaThisRound = new Map<string, { timestamp: number; preview: string }>()
-        const markEmittedThisRound = (id: string, timestamp: number, preview: string) => {
+        const markEmittedThisRound = (id: string, timestamp: number, preview: string): number => {
           emittedMessageIdsThisRound.add(id)
           emittedMessageOrderThisRound.push(id)
           emittedMessageMetaThisRound.set(id, { timestamp, preview })
+          bubbleRevealStepCount += 1
+          return bubbleRevealStepCount
+        }
+        const withMusicSyncFlushOnBubbleRevealed = (step: number, existing?: () => void) => () => {
+          existing?.()
+          flushCharacterMusicSyncInvitesThroughStep(step)
+          flushCharacterMusicSyncSeeksThroughStep(step)
+          flushCharacterMusicSyncPlaysThroughStep(step)
+        }
+        const enqueueMusicSyncRoundCompletionJob = () => {
+          enqueueOpponentMessagesSequential([
+            {
+              forConversationKey: conversationKey,
+              msg: {
+                id: `wxm-${getCurrentTimeMs()}-music-sync-tail`,
+                kind: 'msg',
+                from: 'other',
+                text: '',
+                timestamp: getCurrentTimeMs(),
+              },
+              persist: () => {},
+              revealCallbackOnly: true,
+              revealCallbackDelayMs: 0,
+              afterReveal: () => {
+                flushRemainingCharacterMusicSyncInvites()
+                flushRemainingCharacterMusicSyncSeeks()
+                flushRemainingCharacterMusicSyncPlays()
+              },
+            },
+          ])
         }
         /** 群助手 botViolation 禁言：落库前再判一次，避免同轮模型仍分配该角色台词 */
         const skipBubbleForGroupMute = async (): Promise<boolean> => {
@@ -7197,6 +7730,8 @@ export function ChatRoom({
                   ? normalizeGroupSmartBotBubblePlaintext(seg, groupDocRef.current ?? groupLive)
                   : seg
               if (!String(segForStore).trim()) continue
+              if (isMusicSyncDirectiveArtifactLine(String(segForStore))) continue
+              if (isCharacterMusicSyncDirectiveArtifactLine(String(segForStore))) continue
               if (
                 roomType === 'group' &&
                 groupId?.trim() &&
@@ -7236,7 +7771,9 @@ export function ChatRoom({
                 replyTo: p.replyToId ? metaById.get(p.replyToId) : undefined,
                 otherAnimated: true,
               }))
-              for (const m of newMsgs) markEmittedThisRound(m.id, m.timestamp, m.text)
+              const batchRevealSteps = newMsgs.map((m) =>
+                markEmittedThisRound(m.id, m.timestamp, m.text),
+              )
               const afterRevealGroupBump =
                 roomType === 'group' && groupId?.trim()
                   ? () => {
@@ -7282,7 +7819,7 @@ export function ChatRoom({
                       })
                       .catch(() => {})
                   },
-                  afterReveal: afterRevealGroupBump,
+                  afterReveal: withMusicSyncFlushOnBubbleRevealed(batchRevealSteps[j]!, afterRevealGroupBump),
                 }
               })
               enqueueOpponentMessagesSequential(opponentJobs)
@@ -7291,6 +7828,8 @@ export function ChatRoom({
           }
         }
 
+        deferBubbleRevealEnqueueRef.current = true
+        try {
         for (let i = 0; i < bubbles.length; i += 1) {
           try {
             if (opponentQueueStopRef.current) break bubbleRunLoop
@@ -7416,7 +7955,7 @@ export function ChatRoom({
                 const uiVoice = mappedVoice[0]
                 if (uiVoice) {
                   if (thinkingVoiceM) thinkingAttached = true
-                  markEmittedThisRound(oidM, tsM, seg || '[语音]')
+                  const voiceMutedStep = markEmittedThisRound(oidM, tsM, seg || '[语音]')
                   const queuedVoiceMuted = { ...uiVoice, otherAnimated: true as const }
                   enqueueOpponentMessagesSequential([
                     {
@@ -7443,9 +7982,9 @@ export function ChatRoom({
                             /* ignore */
                           })
                       },
-                      afterReveal: () => {
+                      afterReveal: withMusicSyncFlushOnBubbleRevealed(voiceMutedStep, () => {
                         void appendMuteSuppressSystemStrip(seg || '[语音]')
-                      },
+                      }),
                     },
                   ])
                   rememberVoiceTranscript()
@@ -7478,7 +8017,7 @@ export function ChatRoom({
                 otherAnimated: true,
               }
               if (thinkingVoice) thinkingAttached = true
-              markEmittedThisRound(oid, ts, seg || '[语音]')
+              const voiceStep = markEmittedThisRound(oid, ts, seg || '[语音]')
               const voiceGroupBump =
                 roomType === 'group' && groupId?.trim()
                   ? () => {
@@ -7521,10 +8060,10 @@ export function ChatRoom({
                         /* ignore */
                       })
                   },
-                  afterReveal: () => {
+                  afterReveal: withMusicSyncFlushOnBubbleRevealed(voiceStep, () => {
                     voiceGroupBump?.()
                     void ensureVoiceMessageAudio(oid, voice, { voiceCharacterId: persistCharacterId })
-                  },
+                  }),
                 },
               ]
               enqueueOpponentMessagesSequential(voiceJobs)
@@ -7556,7 +8095,7 @@ export function ChatRoom({
               const uiTxt = mappedTxt[0]
               if (uiTxt) {
                 if (thinkingTxtM) thinkingAttached = true
-                markEmittedThisRound(oidT, tsT, hidden)
+                const textMutedStep = markEmittedThisRound(oidT, tsT, hidden)
                 const queuedTxtMuted = { ...uiTxt, otherAnimated: true as const }
                 enqueueOpponentMessagesSequential([
                   {
@@ -7582,9 +8121,9 @@ export function ChatRoom({
                           /* ignore */
                         })
                     },
-                    afterReveal: () => {
+                    afterReveal: withMusicSyncFlushOnBubbleRevealed(textMutedStep, () => {
                       void appendMuteSuppressSystemStrip(hidden)
-                    },
+                    }),
                   },
                 ])
               }
@@ -7663,18 +8202,41 @@ export function ChatRoom({
               }
               continue
             }
-            const musicSyncDirectiveLine = mergeMusicSyncDirectiveBubbleLines(
+            const charMusicLine = mergeCharacterMusicSyncDirectiveLines(
               currentLine,
               bubbles[i + 1] != null ? String(bubbles[i + 1] ?? '') : undefined,
             )
-            if (musicSyncDirectiveLine !== currentLine) {
+            const musicSyncDirectiveLine = mergeMusicSyncDirectiveBubbleLines(
+              currentLine,
+              charMusicLine !== currentLine ? undefined : bubbles[i + 1] != null ? String(bubbles[i + 1] ?? '') : undefined,
+            )
+            if (charMusicLine !== currentLine) {
               bubbles.splice(i + 1, 1)
+            } else if (musicSyncDirectiveLine !== currentLine) {
+              bubbles.splice(i + 1, 1)
+            }
+            const charMusicAct = parseCharacterMusicSyncDirectiveFromArtifactLine(charMusicLine)
+            if (charMusicAct && roomType !== 'group') {
+              if (charMusicAct.kind === 'play' || charMusicAct.kind === 'seek' || charMusicAct.kind === 'invite') {
+                continue
+              }
+              void applyCharacterMusicSyncDirective(
+                charMusicAct,
+                buildCharacterMusicSyncSessionContext(),
+              ).catch(() => {})
+              continue
+            }
+            if (isCharacterMusicSyncDirectiveArtifactLine(charMusicLine)) {
+              continue
             }
             const musicSyncAct = parseMusicSyncIncomingActionDirective(musicSyncDirectiveLine)
             if (musicSyncAct && roomType !== 'group') {
+              const engageMusicSync = shouldEngageMusicSyncInviteFlow(
+                [...extractMessages(itemsRef.current)].reverse(),
+              )
               const cid = persistCharacterId.trim()
               const pid = playerIdentityId.trim()
-              if (cid && pid && pid !== '__none__') {
+              if (engageMusicSync && cid && pid && pid !== '__none__') {
                 const inviteMsgId = resolvePendingMusicInviteMessageId({
                   messageIdHint: musicSyncAct.messageId,
                   msgs: extractMessages(itemsRef.current),
@@ -7741,7 +8303,7 @@ export function ChatRoom({
                   otherAnimated: true,
                 }
                 if (thinkingRp) thinkingAttached = true
-                markEmittedThisRound(mid, ts, seg)
+                const rpStep = markEmittedThisRound(mid, ts, seg)
                 enqueueOpponentMessagesSequential([
                   {
                     forConversationKey: conversationKey,
@@ -7765,6 +8327,7 @@ export function ChatRoom({
                           /* ignore */
                         })
                     },
+                    afterReveal: withMusicSyncFlushOnBubbleRevealed(rpStep),
                   },
                 ])
                 continue
@@ -7799,7 +8362,7 @@ export function ChatRoom({
                   otherAnimated: true,
                 }
                 if (thinkingTf) thinkingAttached = true
-                markEmittedThisRound(mid, ts, seg)
+                const tfStep = markEmittedThisRound(mid, ts, seg)
                 enqueueOpponentMessagesSequential([
                   {
                     forConversationKey: conversationKey,
@@ -7823,6 +8386,7 @@ export function ChatRoom({
                           /* ignore */
                         })
                     },
+                    afterReveal: withMusicSyncFlushOnBubbleRevealed(tfStep),
                   },
                 ])
                 continue
@@ -7878,7 +8442,7 @@ export function ChatRoom({
                   images: [{ base64: payloadSticker.base64, type: payloadSticker.mime }],
                   otherAnimated: true,
                 }
-                markEmittedThisRound(oidSticker, tsSticker, '[表情包]')
+                const stickerStep = markEmittedThisRound(oidSticker, tsSticker, '[表情包]')
                 const stickerGroupBump =
                   roomType === 'group' && groupId?.trim()
                     ? () => {
@@ -7921,7 +8485,7 @@ export function ChatRoom({
                           logger.log('error', `角色表情包落库失败: ${e instanceof Error ? e.message : String(e)}`)
                         })
                     },
-                    afterReveal: stickerGroupBump,
+                    afterReveal: withMusicSyncFlushOnBubbleRevealed(stickerStep, stickerGroupBump),
                   },
                 ])
               } catch (e) {
@@ -7979,7 +8543,7 @@ export function ChatRoom({
                   images: [{ base64: payloadImage.base64, type: payloadImage.mime }],
                   otherAnimated: true,
                 }
-                markEmittedThisRound(oidImage, tsImage, '（发送了一张图片）')
+                const imageStep = markEmittedThisRound(oidImage, tsImage, '（发送了一张图片）')
                 roundImagesEmittedCount += 1
                 enqueueOpponentMessagesSequential([
                   {
@@ -8004,6 +8568,7 @@ export function ChatRoom({
                           logger.log('error', `角色 AI 配图落库失败: ${e instanceof Error ? e.message : String(e)}`)
                         })
                     },
+                    afterReveal: withMusicSyncFlushOnBubbleRevealed(imageStep),
                   },
                 ])
               } catch (e) {
@@ -8031,6 +8596,7 @@ export function ChatRoom({
                 : seg
             if (!String(segForStore).trim()) continue
             if (isMusicSyncDirectiveArtifactLine(String(segForStore))) continue
+            if (isCharacterMusicSyncDirectiveArtifactLine(String(segForStore))) continue
             characterPlainTextsThisRound.push(String(segForStore).trim())
             if (opponentQueueStopRef.current) break bubbleRunLoop
 
@@ -8108,7 +8674,7 @@ export function ChatRoom({
               otherAnimated: true,
             }
             if (thinkingForRow) thinkingAttached = true
-            markEmittedThisRound(oid, ts, segForStore)
+            const plainStep = markEmittedThisRound(oid, ts, segForStore)
             const plainGroupBump =
               roomType === 'group' && groupId?.trim()
                 ? () => {
@@ -8156,7 +8722,7 @@ export function ChatRoom({
                       )
                     })
                 },
-                afterReveal: plainGroupBump,
+                afterReveal: withMusicSyncFlushOnBubbleRevealed(plainStep, plainGroupBump),
               },
             ]
             enqueueOpponentMessagesSequential(plainJobs)
@@ -8165,11 +8731,23 @@ export function ChatRoom({
             continue
           }
         }
+        if (
+          pendingCharacterMusicSyncInvites.length > 0 ||
+          pendingCharacterMusicSyncSeeks.length > 0 ||
+          pendingCharacterMusicSyncPlays.length > 0
+        ) {
+          enqueueMusicSyncRoundCompletionJob()
+        }
+        } finally {
+          deferBubbleRevealEnqueueRef.current = false
+          flushDeferredBubbleRevealJobs()
+        }
 
         if (
           roomType !== 'group' &&
           !musicSyncDirectiveHandledThisRound &&
-          characterPlainTextsThisRound.length > 0
+          characterPlainTextsThisRound.length > 0 &&
+          shouldEngageMusicSyncInviteFlow([...extractMessages(itemsRef.current)].reverse())
         ) {
           const pendingInvite = findLatestPendingMusicInvite(extractMessages(itemsRef.current))
           if (pendingInvite) {
@@ -10633,6 +11211,8 @@ export function ChatRoom({
             chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
             chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
             groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+            musicInviteRespondBusy={musicInviteRespondBusy}
+            onRespondToCharacterInvite={handleRespondToCharacterMusicInvite}
           />
         )
         const rowWrapped =
@@ -10663,6 +11243,66 @@ export function ChatRoom({
             chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
             groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
             onOpen={() => requestOpenListenCommentShareCard(shareData)}
+          />
+        )
+        const rowWrapped =
+          !isSelf && m.otherAnimated ? (
+            <ChatMessageEnter isSelf={false}>{rowInner}</ChatMessageEnter>
+          ) : isSelf && m.selfAnimated ? (
+            <ChatMessageEnter isSelf>{rowInner}</ChatMessageEnter>
+          ) : (
+            rowInner
+          )
+        return wrap(rowWrapped, renderDetachedReply(m, isSelf))
+      }
+
+      if (m.listenProfileShare) {
+        const shareData = m.listenProfileShare
+        const rowInner = (
+          <ListenProfileShareChatRow
+            id={m.id}
+            isSelf={isSelf}
+            data={shareData}
+            bubble={bubble}
+            showAvatar={effectiveShowAvatar}
+            showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
+            chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
+            chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
+            chatOtherSenderNickname={chatOtherSenderNickname}
+            chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
+            chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
+            groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+            onOpen={() => requestOpenListenProfileShareCard(shareData)}
+          />
+        )
+        const rowWrapped =
+          !isSelf && m.otherAnimated ? (
+            <ChatMessageEnter isSelf={false}>{rowInner}</ChatMessageEnter>
+          ) : isSelf && m.selfAnimated ? (
+            <ChatMessageEnter isSelf>{rowInner}</ChatMessageEnter>
+          ) : (
+            rowInner
+          )
+        return wrap(rowWrapped, renderDetachedReply(m, isSelf))
+      }
+
+      if (m.listenTrackShare) {
+        const shareData = m.listenTrackShare
+        const rowInner = (
+          <ListenTrackShareChatRow
+            id={m.id}
+            isSelf={isSelf}
+            data={shareData}
+            bubble={bubble}
+            showAvatar={effectiveShowAvatar}
+            showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
+            chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
+            chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
+            chatOtherSenderNickname={chatOtherSenderNickname}
+            chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
+            chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
+            groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+            onOpen={() => requestOpenListenTrackShareCard(shareData)}
           />
         )
         const rowWrapped =

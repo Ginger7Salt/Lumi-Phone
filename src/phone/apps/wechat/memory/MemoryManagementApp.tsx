@@ -117,6 +117,8 @@ export function MemoryManagementApp({
 
   const pid = playerIdentityId?.trim() ?? ''
   const onCharacterPage = characterPage != null
+  const configCoachActive = activeTab === 'config' && !onCharacterPage
+  const archiveCoachActive = activeTab === 'memories'
 
   const handleTopBack = useCallback(() => {
     if (characterPage) {
@@ -261,7 +263,10 @@ export function MemoryManagementApp({
           }`}
           aria-hidden={activeTab !== 'config' || onCharacterPage}
         >
-          <MemoryEngineConfig currentWechatAccountId={currentWechatAccountId} />
+          <MemoryEngineConfig
+            currentWechatAccountId={currentWechatAccountId}
+            coachActive={configCoachActive}
+          />
         </div>
         <div
           className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch] ${
@@ -297,6 +302,7 @@ export function MemoryManagementApp({
             activeCharacterPageId={characterPage?.charId ?? null}
             onCharacterPageChange={setCharacterPage}
             onRegisterCharacterNav={registerCharacterNav}
+            coachActive={archiveCoachActive}
           />
         </div>
       </div>

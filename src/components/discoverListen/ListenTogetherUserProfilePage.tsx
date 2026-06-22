@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { ArrowLeft, Heart, Loader2, Music2, RefreshCw, User } from 'lucide-react'
+import { ArrowLeft, Heart, Loader2, Music2, RefreshCw, Share2, User } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { ListenNum, ListenNumericText } from './ListenNum'
@@ -14,6 +14,10 @@ import {
 } from './ListenTogetherFollowListPage'
 import type { NeteaseArtistItem } from './neteaseMusicApi'
 import type { PlaylistOpenInfo, UserDetailInfo } from './listenTogetherProfileTypes'
+import { ShareCommentContactsDrawer } from './ShareCommentContactsDrawer'
+import { ListenTogetherActionToast } from './ListenTogetherActionToast'
+import { sendListenProfileShareToContacts } from '../../phone/apps/wechat/musicSync/sendListenProfileShare'
+import type { InviteableContact } from './useInviteableWeChatContacts'
 
 export type { UserDetailInfo } from './listenTogetherProfileTypes'
 
@@ -112,6 +116,9 @@ export function ListenTogetherUserProfilePage({
   const [followListTarget, setFollowListTarget] = useState<ListenTogetherFollowListTarget | null>(
     null,
   )
+  const [shareDrawerOpen, setShareDrawerOpen] = useState(false)
+  const [shareSending, setShareSending] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
   const onRequireLoginRef = useRef(onRequireLogin)
   onRequireLoginRef.current = onRequireLogin
 
@@ -172,6 +179,32 @@ export function ListenTogetherUserProfilePage({
 
   const likedCover = musicAssets.likedSongs.cover || null
 
+  const handleShareConfirm = useCallback(
+    async (contacts: InviteableContact[]) => {
+      if (!user.userId) return
+      setShareSending(true)
+      try {
+        const result = await sendListenProfileShareToContacts(
+          contacts.map((c) => c.characterId),
+          {
+            profileType: 'user',
+            profileId: user.userId,
+            displayName: nickname,
+            avatar,
+            subtitle: '网易云用户',
+          },
+        )
+        setToast(`已分享给 ${result.sent} 位好友，可在微信查看`)
+        setShareDrawerOpen(false)
+      } catch (e) {
+        setToast(e instanceof Error ? e.message : '分享失败')
+      } finally {
+        setShareSending(false)
+      }
+    },
+    [user.userId, nickname, avatar],
+  )
+
   const openFollowList = (listKind: 'following' | 'followers') => {
     if (!sessionActive) {
       onRequireLogin?.()
@@ -219,6 +252,15 @@ export function ListenTogetherUserProfilePage({
             className="absolute left-3 top-[max(12px,env(safe-area-inset-top))] z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/50 text-stone-600 shadow-sm backdrop-blur-sm transition-colors hover:bg-white/80"
           >
             <ArrowLeft className="size-5" strokeWidth={1.5} />
+          </button>
+          <button
+            type="button"
+            aria-label="分享用户主页"
+            title="分享到微信好友"
+            onClick={() => setShareDrawerOpen(true)}
+            className="absolute right-14 top-[max(12px,env(safe-area-inset-top))] z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/50 text-stone-600 shadow-sm backdrop-blur-sm transition-colors hover:bg-white/80 hover:text-rose-500"
+          >
+            <Share2 className="size-4" strokeWidth={1.75} />
           </button>
           <button
             type="button"
@@ -446,6 +488,16 @@ export function ListenTogetherUserProfilePage({
         onRequireLogin={onRequireLogin}
         className="!z-[120]"
       />
+
+      <ShareCommentContactsDrawer
+        open={shareDrawerOpen}
+        onClose={() => setShareDrawerOpen(false)}
+        onConfirm={handleShareConfirm}
+        sending={shareSending}
+        dialogTitle="SHARE PROFILE | 分享主页给好友"
+        dialogSubtitle="分享用户主页到微信私聊"
+      />
+      <ListenTogetherActionToast message={toast} onClear={() => setToast(null)} />
     </div>
   )
 }
