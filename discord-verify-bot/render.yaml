@@ -1,0 +1,20 @@
+services:
+  - type: worker
+    name: lumi-discord-verify
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: GUILD_ID
+        sync: false
+      - key: VERIFIED_ROLE_ID
+        sync: false
+      - key: COOLDOWN_MINUTES
+        value: "10"

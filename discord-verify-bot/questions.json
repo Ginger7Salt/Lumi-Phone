@@ -1,0 +1,112 @@
+{
+  "panel": {
+    "title": "Lumi 入门验证",
+    "description": "请先阅读 #公告，再点击下方按钮开始答题。\n\n· 共 10 道选择题，须全部答对\n· 通过后自动获得成员身份组，可查看 #项目链接\n· 本 DC 不答疑，Bug 反馈见 #公告 中的 QQ 群说明\n· 答题过程仅你本人可见"
+  },
+  "agreement": {
+    "title": "阅读确认",
+    "description": "请确认你已完整阅读 **#公告** 置顶，并知晓：\n\n· 本 DC 社区 **不提供任何答疑**\n· API / 模型 / 配置问题请查教程，不在社区提问\n· **#更新日志** 已有内容请勿重复追问\n· 仅 **代码 Bug** 可通过官方 QQ 群（1084498477）反馈\n· 入群申请理由须填 **Discord 数字 ID**",
+    "buttonLabel": "我已阅读公告，开始答题"
+  },
+  "questions": [
+    {
+      "question": "第 1/10 题：本 DC 社区是否提供答疑？",
+      "options": [
+        { "label": "A. 提供，可在频道随便问", "correct": false },
+        { "label": "B. 不提供答疑", "correct": true },
+        { "label": "C. 只回答 API 问题", "correct": false },
+        { "label": "D. 私信管理员即可", "correct": false }
+      ]
+    },
+    {
+      "question": "第 2/10 题：项目 Bug 反馈应去哪里？",
+      "options": [
+        { "label": "A. DC 任意频道", "correct": false },
+        { "label": "B. 私信社区管理员", "correct": false },
+        { "label": "C. 官方 QQ 群（1084498477）", "correct": true },
+        { "label": "D. 验证区发帖", "correct": false }
+      ]
+    },
+    {
+      "question": "第 3/10 题：「API 怎么配置」应该在哪里解决？",
+      "options": [
+        { "label": "A. DC 社区提问", "correct": false },
+        { "label": "B. QQ 群提问", "correct": false },
+        { "label": "C. 教程与「API 设置」自行查阅", "correct": true },
+        { "label": "D. 在验证区 @ 管理员", "correct": false }
+      ]
+    },
+    {
+      "question": "第 4/10 题：QQ 群主要用于什么？",
+      "options": [
+        { "label": "A. 所有新手问题", "correct": false },
+        { "label": "B. API 与模型配置咨询", "correct": false },
+        { "label": "C. 仅限代码 Bug 反馈", "correct": true },
+        { "label": "D. 领取项目链接", "correct": false }
+      ]
+    },
+    {
+      "question": "第 5/10 题：#更新日志 已写明的内容，能否要求重复讲解？",
+      "options": [
+        { "label": "A. 可以，必须回答", "correct": false },
+        { "label": "B. 不可以，须先自行阅读", "correct": true },
+        { "label": "C. 只能在 DC 问", "correct": false },
+        { "label": "D. 可以 @ 群主直到回复", "correct": false }
+      ]
+    },
+    {
+      "question": "第 6/10 题：「模型不对导致没有输出」属于？",
+      "options": [
+        { "label": "A. 代码 Bug，直接去 QQ 群", "correct": false },
+        { "label": "B. 配置问题，先查教程", "correct": true },
+        { "label": "C. 应在 DC 社区提问", "correct": false },
+        { "label": "D. 应私信管理员", "correct": false }
+      ]
+    },
+    {
+      "question": "第 7/10 题：加入 QQ 群时，申请理由应填？",
+      "options": [
+        { "label": "A. QQ 号", "correct": false },
+        { "label": "B. Lumi 用户名", "correct": false },
+        { "label": "C. Discord 数字 ID", "correct": true },
+        { "label": "D. 「我要反馈 Bug」", "correct": false }
+      ]
+    },
+    {
+      "question": "第 8/10 题：本项目是否收费？",
+      "options": [
+        { "label": "A. 永久免费", "correct": true },
+        { "label": "B. 须购买授权", "correct": false },
+        { "label": "C. 仅 QQ 群用户免费", "correct": false },
+        { "label": "D. 按功能收费", "correct": false }
+      ]
+    },
+    {
+      "question": "第 9/10 题：使用前须年满几岁？",
+      "options": [
+        { "label": "A. 16 岁", "correct": false },
+        { "label": "B. 18 岁", "correct": true },
+        { "label": "C. 无限制", "correct": false },
+        { "label": "D. 21 岁", "correct": false }
+      ]
+    },
+    {
+      "question": "第 10/10 题：项目正式链接在哪里查看？",
+      "options": [
+        { "label": "A. QQ 群公告", "correct": false },
+        { "label": "B. #项目链接（须先通过验证）", "correct": true },
+        { "label": "C. 在 DC 任意频道问", "correct": false },
+        { "label": "D. 验证区公开发问", "correct": false }
+      ]
+    }
+  ],
+  "messages": {
+    "alreadyVerified": "你已通过验证，可直接查看 #项目链接。",
+    "cooldown": "答题未通过，请在 {minutes} 分钟后再试。请先重读 #公告。",
+    "wrongAnswer": "回答错误，本次验证已结束。请阅读 #公告 后稍后再试。",
+    "success": "验证通过！已为你开通成员身份组，请前往 #项目链接 查看项目地址。",
+    "noRoleConfigured": "机器人未配置身份组，请联系管理员。",
+    "roleAssignFailed": "无法分配身份组，请联系管理员检查机器人身份组顺序。",
+    "sessionExpired": "验证会话已过期，请重新点击「开始验证」。"
+  }
+}
