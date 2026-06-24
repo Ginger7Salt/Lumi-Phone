@@ -1,3 +1,5 @@
+import { publicAssetUrl } from '../../../publicAssetUrl'
+
 /** Service Worker / dev server 从同源路径提供通知头像（data URL 与 /assets 需先发布） */
 export const NOTIFY_ICON_CACHE_NAME = 'lumi-notify-icons-v1'
 export const NOTIFY_ICON_PATH_MARKER = '/__lumi_notify_icon__/'
@@ -25,8 +27,13 @@ export function absolutizeNotificationIconUrl(url: string): string {
   if (/^https?:\/\//i.test(raw)) return raw
   if (typeof window === 'undefined') return raw
   try {
-    const base = resolveAppBasePrefix()
-    const path = raw.startsWith('/') ? raw : `${base}${raw}`.replace(/([^:]\/)\/+/g, '$1')
+    const base = import.meta.env.BASE_URL || '/'
+    // 规范路径如 /image/… 在 GitHub Pages 子目录部署时需加 /Lumi-Phone/ 前缀
+    if (raw.startsWith('/') && base !== '/' && !raw.startsWith(base)) {
+      return new URL(publicAssetUrl(raw), window.location.origin).href
+    }
+    const basePrefix = base === '/' ? '/' : base.endsWith('/') ? base : `${base}/`
+    const path = raw.startsWith('/') ? raw : `${basePrefix}${raw}`.replace(/([^:]\/)\/+/g, '$1')
     return new URL(path, window.location.origin).href
   } catch {
     return raw

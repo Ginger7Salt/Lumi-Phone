@@ -32,9 +32,11 @@ import type { QnADirectedPost, QnAThreadComment, QnAThreadReply } from './qnaSto
 import { QnaTimeBadge } from './QnaTimeBadge'
 import type { MockContact } from './types'
 import { QNA_GLASS_CARD, QNA_GLASS_FOOTER } from './qnaUiStyles'
+import { DEFAULT_PUBLIC_AVATAR_PATH } from '../../phone/types'
+import { resolvePublicImageUrl } from '../../publicAssetUrl'
 import { useQnAStore } from './useQnAStore'
 
-const DEFAULT_AVATAR = '/image/个人名片默认头像1.png'
+const DEFAULT_AVATAR = resolvePublicImageUrl(DEFAULT_PUBLIC_AVATAR_PATH)
 
 export type QnaDirectedReplyTarget = {
   commentId: string

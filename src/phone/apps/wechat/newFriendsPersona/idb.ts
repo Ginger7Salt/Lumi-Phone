@@ -110,6 +110,7 @@ import { formatWeChatMessageListTimestamp as formatWeChatMessageListTimestampFn 
 import { emptyWorldBackgroundSettings, formatTimelineEventDate } from './types'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { buildPresetWorldBackgrounds } from './worldBackgroundSeed'
+import { LUMI_ASSISTANT_AVATAR_URL } from '../lumiAssistantAssets'
 import {
   WECHAT_GROUP_BOT_CHARACTER_ID,
   WECHAT_GROUP_USER_CHAR_ID,
@@ -4230,10 +4231,11 @@ export class PersonaDb {
     const conv = await this.getChatConversationSettings(conversationKey)
     const peerId = this.resolvePrivatePeerCharacterIdFromConversationKey(conversationKey, conv, senderId)
     if (peerId === WECHAT_LUMI_PEER_CHARACTER_ID) {
-      const ch = await this.getCharacter(peerId)
-      const title = ch?.remark?.trim() || 'Lumi'
-      const iconUrl = this.resolveWeChatNotifyAvatarRaw(ch?.avatarUrl)
-      return { title, body: preview, iconUrl }
+      return {
+        title: 'Lumi',
+        body: preview,
+        iconUrl: this.resolveWeChatNotifyAvatarRaw(LUMI_ASSISTANT_AVATAR_URL),
+      }
     }
     const ch = await this.getCharacter(peerId)
     const title =
@@ -4406,7 +4408,7 @@ export class PersonaDb {
       if (idx > 0) peerId = k.slice(0, idx).trim()
     }
     if (peerId === WECHAT_LUMI_PEER_CHARACTER_ID) {
-      return { label: 'Lumi', avatarUrl: '' }
+      return { label: 'Lumi', avatarUrl: LUMI_ASSISTANT_AVATAR_URL }
     }
     if (peerId.startsWith('wxgrp:')) {
       return { label: '群聊', avatarUrl: '' }

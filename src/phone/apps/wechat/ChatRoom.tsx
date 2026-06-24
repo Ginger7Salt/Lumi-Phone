@@ -2134,6 +2134,12 @@ export function ChatRoom({
     }
   }, [peerAvatarUrl, useLumiProjectAssistantPrompt, personaCharacterId, conversationCharacterId])
 
+  const playerAvatarResolved = useMemo(() => {
+    const resolved =
+      resolveWechatAppAvatar(playerAvatarUrl) || resolveWechatAppAvatar(state.profile.avatarImageUrl)
+    return resolved.trim() || undefined
+  }, [playerAvatarUrl, state.profile.avatarImageUrl])
+
   /**
    * 私聊专用：仅从 IndexedDB 拼「群聊近期消息摘录」，**不调用模型**（与约会线下剧情参考同源思路）。
    * 注入系统提示独立区块 {@link recentGroupChatsReference}，与长期记忆总结分列。
@@ -2779,8 +2785,7 @@ export function ChatRoom({
         msg: ackMsg,
         beforeReveal: () => {
           const userName = playerDisplayName.trim() || state.profile.displayName.trim() || '我'
-          const wechatAvatar =
-            playerAvatarUrl?.trim() || resolveWechatAppAvatar(state.profile.avatarImageUrl)
+          const wechatAvatar = playerAvatarResolved || ''
           const userAvatar = resolveListenTogetherSyncUserAvatar({ wechatAvatarUrl: wechatAvatar })
           const companionName = peerNotifyTitle.trim() || '对方'
           const companionAvatar = peerAvatarResolved?.trim() || ''
@@ -2821,10 +2826,9 @@ export function ChatRoom({
       getCurrentTimeMs,
       peerAvatarResolved,
       peerNotifyTitle,
-      playerAvatarUrl,
+      playerAvatarResolved,
       playerDisplayName,
       playerIdentityId,
-      state.profile.avatarImageUrl,
       state.profile.displayName,
     ],
   )
@@ -2876,7 +2880,7 @@ export function ChatRoom({
   const buildCharacterMusicSyncSessionContext = useCallback(() => {
     const userName = playerDisplayName.trim() || state.profile.displayName.trim() || '我'
     const wechatAvatar =
-      playerAvatarUrl?.trim() || resolveWechatAppAvatar(state.profile.avatarImageUrl)
+    const wechatAvatar = playerAvatarResolved || ''
     const userAvatar = resolveListenTogetherSyncUserAvatar({ wechatAvatarUrl: wechatAvatar })
     const companionName = peerNotifyTitle.trim() || '对方'
     const companionAvatar = peerAvatarResolved?.trim() || ''
@@ -2893,9 +2897,8 @@ export function ChatRoom({
     conversationCharacterId,
     peerAvatarResolved,
     peerNotifyTitle,
-    playerAvatarUrl,
+    playerAvatarResolved,
     playerDisplayName,
-    state.profile.avatarImageUrl,
     state.profile.displayName,
   ])
 
@@ -3135,7 +3138,7 @@ export function ChatRoom({
           }
           inserted.push(row)
           try {
-            await personaDb.appendWeChatChatMessage(row)
+            await personaDb.appendWeChatChatMessage({ ...row, quiet: true })
           } catch {
             // ignore
           }
@@ -3934,7 +3937,7 @@ export function ChatRoom({
         const avatars = await resolveParticipantAvatarMap({
           data: historyData,
           userDisplayName: playerDisplayName.trim() || '我',
-          userAvatarUrl: playerAvatarUrl?.trim() || undefined,
+          userAvatarUrl: playerAvatarResolved,
           personaContacts: personaContactsList,
           cardSenderCharacterId: options?.cardSenderCharacterId,
         })
@@ -10457,12 +10460,12 @@ export function ChatRoom({
       bubble,
       showAvatar,
       showBubbleTail,
-      chatSelfAvatarUrl: playerAvatarUrl?.trim() || undefined,
+      chatSelfAvatarUrl: playerAvatarResolved,
       chatOtherAvatarUrl: peerAvatarResolved,
       onOtherAvatarClick: openHeartWhisperPanel,
       groupRankShowBesideNickname: roomType === 'group' ? showGroupMemberNicknameInChat !== false : true,
     }),
-    [bubble, showAvatar, showBubbleTail, playerAvatarUrl, peerAvatarResolved, openHeartWhisperPanel, roomType, showGroupMemberNicknameInChat],
+    [bubble, showAvatar, showBubbleTail, playerAvatarResolved, peerAvatarResolved, openHeartWhisperPanel, roomType, showGroupMemberNicknameInChat],
   )
 
   const msgById = useMemo(() => {
@@ -11381,7 +11384,7 @@ export function ChatRoom({
                     ? playerDisplayName.trim() || '我'
                     : peerNotifyTitle.trim() || '对方'
                   const senderAvatarUrl = isSelf
-                    ? playerAvatarUrl?.trim() || undefined
+                    ? playerAvatarResolved
                     : peerAvatarResolved
                   onNavigateRedPacketDetail({
                     messageId: m.id,
@@ -11406,7 +11409,7 @@ export function ChatRoom({
                     amountYuan: rp.amountYuan,
                     remark: rp.remark,
                     senderName: playerDisplayName.trim() || '我',
-                    senderAvatarUrl: playerAvatarUrl?.trim() || undefined,
+                    senderAvatarUrl: playerAvatarResolved,
                     chatPeerName: peerNotifyTitle.trim() || '聊天',
                     fromSelf: true,
                     opened: false,
@@ -12567,7 +12570,7 @@ export function ChatRoom({
               amountYuan: rp.amountYuan,
               remark: rp.remark,
               senderName: isSelfMsg ? playerDisplayName.trim() || '我' : peerNotifyTitle.trim() || '对方',
-              senderAvatarUrl: isSelfMsg ? playerAvatarUrl?.trim() || undefined : peerAvatarResolved,
+              senderAvatarUrl: isSelfMsg ? playerAvatarResolved : peerAvatarResolved,
               chatPeerName: peerNotifyTitle.trim() || '聊天',
               claimerName: isSelfMsg
                 ? peerNotifyTitle.trim() || '对方'
