@@ -1,13 +1,20 @@
+import { publicAssetUrl } from '../../publicAssetUrl'
+
 /** 听一听 · 除「我的」外各页共用壁纸背景 */
-export const LISTEN_TOGETHER_PAGE_BG_URL = '/images/listen-together-page-bg.png'
+export const LISTEN_TOGETHER_PAGE_BG_URL = publicAssetUrl('/images/listen-together-page-bg.png')
 
 /** 全屏播放器 · 黑胶右下角装饰动图 */
-export const LISTEN_FULLSCREEN_VINYL_DECORATION_URL =
-  '/images/listen-fullscreen-cinnamoroll.gif'
+export const LISTEN_FULLSCREEN_VINYL_DECORATION_URL = publicAssetUrl(
+  '/images/listen-fullscreen-cinnamoroll.gif',
+)
 
 /** 全屏进度条拖拽块：播放中 / 暂停 */
-export const LISTEN_PROGRESS_THUMB_PLAYING_URL = '/images/listen-progress-thumb-playing.gif'
-export const LISTEN_PROGRESS_THUMB_PAUSED_URL = '/images/listen-progress-thumb-paused.webp'
+export const LISTEN_PROGRESS_THUMB_PLAYING_URL = publicAssetUrl(
+  '/images/listen-progress-thumb-playing.gif',
+)
+export const LISTEN_PROGRESS_THUMB_PAUSED_URL = publicAssetUrl(
+  '/images/listen-progress-thumb-paused.webp',
+)
 
 /** 进度条拖拽块展示尺寸（px），用于居中定位 */
 export const LISTEN_PROGRESS_THUMB_PLAYING_SIZE_PX = 36
