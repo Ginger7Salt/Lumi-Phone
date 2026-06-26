@@ -12,7 +12,8 @@ import {
 const PLATINUM = '#D4AF37'
 
 /**
- * 写入人设库时各分册的 `WorldBook.name`（vol01–vol10），须与遇见「世界书预览」及 `NineDimensionAccordion` 标题一致（图2：`01 BASE | 基础核心设定`）。
+ * 遇见同步写入的人设库分册 `WorldBook.name`（vol01–vol12）。
+ * vol09 / vol10 使用口语化标题；vol11 / vol12 仅遇见流程写入，微信 AI 人设生成不包含。
  */
 export const MEET_SYNC_WORLD_BOOK_VOLUME_TITLES: readonly { volKey: `vol${string}`; bookTitle: string }[] = [
   { volKey: 'vol01', bookTitle: '01 BASE | 基础核心设定' },
@@ -23,14 +24,15 @@ export const MEET_SYNC_WORLD_BOOK_VOLUME_TITLES: readonly { volKey: `vol${string
   { volKey: 'vol06', bookTitle: '06 SOCIAL | 人际法则' },
   { volKey: 'vol07', bookTitle: '07 CONTRAST | 恋爱镜像反差' },
   { volKey: 'vol08', bookTitle: '08 DETAILS | 日常侧写' },
-  { volKey: 'vol09', bookTitle: '09 ARC | 隐藏弧光' },
-  /** 人设库内独立分册：条目 priority=after，与微信「人设 · 世界书」尾声延展分栏同源 */
-  { volKey: 'vol10', bookTitle: '10 ATTITUDE | 尾声延展' },
-  /** 匹配成功时见到的 {{user}} 遇见对外档案（假面快照；与微信身份可不一致） */
+  { volKey: 'vol09', bookTitle: '09 · 藏着的事（秘密、软肋、反差萌）' },
+  { volKey: 'vol10', bookTitle: '10 · 对你现在（态度、称呼、边界、心思）' },
   { volKey: 'vol11', bookTitle: '11 MEET MASK | 遇见对外档案快照' },
-  /** 临时会话「交换真心话」双盲归档（仅该角色人设世界书，不进全局档案室） */
   { volKey: 'vol12', bookTitle: '12 TRUTH | 交换真心话纪要' },
 ] as const
+
+export function getMeetSyncWorldBookTitle(volKey: string, fallback?: string): string {
+  return MEET_SYNC_WORLD_BOOK_VOLUME_TITLES.find((m) => m.volKey === volKey)?.bookTitle ?? fallback ?? volKey
+}
 
 type FieldRowProps = { labelEn: string; labelZh: string; body: ReactNode }
 
@@ -168,6 +170,7 @@ export function buildNineDimensionSections(dossier: ComprehensivePersona): Secti
           <NineDimensionFieldRow labelEn="SENSORY" labelZh="感官" body={dossier.fetish.sensory} />
           <NineDimensionFieldRow labelEn="DYNAMIC" labelZh="关系动态" body={dossier.fetish.dynamic} />
           <NineDimensionFieldRow labelEn="JEALOUSY" labelZh="吃醋与占有欲" body={dossier.fetish.jealousy} />
+          <NineDimensionFieldRow labelEn="INTIMATE SPEECH" labelZh="亲密口语习惯" body={dossier.fetish.intimateSpeech} />
         </>
       ),
     },
@@ -237,8 +240,8 @@ export function buildNineDimensionSections(dossier: ComprehensivePersona): Secti
     {
       id: '09-arc',
       num: '09',
-      titleEn: 'ARC',
-      titleZh: '隐藏弧光',
+      titleEn: '藏着的事',
+      titleZh: '秘密、软肋、反差萌',
       content: (
         <>
           <NineDimensionFieldRow labelEn="SECRETS" labelZh="伪装与秘密" body={dossier.arc.secrets} />

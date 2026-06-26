@@ -1,7 +1,11 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowRightCircle, CircleHelp, Copy, Plus, Trash2, X } from 'lucide-react'
+import { ArrowRightCircle, CircleHelp, Copy, Lock, Plus, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 import type { LoreEntry } from '../../worldbook/loreArchiveTypes'
+import {
+  LORE_ARCHIVE_BUILTIN_PRESETS,
+  type LoreArchiveBuiltinPresetId,
+} from '../../worldbook/loreArchiveBuiltinPresets'
 import { GLOBAL_WECHAT_PLATE_LABELS } from '../../worldbook/globalWorldBookTypes'
 
 const PLATINUM = '#C9A961'
@@ -77,7 +81,7 @@ function LoreArchiveIntroBanner() {
                   档案室适合放置<strong className="font-medium text-neutral-800">规范模型输出</strong>
                   的全局世界书条目——约束「怎么写、怎么回」，而不是定义「某个角色是谁」。条目会按你配置的板块与角色范围，在
                   <strong className="font-medium text-neutral-800">微信私聊、群聊、线下剧情</strong>
-                  等对话中自动注入。
+                  等对话中自动注入。顶部「系统内置」条目仅可开关，正文不可查看；自定义条目可自由编辑。
                 </p>
                 <div
                   className="rounded-xl border px-3 py-2.5 text-[12px] leading-relaxed"
@@ -123,11 +127,14 @@ export type LoreListPickTarget = { id: string; avatarUrl: string; name: string }
 
 type Props = {
   entries: LoreEntry[]
+  builtinPresets: Record<LoreArchiveBuiltinPresetId, boolean>
   resolveTargets: (ids: string[]) => LoreListPickTarget[]
   onOpenEntry: (id: string) => void
   onCreate: () => void
   /** 在列表中快速启用/停用条目（不写详情页） */
   onSetEntryEnabled: (id: string, enabled: boolean) => void
+  /** 系统内置预设开关（正文不可见） */
+  onSetBuiltinPresetEnabled: (id: LoreArchiveBuiltinPresetId, enabled: boolean) => void
   /** 复制为副本并进入编辑（微博等板块迁移预留） */
   onDuplicateEntry: (id: string) => void
   /** 预留：后续移至微博板块 */
@@ -253,12 +260,48 @@ function ScopeTags({
   )
 }
 
+function LoreArchiveBuiltinPresetCard({
+  title,
+  enabled,
+  onToggle,
+}: {
+  title: string
+  enabled: boolean
+  onToggle: () => void
+}) {
+  return (
+    <div
+      className={`flex w-full flex-col overflow-hidden rounded-2xl border border-black/[0.06] bg-white transition ${
+        enabled ? '' : 'opacity-55'
+      }`}
+      style={{ boxShadow: CARD_SHADOW }}
+    >
+      <div className="flex items-stretch gap-2 p-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <Lock className="size-3.5 shrink-0 text-neutral-400" strokeWidth={1.75} aria-hidden />
+            <span className="text-[15px] font-medium tracking-tight text-neutral-900">{title}</span>
+            <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-500">
+              系统内置
+            </span>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center py-1 pl-1">
+          <EntryEnableSwitch enabled={enabled} titleLabel={title} onToggle={onToggle} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function LoreArchiveList({
   entries,
+  builtinPresets,
   resolveTargets,
   onOpenEntry,
   onCreate,
   onSetEntryEnabled,
+  onSetBuiltinPresetEnabled,
   onDuplicateEntry,
   onMoveToWeiboReserved,
   onDeleteEntry,
@@ -267,12 +310,28 @@ export function LoreArchiveList({
     <div className="relative flex min-h-0 flex-1 flex-col bg-[#fafafa]">
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-28 pt-3">
         <LoreArchiveIntroBanner />
+        <div className="mx-auto mb-4 flex max-w-md flex-col gap-3">
+          <p className="px-1 text-[11px] font-medium tracking-wide text-neutral-500">系统内置（仅开关）</p>
+          {LORE_ARCHIVE_BUILTIN_PRESETS.map((preset) => {
+            const enabledOn = builtinPresets[preset.id] !== false
+            return (
+              <LoreArchiveBuiltinPresetCard
+                key={preset.id}
+                title={preset.title}
+                enabled={enabledOn}
+                onToggle={() => onSetBuiltinPresetEnabled(preset.id, !enabledOn)}
+              />
+            )
+          })}
+        </div>
+        {entries.length > 0 ? (
+          <p className="mx-auto mb-3 max-w-md px-1 text-[11px] font-medium tracking-wide text-neutral-500">
+            自定义全局世界书
+          </p>
+        ) : null}
         {entries.length === 0 ? (
-          <div className="mx-auto mt-8 max-w-[280px] text-center">
-            <p className="text-[14px] text-neutral-500">尚无全局条目</p>
-            <p className="mt-2 text-[12px] leading-relaxed text-neutral-400">
-              适合放置活人感、抗超雄等规范模型输出的世界书；单个角色的人设请去「微信 → 人设 → 世界书」。点底部按钮添加。
-            </p>
+          <div className="mx-auto mt-2 max-w-[280px] text-center">
+            <p className="text-[14px] text-neutral-500">尚无自定义全局条目</p>
           </div>
         ) : (
           <motion.ul
@@ -299,9 +358,6 @@ export function LoreArchiveList({
                         className="min-w-0 flex-1 p-4 text-left outline-none"
                       >
                         <div className="text-[15px] font-medium tracking-tight text-neutral-900">{titleLabel}</div>
-                        <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-neutral-500">
-                          {e.content.trim() || '规范模型输出的全局法则'}
-                        </p>
                       </button>
                       <div className="flex shrink-0 flex-col items-end justify-center gap-2 py-4 pr-4 pl-1">
                         <EntryEnableSwitch

@@ -14,7 +14,7 @@ function clipOneLine(s: string, max = 220): string {
   return `${t.slice(0, max)}…`
 }
 
-function formatMeetLineUnsummarized(m: MeetChatMessage): string | null {
+export function formatMeetLineUnsummarized(m: MeetChatMessage): string | null {
   const narrative = meetMessageToContextNarrative(m, { user: '用户', npc: '对方' })
   if (narrative) {
     const idx = narrative.indexOf('：')

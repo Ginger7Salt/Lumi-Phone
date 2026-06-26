@@ -50,6 +50,10 @@ export interface MomentsImageGenSettings {
   geminiApiKey: string
   /** OpenAI GPT 生图 API Key（https://platform.openai.com/api-keys） */
   openaiApiKey: string
+  /** 自定义 OpenAI 兼容生图接口 URL */
+  customApiUrl: string
+  /** 自定义 OpenAI 兼容生图接口 API Key */
+  customApiKey: string
   /** 各引擎拉取的模型列表（持久化到 localStorage，再次拉取会覆盖对应引擎缓存） */
   cachedModelsByProvider: MomentsImageModelCacheByProvider
   modelsFetchedAtByProvider: MomentsImageModelsFetchedAtByProvider
@@ -89,6 +93,8 @@ export const DEFAULT_MOMENTS_SETTINGS: MomentsSettings = {
     novelaiApiKey: '',
     geminiApiKey: '',
     openaiApiKey: '',
+    customApiUrl: '',
+    customApiKey: '',
     cachedModelsByProvider: { ...EMPTY_MODEL_CACHE_BY_PROVIDER },
     modelsFetchedAtByProvider: { ...EMPTY_MODELS_FETCHED_AT_BY_PROVIDER },
     stylePrefixMode: 'preset',
@@ -111,7 +117,9 @@ function normalizeCachedModel(raw: unknown): MomentsImageModelOption | null {
           ? 'Google Gemini'
           : id.startsWith('openai:')
             ? 'OpenAI'
-            : '硅基流动'
+            : id.startsWith('custom:')
+              ? '自定义接口'
+              : '硅基流动'
   const prefix = id.startsWith('qianfan:')
     ? 'qianfan:'
     : id.startsWith('volcengine:')
@@ -122,9 +130,11 @@ function normalizeCachedModel(raw: unknown): MomentsImageModelOption | null {
           ? 'gemini:'
           : id.startsWith('openai:')
             ? 'openai:'
-            : id.startsWith('siliconflow:')
-              ? 'siliconflow:'
-              : ''
+            : id.startsWith('custom:')
+              ? 'custom:'
+              : id.startsWith('siliconflow:')
+                ? 'siliconflow:'
+                : ''
   const modelName =
     typeof o.modelName === 'string'
       ? o.modelName.trim()
@@ -201,6 +211,7 @@ function normalizeModelsFetchedAtByProvider(
       novelai: read('novelai'),
       gemini: read('gemini'),
       openai: read('openai'),
+      custom: read('custom'),
     }
   }
 
@@ -216,6 +227,7 @@ function normalizeModelsFetchedAtByProvider(
     novelai: provider === 'novelai' ? legacyFetchedAt : null,
     gemini: provider === 'gemini' ? legacyFetchedAt : null,
     openai: provider === 'openai' ? legacyFetchedAt : null,
+    custom: provider === 'custom' ? legacyFetchedAt : null,
   }
 }
 
@@ -265,6 +277,8 @@ function normalizeImageGen(raw: Record<string, unknown>): MomentsImageGenSetting
     novelaiApiKey: typeof raw.novelaiApiKey === 'string' ? raw.novelaiApiKey : '',
     geminiApiKey: typeof raw.geminiApiKey === 'string' ? raw.geminiApiKey : '',
     openaiApiKey: typeof raw.openaiApiKey === 'string' ? raw.openaiApiKey : '',
+    customApiUrl: typeof raw.customApiUrl === 'string' ? raw.customApiUrl : '',
+    customApiKey: typeof raw.customApiKey === 'string' ? raw.customApiKey : '',
     cachedModelsByProvider: normalizeModelCacheByProvider(raw),
     modelsFetchedAtByProvider: normalizeModelsFetchedAtByProvider(raw, provider),
     stylePrefixMode:

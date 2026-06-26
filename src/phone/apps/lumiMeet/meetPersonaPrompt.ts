@@ -36,7 +36,7 @@ const MEET_NINE_DIMENSION_JSON_SCHEMA_BODY = `
   "core": { "mbti": "", "surface": "", "trueSelf": "", "values": "", "flaws": "" },
   "psyche": { "background": "", "shadow": "", "emotionalPattern": "", "orientationOrigin": "" },
   "abilities": { "skills": "", "hobbies": "", "socialMode": "" },
-  "fetish": { "preference": "", "sensory": "", "dynamic": "", "jealousy": "" },
+  "fetish": { "preference": "", "sensory": "", "dynamic": "", "jealousy": "", "intimateSpeech": "" },
   "relations": { "family": "", "friends": "", "enemies": "" },
   "contrast": { "beforeLove": "", "afterLove": "", "conflict": "" },
   "daily": { "speech": "", "habits": "", "money": "", "quirks": "" },
@@ -50,7 +50,7 @@ const MEET_NINE_DIMENSION_JSON_SCHEMA_BODY = `
 二 core：**仅**人格侧写：表里反差、三观底线、缺陷与雷点；**core.mbti 禁止写职业、禁止写行业**。MBTI 硬性（16 型全覆盖，禁止偷懒扎堆）：字段 core.mbti 须且仅能体现**下列四字母之一**作为类型标签——ISTJ、ISFJ、INFJ、INTJ、ISTP、ISFP、INFP、INTP、ESTJ、ESFJ、ENFJ、ENTJ、ESTP、ESFP、ENFP、ENTP；写法示例："ENFP，话多爱联想但会看场合" 或 "ISTP 倾向（仅供参考）—手比嘴快"。**禁止**无依据地把 INTJ、ISTJ、INFJ、INTP 当成 "安全默认" 反复使用；**禁止**一连多轮只生成 I 人、只生成 xSTJ/xNTJ、或几乎不出现 F/P 维（须让 T/F、J/P、E/I、S/N 在长期多轮里都能出现）。若用户消息里指定了本轮必选四字母，则 core.mbti 必须以该四字母为类型标签（不可偷换成其它型）。
 三 psyche：成长经历与常见心结、压力下的反应；开心与难过时的不同表现（禁止创伤猎奇、禁止为惨而惨）。**orientationOrigin（性取向由来）**：单独一段叙事，写清当前取向自我认同如何在时间里成形——可以是自幼稳定、也曾有过试探或错位后的澄清、环境与人际变迁带来的重新认识等；**必须与顶层 orientation 字段一致**，尊重多元与边界；禁止猎奇、禁止污名化任一群体；篇幅建议约 120–420 字，口语具体，忌标语口号。
 四 abilities：**skills** 写清 "做什么工作 / 岗位" 以及**在这份工里的具体干法**（和同事怎么配合、忙季怎么扛、出错怎么补救等）；**hobbies / socialMode** 写爱好与社交。**MBTI 只允许影响 "工作场合下的习惯与表现" 的描写**（例如压力大时更爱闷头自己查还是爱拉人讨论），**绝对禁止**用 MBTI 反推或 "搭配" 职业：禁止 INTJ=建筑师、ENTP=销售、INFP=心理咨询师等一切刻板配对；**职业与 MBTI 无因果关系**，现实中任何类型的人都可能从事任何常见职业。
-五 fetish：健康底线的亲密观与节奏、感官上的舒适/排斥、关系里的空间感、吃醋的分寸（禁止病态控制、禁止美化违法、强迫或不尊重 consent 的内容）
+五 fetish：健康底线的亲密观与节奏、感官上的舒适/排斥、关系里的空间感、吃醋的分寸；**intimateSpeech** 写与恋人亲密场景下的口语习惯（4–6 组情境 + 引语示例，格式同 daily.speech）；禁止病态控制、禁止美化违法、强迫或不尊重 consent 的内容
 六 relations：家庭、友人、职场或社交里合常理的小摩擦（误会、不对付的同事）；禁止血海深仇、禁止为戏剧感编造离奇仇敌
 七 contrast：恋爱前 vs 恋爱后反差、吵架与和好模式
 八 daily：口头禅、洁癖/习惯、消费观、仪式感或迷信

@@ -1,7 +1,7 @@
 import { listenPlainNumStyle } from '../../../../components/discoverListen/listenTogetherTypography'
 import { motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { fetchModels } from '../../api/apiSim'
+import { fetchEmbeddingModels, fetchModels } from '../../api/apiSim'
 import type { ApiConfig } from '../../api/types'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { personaDb } from '../newFriendsPersona/idb'
@@ -48,16 +48,6 @@ import {
   MemoryPerCharacterIntervalList,
 } from './MemoryPerCharacterIntervalList'
 import type { Character } from '../newFriendsPersona/types'
-
-function pickEmbeddingModelCandidates(allModels: string[]): string[] {
-  const uniq = Array.from(new Set(allModels)).sort((a, b) => a.localeCompare(b))
-  const embedLike = uniq.filter((m) =>
-    /embed|embedding|text-embedding|bge-|m3e|e5-|ada|voyage|nomic|mxbai|snowflake|qwen.*embed|doubao-embedding|baai\/bge/i.test(
-      m,
-    ),
-  )
-  return embedLike.length ? embedLike : uniq
-}
 
 function EngineCard({
   title,
@@ -544,12 +534,12 @@ export function MemoryEngineConfig({
         modelId: '',
         modelList: [],
       }
-      const res = await fetchModels(cfg)
+      const res = await fetchEmbeddingModels(cfg)
       if (!res.ok) {
         setModelsPullMsg({ ok: false, text: res.error })
         return
       }
-      const picked = pickEmbeddingModelCandidates(res.models)
+      const picked = res.models
       setEmbeddingModelList(picked)
       const savedModel = (await personaDb.getMemorySettings()).memoryEmbeddingModelId?.trim() || ''
       const draft = embeddingModelDraft.trim()
@@ -566,8 +556,8 @@ export function MemoryEngineConfig({
       setModelsPullMsg({
         ok: true,
         text: picked.length
-          ? `已从${via}拉到 ${picked.length} 个可用模型（已优先筛出名字像 embedding 的）`
-          : `接口有响应，但没筛到像向量模型的名字，请换网关或手动确认列表`,
+          ? `已从${via}筛出 ${picked.length} 个 embedding 模型（不含聊天模型）`
+          : `接口有响应，但未筛到 embedding 模型；请换专用向量接口，或确认网关 /models 是否标注 embedding`,
       })
     } finally {
       setEmbeddingModelsLoading(false)

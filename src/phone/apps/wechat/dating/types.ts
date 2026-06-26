@@ -163,6 +163,11 @@ export type CharacterArchive = {
   modePreference: DateMode
   /** 上帝视角：旁白推进，不直接对「你」说话、不与玩家互动 */
   godPerspective: boolean
+  /**
+   * 主角色不在场：本轮只写玩家与 NPC/人脉互动，约会主角色不得出场。
+   * 与上帝视角互斥（开启其一会自动关闭另一）。
+   */
+  mainCharacterOffstage?: boolean
   branchEnabled: boolean
   /** 线下普通模式：是否在每轮 AI 剧情后生成弹幕（走弹幕接口与全局/角色弹幕配置） */
   offlineDanmakuEnabled?: boolean

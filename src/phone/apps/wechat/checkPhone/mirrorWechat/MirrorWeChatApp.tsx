@@ -405,8 +405,8 @@ function Main({
             className="inline-block overflow-hidden select-none"
             style={{
               borderRadius: isSelf ? `${mirrorBubbleTheme.selfBubbleRadiusPx}px` : `${mirrorBubbleTheme.otherBubbleRadiusPx}px`,
-              border: isSelf ? '1px solid #000000' : '1px solid rgba(0,0,0,0.08)',
-              background: '#ffffff',
+              border: isSelf ? 'none' : '1px solid rgba(0,0,0,0.08)',
+              background: isSelf ? 'transparent' : '#ffffff',
             }}
           >
             <img src={stickerUrl} alt="" className="block h-auto w-[160px] max-w-[46vw] select-none object-cover" draggable={false} />
@@ -416,8 +416,8 @@ function Main({
             className="inline-flex h-[96px] w-[96px] items-center justify-center overflow-hidden select-none"
             style={{
               borderRadius: isSelf ? `${mirrorBubbleTheme.selfBubbleRadiusPx}px` : `${mirrorBubbleTheme.otherBubbleRadiusPx}px`,
-              border: isSelf ? '1px solid #000000' : '1px solid rgba(0,0,0,0.08)',
-              background: '#ffffff',
+              border: isSelf ? 'none' : '1px solid rgba(0,0,0,0.08)',
+              background: isSelf ? 'transparent' : '#ffffff',
             }}
           >
             <span className="text-[28px]" aria-label="表情包">🙂</span>

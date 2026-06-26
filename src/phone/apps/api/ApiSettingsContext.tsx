@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../wechat/newFriendsPersona/idb'
 import { createEmptyApiConfig, createEmptyPreset, newPresetId } from './mock'
@@ -10,9 +10,27 @@ import {
   normalizeLinkPreviewSettings,
 } from './linkPreviewSettingsUtils'
 import { SILICONFLOW_ASR_DEFAULT_BASE_URL } from '../wechat/voiceCall/siliconflowAsr'
+import { normalizeModelPricingMap } from './modelPricingUtils'
 import type { ApiConfig, ApiPreset, ApiStore, LinkPreviewSettings, SubApiType } from './types'
 
 const STORAGE_KEY = API_STORE_STORAGE_KEY
+
+function maxPresetUpdatedAt(store: ApiStore): number {
+  return store.presets.reduce((max, p) => Math.max(max, p.updatedAt ?? 0), 0)
+}
+
+async function persistApiStore(data: ApiStore): Promise<void> {
+  try {
+    await personaDb.setPhoneKv(STORAGE_KEY, data)
+  } catch (e) {
+    console.warn('API 设置写入 IndexedDB 失败:', e)
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+  } catch {
+    // 配额不足时仍以 IndexedDB 为准
+  }
+}
 
 function normalizeApiConfig(raw: unknown): ApiConfig {
   const r = (raw ?? {}) as Partial<ApiConfig>
@@ -22,6 +40,7 @@ function normalizeApiConfig(raw: unknown): ApiConfig {
     apiKey: typeof r.apiKey === 'string' ? r.apiKey : '',
     modelId: typeof r.modelId === 'string' ? r.modelId : '',
     modelList,
+    modelPricingById: normalizeModelPricingMap(r.modelPricingById),
     lastTest:
       r.lastTest && typeof r.lastTest === 'object'
         ? {
@@ -100,6 +119,8 @@ type Ctx = {
   apiHydrated: boolean
   /** 从持久化存储重新拉取（打开 API 设置页时同步最新数据） */
   reloadFromStorage: () => Promise<void>
+  /** 立即将当前内存状态写入 IndexedDB / localStorage（保存预设后调用） */
+  flushPersist: () => Promise<void>
   setCurrentPresetId: (id: string) => void
   setLinkPreviewSettings: (next: LinkPreviewSettings | ((prev: LinkPreviewSettings) => LinkPreviewSettings)) => void
   createPreset: () => ApiPreset
@@ -120,6 +141,12 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
     linkPreview: createEmptyLinkPreviewSettings(),
   }))
   const [apiHydrated, setApiHydrated] = useState(false)
+  const storeRef = useRef(store)
+  storeRef.current = store
+
+  const flushPersist = useCallback(async () => {
+    await persistApiStore(storeRef.current)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -147,8 +174,12 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
     try {
       const raw = await pullPhoneKvWithLocalStorageLegacy(STORAGE_KEY, [STORAGE_KEY])
       if (raw == null) return
+      const loaded = parseApiStore(raw)
       flushSync(() => {
-        setStore(parseApiStore(raw))
+        setStore((current) => {
+          if (maxPresetUpdatedAt(current) > maxPresetUpdatedAt(loaded)) return current
+          return loaded
+        })
       })
     } catch {
       // ignore
@@ -157,18 +188,7 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!apiHydrated) return
-    void (async () => {
-      try {
-        await personaDb.setPhoneKv(STORAGE_KEY, store)
-      } catch (e) {
-        console.warn('API 设置写入 IndexedDB 失败:', e)
-      }
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
-      } catch {
-        // 配额不足时仍以 IndexedDB 为准
-      }
-    })()
+    void persistApiStore(store)
   }, [store, apiHydrated])
 
   const presets = store.presets
@@ -178,40 +198,71 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
   )
 
   const setCurrentPresetId = useCallback((id: string) => {
-    setStore((s) => ({ ...s, currentPresetId: id }))
+    let nextStore!: ApiStore
+    flushSync(() => {
+      setStore((s) => {
+        nextStore = { ...s, currentPresetId: id }
+        return nextStore
+      })
+    })
+    void persistApiStore(nextStore)
   }, [])
 
   const setLinkPreviewSettings = useCallback(
     (next: LinkPreviewSettings | ((prev: LinkPreviewSettings) => LinkPreviewSettings)) => {
-      setStore((s) => ({
-        ...s,
-        linkPreview: typeof next === 'function' ? next(normalizeLinkPreviewSettings(s.linkPreview)) : normalizeLinkPreviewSettings(next),
-      }))
+      let nextStore!: ApiStore
+      flushSync(() => {
+        setStore((s) => {
+          nextStore = {
+            ...s,
+            linkPreview:
+              typeof next === 'function'
+                ? next(normalizeLinkPreviewSettings(s.linkPreview))
+                : normalizeLinkPreviewSettings(next),
+          }
+          return nextStore
+        })
+      })
+      void persistApiStore(nextStore)
     },
     [],
   )
 
   const createPreset = useCallback(() => createEmptyPreset(), [])
 
-  const upsertPreset = useCallback((preset: ApiPreset) => {
-    setStore((s) => {
-      const exists = s.presets.some((p) => p.id === preset.id)
-      const next = exists ? s.presets.map((p) => (p.id === preset.id ? preset : p)) : [preset, ...s.presets]
-      const currentPresetId = s.currentPresetId || preset.id
-      return { ...s, presets: next, currentPresetId }
-    })
-  }, [])
+  const upsertPreset = useCallback(
+    (preset: ApiPreset) => {
+      let nextStore!: ApiStore
+      flushSync(() => {
+        setStore((s) => {
+          const exists = s.presets.some((p) => p.id === preset.id)
+          const next = exists ? s.presets.map((p) => (p.id === preset.id ? preset : p)) : [preset, ...s.presets]
+          const currentPresetId = s.currentPresetId || preset.id
+          nextStore = { ...s, presets: next, currentPresetId }
+          return nextStore
+        })
+      })
+      void persistApiStore(nextStore)
+    },
+    [],
+  )
 
   const deletePreset = useCallback((id: string) => {
-    setStore((s) => {
-      const nextPresets = s.presets.filter((p) => p.id !== id)
-      const nextCurrent = s.currentPresetId === id ? nextPresets[0]?.id ?? '' : s.currentPresetId
-      return { ...s, presets: nextPresets, currentPresetId: nextCurrent }
+    let nextStore!: ApiStore
+    flushSync(() => {
+      setStore((s) => {
+        const nextPresets = s.presets.filter((p) => p.id !== id)
+        const nextCurrent = s.currentPresetId === id ? nextPresets[0]?.id ?? '' : s.currentPresetId
+        nextStore = { ...s, presets: nextPresets, currentPresetId: nextCurrent }
+        return nextStore
+      })
     })
+    void persistApiStore(nextStore)
   }, [])
 
   const duplicatePreset = useCallback((sourceId: string): string | null => {
     let outId: string | null = null
+    let nextStore: ApiStore | null = null
     flushSync(() => {
       setStore((s) => {
         const src = s.presets.find((p) => p.id === sourceId)
@@ -224,9 +275,11 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
         clone.createdAt = now
         clone.updatedAt = now
         outId = clone.id
-        return { ...s, presets: [clone, ...s.presets], currentPresetId: clone.id }
+        nextStore = { ...s, presets: [clone, ...s.presets], currentPresetId: clone.id }
+        return nextStore
       })
     })
+    if (nextStore) void persistApiStore(nextStore)
     return outId
   }, [])
 
@@ -262,6 +315,7 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
     linkPreview: normalizeLinkPreviewSettings(store.linkPreview),
     apiHydrated,
     reloadFromStorage,
+    flushPersist,
     setCurrentPresetId,
     setLinkPreviewSettings,
     createPreset,

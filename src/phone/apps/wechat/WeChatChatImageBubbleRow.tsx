@@ -52,8 +52,12 @@ export function WeChatChatImageBubbleRow({
   const avatarPx = 40
   const bubbleRadius = isSelf ? `${bubble.selfBubbleRadiusPx}px` : `${bubble.otherBubbleRadiusPx}px`
 
-  const bg = '#ffffff'
-  const border = isSelf ? '1px solid #000000' : '1px solid rgba(0,0,0,0.08)'
+  const bg = isSticker ? 'transparent' : '#ffffff'
+  const border = isSticker
+    ? 'none'
+    : isSelf
+      ? '1px solid #000000'
+      : '1px solid rgba(0,0,0,0.08)'
 
   const handleLongPress = useCallback(() => {
     if (!onLongPress) return

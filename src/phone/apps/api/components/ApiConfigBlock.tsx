@@ -1,9 +1,10 @@
-import { Eye, EyeOff } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Eye, EyeOff, Search } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { MemoryModelIdText } from '../../wechat/memory/MemoryModelIdText'
 import { InlineDropdown } from '../../wechat/newFriendsPersona/InlineDropdown'
 import { apiTheme } from '../theme'
 import { fetchModels, testConnectionSim } from '../apiSim'
+import { formatModelPricingLabel } from '../modelPricingUtils'
 import type { ApiConfig } from '../types'
 import { TextField } from './TextField'
 
@@ -27,10 +28,27 @@ export function ApiConfigBlock({
   const [testLoading, setTestLoading] = useState(false)
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [modelOpen, setModelOpen] = useState(false)
+  const [modelSearch, setModelSearch] = useState('')
+  const modelSearchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!config.modelList.length) setModelOpen(false)
   }, [config.modelList.length])
+
+  useEffect(() => {
+    if (!modelOpen) {
+      setModelSearch('')
+      return
+    }
+    const timer = window.setTimeout(() => modelSearchRef.current?.focus(), 50)
+    return () => window.clearTimeout(timer)
+  }, [modelOpen])
+
+  const filteredModelList = useMemo(() => {
+    const q = modelSearch.trim().toLowerCase()
+    if (!q) return config.modelList
+    return config.modelList.filter((m) => m.toLowerCase().includes(q))
+  }, [config.modelList, modelSearch])
 
   const canPullModels = useMemo(() => !!config.apiUrl.trim() && !!config.apiKey.trim(), [config.apiKey, config.apiUrl])
 
@@ -43,9 +61,18 @@ export function ApiConfigBlock({
       setTestMsg({ ok: false, text: res.error })
       return
     }
-    const next = { ...config, modelList: res.models, modelId: config.modelId || res.models[0] || '' }
+    const next = {
+      ...config,
+      modelList: res.models,
+      modelPricingById: res.modelPricingById,
+      modelId: config.modelId || res.models[0] || '',
+    }
     onChange(next)
-    setTestMsg({ ok: true, text: '模型拉取成功' })
+    const pricedCount = Object.keys(res.modelPricingById).length
+    setTestMsg({
+      ok: true,
+      text: pricedCount > 0 ? `模型拉取成功（${pricedCount} 个含费率）` : '模型拉取成功（接口未返回费率，可在服务商官网查看）',
+    })
   }
 
   const testConn = async () => {
@@ -69,6 +96,9 @@ export function ApiConfigBlock({
   const selectedModelLabel = config.modelList.length
     ? (config.modelId || config.modelList[0] || '').trim() || '请选择'
     : '请先拉取模型'
+  const selectedModelPricingLabel = formatModelPricingLabel(
+    config.modelId.trim() ? config.modelPricingById?.[config.modelId.trim()] : undefined,
+  )
 
   return (
     <div className="mx-4 mt-4 rounded-2xl bg-white p-5" style={{ boxShadow: apiTheme.shadow }}>
@@ -134,9 +164,41 @@ export function ApiConfigBlock({
                   disabled={!config.modelList.length}
                   onToggle={() => setModelOpen((v) => !v)}
                 >
+                  <div
+                    className="sticky top-0 z-[1] border-b bg-white px-3 py-2.5"
+                    style={{ borderColor: '#f0f0f0' }}
+                  >
+                    <div className="relative">
+                      <Search
+                        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2"
+                        style={{ color: apiTheme.subText }}
+                      />
+                      <input
+                        ref={modelSearchRef}
+                        type="search"
+                        value={modelSearch}
+                        onChange={(e) => setModelSearch(e.target.value)}
+                        placeholder="搜索模型名称…"
+                        className="w-full rounded-xl py-2.5 pl-9 pr-3 text-[13px] outline-none"
+                        style={{
+                          border: `1px solid ${apiTheme.border}`,
+                          background: '#fafafa',
+                          color: apiTheme.text,
+                        }}
+                        onKeyDown={(e) => e.stopPropagation()}
+                      />
+                    </div>
+                    {modelSearch.trim() ? (
+                      <p className="mt-1.5 text-[11px]" style={{ color: apiTheme.subText }}>
+                        匹配 {filteredModelList.length} / {config.modelList.length} 个模型
+                      </p>
+                    ) : null}
+                  </div>
                   <div className="flex flex-col gap-2 px-3 py-2">
-                    {config.modelList.map((m) => {
+                    {filteredModelList.length ? (
+                      filteredModelList.map((m) => {
                       const active = m === config.modelId
+                      const priceLabel = formatModelPricingLabel(config.modelPricingById?.[m])
                       return (
                         <button
                           key={m}
@@ -152,13 +214,32 @@ export function ApiConfigBlock({
                             setModelOpen(false)
                           }}
                         >
-                          <MemoryModelIdText text={m} className="break-all" />
+                          <div className="flex items-start justify-between gap-2">
+                            <MemoryModelIdText text={m} className="min-w-0 flex-1 break-all" />
+                            <span
+                              className="shrink-0 text-[10px] font-normal leading-snug"
+                              style={{ color: active ? 'rgba(255,255,255,0.75)' : apiTheme.subText }}
+                            >
+                              {priceLabel}
+                            </span>
+                          </div>
                         </button>
                       )
-                    })}
+                    })
+                    ) : (
+                      <p className="py-8 text-center text-[13px]" style={{ color: apiTheme.subText }}>
+                        没有匹配的模型
+                      </p>
+                    )}
                   </div>
                 </InlineDropdown>
               </div>
+              {config.modelId.trim() ? (
+                <p className="mt-2 text-[11px] leading-relaxed" style={{ color: apiTheme.subText }}>
+                  费率：{selectedModelPricingLabel}
+                  {selectedModelPricingLabel === '价格未知' ? '（部分中转 /models 不返回定价，请以服务商控制台为准）' : '（每百万 token）'}
+                </p>
+              ) : null}
             </label>
           </>
         ) : (

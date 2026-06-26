@@ -13,6 +13,7 @@ export type ProactiveMessageRevealPayload = {
   conversationKey: string
   characterId: string
   playerIdentityId: string
+  playerDisplayName: string
   notifyPeerTitle: string
   bubbles: ProactiveMessageRevealBubble[]
 }
@@ -20,36 +21,8 @@ export type ProactiveMessageRevealPayload = {
 type ProactiveMessageRevealHandler = (payload: ProactiveMessageRevealPayload) => boolean
 
 const revealHandlers = new Map<string, ProactiveMessageRevealHandler>()
+/** 聊天页尚未挂载时的短暂窗口：供 register 后逐条动画；同时会立刻落库 */
 const pendingReveals = new Map<string, ProactiveMessageRevealPayload>()
-const persistFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>()
-
-const PERSIST_FALLBACK_MS = 45_000
-
-function clearPersistFallback(conversationKey: string): void {
-  const k = conversationKey.trim()
-  const timer = persistFallbackTimers.get(k)
-  if (timer != null) {
-    window.clearTimeout(timer)
-    persistFallbackTimers.delete(k)
-  }
-}
-
-function schedulePersistFallback(payload: ProactiveMessageRevealPayload): void {
-  const k = payload.conversationKey.trim()
-  if (!k) return
-  clearPersistFallback(k)
-  persistFallbackTimers.set(
-    k,
-    window.setTimeout(() => {
-      persistFallbackTimers.delete(k)
-      if (!pendingReveals.has(k)) return
-      const pending = pendingReveals.get(k)
-      pendingReveals.delete(k)
-      if (!pending) return
-      void persistProactiveRevealPayload(pending, false).catch(() => {})
-    }, PERSIST_FALLBACK_MS),
-  )
-}
 
 export function registerProactiveMessageRevealHandler(
   conversationKey: string,
@@ -65,7 +38,6 @@ export function registerProactiveMessageRevealHandler(
   const pending = pendingReveals.get(k)
   if (pending) {
     pendingReveals.delete(k)
-    clearPersistFallback(k)
     handler(pending)
   }
 }
@@ -77,14 +49,35 @@ export function tryHandoffProactiveMessageReveal(payload: ProactiveMessageReveal
   const handler = revealHandlers.get(k)
   if (!handler) return false
   pendingReveals.delete(k)
-  clearPersistFallback(k)
   return handler(payload)
 }
 
-/** 聊天页未挂载时暂存；进入会话后由 register 触发逐条露出。 */
+/** 聊天页未挂载：立刻落库（历史时间戳），并暂存供稍后进入会话时动画（若尚未被读入列表）。 */
 export function stashProactiveMessageReveal(payload: ProactiveMessageRevealPayload): void {
   const k = payload.conversationKey.trim()
   if (!k) return
   pendingReveals.set(k, payload)
-  schedulePersistFallback(payload)
+  void persistProactiveRevealPayload(payload, false).catch(() => {})
+}
+
+/** 页面隐藏/卸载前：确保尚未接管的主动消息已全部落库 */
+export function flushPendingProactiveMessageReveals(): void {
+  if (pendingReveals.size === 0) return
+  const batch = [...pendingReveals.values()]
+  pendingReveals.clear()
+  for (const payload of batch) {
+    void persistProactiveRevealPayload(payload, false).catch(() => {})
+  }
+}
+
+let lifecycleInstalled = false
+
+export function installProactiveMessageRevealLifecycle(): void {
+  if (lifecycleInstalled) return
+  lifecycleInstalled = true
+  const flush = () => flushPendingProactiveMessageReveals()
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush()
+  })
+  window.addEventListener('pagehide', flush)
 }

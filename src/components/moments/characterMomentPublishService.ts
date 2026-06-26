@@ -35,6 +35,8 @@ export type PublishCharacterMomentParams = {
   musicShareLanguageRatio?: ProactiveMomentMusicLanguageRatioSettings
   /** 主动发布：向用户听歌偏好靠拢 */
   followUserMusicTaste?: ProactiveMomentFollowUserMusicTasteSettings
+  /** 主动发布：离线补发时的历史发布时间戳 */
+  publishedAt?: number
   onProgress?: (stage: 'writing' | 'imaging' | 'done') => void
 }
 
@@ -174,6 +176,7 @@ export async function publishCharacterMoment(
     }),
     mentionCharacterIds: aiDraft.mentionCharacterIds,
     publisherSelfComments: aiDraft.publisherSelfComments,
+    timestamp: params.publishedAt,
   })
 
   params.onProgress?.('done')

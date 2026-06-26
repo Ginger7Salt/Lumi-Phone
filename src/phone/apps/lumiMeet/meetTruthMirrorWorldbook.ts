@@ -11,7 +11,12 @@ export function getMeetTruthMirrorLoreEntryId(characterId: string): string {
   return `meet-truth-mirror-log-${characterId.trim()}`
 }
 
-export const MEET_TRUTH_MIRROR_WORLD_BOOK_TITLE = '12 TRUTH | 交换真心话纪要'
+import { getMeetSyncWorldBookTitle } from './nineDimensionAccordion'
+
+export const MEET_TRUTH_MIRROR_WORLD_BOOK_TITLE = getMeetSyncWorldBookTitle(
+  'vol12',
+  '12 TRUTH | 交换真心话纪要',
+)
 
 export function getMeetTruthMirrorWorldBookId(characterId: string): string {
   return `meet-wb-${characterId.trim()}-vol12`

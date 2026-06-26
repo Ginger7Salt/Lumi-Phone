@@ -10,6 +10,8 @@ import { installBackgroundKeepAlive } from './phone/apps/backgroundNotify/backgr
 import { maybeRecoverFromBrokenKeepAlivePwa } from './phone/apps/backgroundNotify/keepAliveBootRecovery'
 import { installProactivePrivateMessageEngine } from './phone/apps/wechat/proactivePrivateMessageEngine'
 import { installProactiveCharacterMomentEngine } from './components/moments/proactiveCharacterMomentEngine'
+import { installTasteUserGiftDeliveryEngine } from './phone/apps/takeout/tasteUserGiftDeliveryEngine'
+import { installTasteFeastCeremonyEngine } from './phone/apps/takeout/tasteFeastCeremonyEngine'
 
 /**
  * 键盘覆盖内容而不是挤压 viewport（Chromium 等）。
@@ -52,4 +54,6 @@ queueMicrotask(() => {
   installBackgroundKeepAlive()
   installProactivePrivateMessageEngine()
   installProactiveCharacterMomentEngine()
+  installTasteUserGiftDeliveryEngine()
+  installTasteFeastCeremonyEngine()
 })

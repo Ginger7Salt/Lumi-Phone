@@ -7,6 +7,7 @@ import { isQianfanMuseSteamerModel } from './qianfanImageCatalog'
 import {
   GEMINI_API_BASE_URL,
   isGeminiImagenModel,
+  isGeminiNativeImageModel,
   resolveImagenAspectRatio,
 } from './geminiImageCatalog'
 import { extractPngDataUrlFromBuffer } from './momentsImageGenBinary'
@@ -19,6 +20,7 @@ import {
   OPENAI_IMAGE_API_URL,
   resolveOpenaiImageSize,
 } from './openaiImageCatalog'
+import { buildOpenAiImagesGenerationsEndpoint, buildGeminiGenerateContentEndpoint } from '../../phone/apps/api/openAiCompatibleEndpoints'
 import {
   KOLORS_IMAGE_SIZES,
   QIANFAN_IMAGE_SIZES,
@@ -333,6 +335,57 @@ async function generateNovelaiImage(params: MomentsImageGenParams): Promise<stri
   return extractPngDataUrlFromBuffer(await res.arrayBuffer())
 }
 
+type GeminiGenerateContentAuth = 'bearer' | 'query'
+
+function extractImageFromGeminiGenerateContentPayload(data: unknown): string | null {
+  const payload = data as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }> }
+    }>
+  }
+  for (const part of payload.candidates?.[0]?.content?.parts ?? []) {
+    const inline = part.inlineData
+    if (inline?.data?.trim()) {
+      const mime = inline.mimeType?.trim() || 'image/png'
+      return `data:${mime};base64,${inline.data.trim()}`
+    }
+  }
+  return null
+}
+
+async function requestGeminiGenerateContentImage(params: {
+  endpoint: string
+  apiKey: string
+  prompt: string
+  auth: GeminiGenerateContentAuth
+  errorProvider: MomentsImageProvider
+}): Promise<string> {
+  let url = params.endpoint
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (params.auth === 'bearer') {
+    headers.Authorization = `Bearer ${params.apiKey}`
+  } else {
+    url = `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(params.apiKey)}`
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: params.prompt }] }],
+      generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(localizeMomentsImageGenError(params.errorProvider, res.status, text))
+  }
+
+  const dataUrl = extractImageFromGeminiGenerateContentPayload(await res.json())
+  if (!dataUrl) throw new Error('Gemini 未返回图片')
+  return dataUrl
+}
+
 async function generateGeminiImage(params: MomentsImageGenParams): Promise<string> {
   const apiKey = params.settings.geminiApiKey?.trim()
   if (!apiKey) throw new Error('请先填写 Gemini API Key')
@@ -374,33 +427,14 @@ async function generateGeminiImage(params: MomentsImageGenParams): Promise<strin
     return `data:${mime};base64,${b64}`
   }
 
-  const url = `${GEMINI_API_BASE_URL}/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-    }),
+  const url = `${GEMINI_API_BASE_URL}/models/${modelName}:generateContent`
+  return requestGeminiGenerateContentImage({
+    endpoint: url,
+    apiKey,
+    prompt,
+    auth: 'query',
+    errorProvider: 'gemini',
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(localizeMomentsImageGenError('gemini', res.status, text))
-  }
-
-  const data = (await res.json()) as {
-    candidates?: Array<{
-      content?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }> }
-    }>
-  }
-  for (const part of data.candidates?.[0]?.content?.parts ?? []) {
-    const inline = part.inlineData
-    if (inline?.data?.trim()) {
-      const mime = inline.mimeType?.trim() || 'image/png'
-      return `data:${mime};base64,${inline.data.trim()}`
-    }
-  }
-  throw new Error('Gemini 未返回图片')
 }
 
 async function generateOpenaiImage(params: MomentsImageGenParams): Promise<string> {
@@ -460,6 +494,104 @@ async function generateOpenaiImage(params: MomentsImageGenParams): Promise<strin
   throw new Error('OpenAI 未返回图片')
 }
 
+function isOpenAiStyleImageModel(modelName: string): boolean {
+  return /^(dall-?e|gpt-image)/i.test(modelName)
+}
+
+async function generateCustomGeminiNativeImage(
+  params: MomentsImageGenParams,
+  apiUrl: string,
+  apiKey: string,
+  modelName: string,
+): Promise<string> {
+  const prompt = buildFullPrompt(params)
+  if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
+
+  const endpoint = buildGeminiGenerateContentEndpoint(apiUrl, modelName)
+  if (!endpoint) throw new Error('自定义接口 API URL 无效')
+
+  return requestGeminiGenerateContentImage({
+    endpoint,
+    apiKey,
+    prompt,
+    auth: 'bearer',
+    errorProvider: 'custom',
+  })
+}
+
+async function generateCustomImage(params: MomentsImageGenParams): Promise<string> {
+  const apiUrl = params.settings.customApiUrl?.trim()
+  const apiKey = params.settings.customApiKey?.trim()
+  if (!apiUrl) throw new Error('请先填写自定义接口 API URL')
+  if (!apiKey) throw new Error('请先填写自定义接口 API Key')
+
+  const prompt = buildFullPrompt(params)
+  if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
+
+  const { modelName } = parseMomentsImageModelId(
+    params.settings.modelId.trim() || DEFAULT_MOMENTS_IMAGE_MODEL_ID,
+  )
+  if (!modelName) throw new Error('请先拉取并选择生图模型')
+
+  if (isGeminiNativeImageModel(modelName)) {
+    return generateCustomGeminiNativeImage(params, apiUrl, apiKey, modelName)
+  }
+
+  const endpoint = buildOpenAiImagesGenerationsEndpoint(apiUrl)
+  if (!endpoint) throw new Error('自定义接口 API URL 无效')
+
+  const width = params.width ?? 1024
+  const height = params.height ?? 1024
+  const body: Record<string, unknown> = { model: modelName, prompt }
+
+  if (isOpenAiStyleImageModel(modelName)) {
+    body.n = 1
+    body.size = resolveOpenaiImageSize(modelName, width, height, params.imageSize)
+    body.response_format = 'b64_json'
+    if (modelName === 'gpt-image-1') body.quality = 'medium'
+    else if (modelName === 'dall-e-3') body.quality = 'standard'
+  } else {
+    body.image_size = resolveSiliconFlowImageSize(modelName, width, height, params.imageSize)
+    body.num_inference_steps = 20
+    if (/Qwen\/Qwen-Image/i.test(modelName) && !/Edit/i.test(modelName)) body.cfg = 4
+    if (/Kolors/i.test(modelName)) {
+      body.guidance_scale = 7.5
+      body.batch_size = 1
+    }
+  }
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(localizeMomentsImageGenError('custom', res.status, text))
+  }
+
+  const data = (await res.json()) as {
+    data?: Array<{ b64_json?: string; url?: string }>
+    images?: Array<{ url?: string }>
+  }
+  const openAiItem = data.data?.[0]
+  const b64 = openAiItem?.b64_json?.trim()
+  if (b64) return `data:image/png;base64,${b64}`
+
+  const imageUrl = openAiItem?.url?.trim() ?? data.images?.[0]?.url?.trim()
+  if (!imageUrl) throw new Error('自定义接口未返回图片')
+
+  try {
+    return await fetchImageAsDataUrl(imageUrl)
+  } catch {
+    return imageUrl
+  }
+}
+
 function resolveProvider(settings: MomentsImageGenSettings): MomentsImageProvider {
   return settings.provider ?? parseMomentsImageModelId(settings.modelId).provider
 }
@@ -471,5 +603,6 @@ export async function generateMomentsImage(params: MomentsImageGenParams): Promi
   if (provider === 'novelai') return generateNovelaiImage(params)
   if (provider === 'gemini') return generateGeminiImage(params)
   if (provider === 'openai') return generateOpenaiImage(params)
+  if (provider === 'custom') return generateCustomImage(params)
   return generateSiliconFlowImage(params)
 }

@@ -64,6 +64,8 @@ import {
   parseListenProfileShareAiFieldsFromDb,
   parseListenShareTrackLinesFromDb,
 } from '../musicSync/listenShareAiContext'
+import { parseWeChatLocationPayloadFromDb } from '../location/wechatLocationUtils'
+import { parseWeChatTakeoutOrderPayloadFromDb } from '../takeout/takeoutOrderShareAiDirective'
 import { buildCharacterFullTrashArchive, type PersonaDbTrashSource } from '../../recycleBin/archiveCharacterDeletion'
 import { suppressMomentMemoryArchiveFromMemory } from '../memory/momentMemoryArchiveSuppression'
 import { INDEXED_TRASH_RETENTION_MS, emitIndexedTrashChanged } from '../../recycleBin/recycleBinEvents'
@@ -946,6 +948,14 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
   }
   if (m.type !== 'player' && m.type !== 'character') return null
   const content = typeof m.content === 'string' ? m.content : ''
+  let stickerRef =
+    typeof (m as { stickerRef?: unknown }).stickerRef === 'string'
+      ? (m as { stickerRef: string }).stickerRef.trim().slice(0, 120)
+      : ''
+  if (!stickerRef && content.trim().startsWith('[表情包]')) {
+    const payload = content.trim().slice('[表情包]'.length).trim()
+    if (payload) stickerRef = payload.slice(0, 120)
+  }
   const thinking =
     typeof (m as { thinking?: unknown }).thinking === 'string'
       ? String((m as { thinking?: unknown }).thinking).trim().slice(0, 8000)
@@ -1194,6 +1204,10 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
       ...(lyricsExcerpt ? { lyricsExcerpt } : {}),
     }
   })()
+  const rawLocationShare = (m as { locationShare?: unknown }).locationShare
+  const locationShare = parseWeChatLocationPayloadFromDb(rawLocationShare)
+  const rawTakeoutOrder = (m as { takeoutOrder?: unknown }).takeoutOrder
+  const takeoutOrder = parseWeChatTakeoutOrderPayloadFromDb(rawTakeoutOrder)
   const rawSharedRecord = (m as { sharedRecord?: unknown }).sharedRecord
   const sharedRecord: WeChatSharedRecordPayload | undefined = (() => {
     if (!rawSharedRecord || typeof rawSharedRecord !== 'object') return undefined
@@ -1349,9 +1363,12 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     listenCommentShare,
     listenProfileShare,
     listenTrackShare,
+    locationShare,
+    takeoutOrder,
     sharedRecord,
     chatHistory,
     images: images.length ? images : undefined,
+    ...(stickerRef ? { stickerRef } : {}),
     isFavorite,
     replyTo,
     originalContent,
@@ -7582,6 +7599,8 @@ export class PersonaDb {
       clearImageRoundCountRange?: boolean
       clearProactiveMessageIntervalSeconds?: boolean
       clearProactiveMessageVariableIntervalBounds?: boolean
+      /** 为 true 时移除主动消息调度锚点（须重新保存间隔后才开始倒计时） */
+      clearProactiveMessageSchedule?: boolean
     } & Partial<
       Pick<
         ChatConversationSettingsRow,
@@ -7715,13 +7734,15 @@ export class PersonaDb {
                 proactiveMessageIntervalSeconds: resolveProactiveMessageIntervalSeconds(existing),
               }
             : {}),
-      ...(typeof params.proactiveMessageLastFiredAtMs === 'number' &&
-      Number.isFinite(params.proactiveMessageLastFiredAtMs) &&
-      params.proactiveMessageLastFiredAtMs > 0
-        ? { proactiveMessageLastFiredAtMs: params.proactiveMessageLastFiredAtMs }
-        : existing?.proactiveMessageLastFiredAtMs !== undefined
-          ? { proactiveMessageLastFiredAtMs: existing.proactiveMessageLastFiredAtMs }
-          : {}),
+      ...(params.clearProactiveMessageSchedule
+        ? {}
+        : typeof params.proactiveMessageLastFiredAtMs === 'number' &&
+            Number.isFinite(params.proactiveMessageLastFiredAtMs) &&
+            params.proactiveMessageLastFiredAtMs > 0
+          ? { proactiveMessageLastFiredAtMs: params.proactiveMessageLastFiredAtMs }
+          : existing?.proactiveMessageLastFiredAtMs !== undefined
+            ? { proactiveMessageLastFiredAtMs: existing.proactiveMessageLastFiredAtMs }
+            : {}),
       ...(typeof params.proactiveMessageVariableIntervalEnabled === 'boolean'
         ? { proactiveMessageVariableIntervalEnabled: params.proactiveMessageVariableIntervalEnabled }
         : existing?.proactiveMessageVariableIntervalEnabled !== undefined
@@ -7753,17 +7774,19 @@ export class PersonaDb {
           : existing?.proactiveMessageVariableIntervalMaxSeconds !== undefined
             ? { proactiveMessageVariableIntervalMaxSeconds: existing.proactiveMessageVariableIntervalMaxSeconds }
             : {}),
-      ...(typeof params.proactiveMessageNextIntervalSeconds === 'number' &&
-      Number.isFinite(params.proactiveMessageNextIntervalSeconds) &&
-      params.proactiveMessageNextIntervalSeconds > 0
-        ? {
-            proactiveMessageNextIntervalSeconds: clampProactiveVariableIntervalSeconds(
-              params.proactiveMessageNextIntervalSeconds,
-            ),
-          }
-        : existing?.proactiveMessageNextIntervalSeconds !== undefined
-          ? { proactiveMessageNextIntervalSeconds: existing.proactiveMessageNextIntervalSeconds }
-          : {}),
+      ...(params.clearProactiveMessageSchedule
+        ? {}
+        : typeof params.proactiveMessageNextIntervalSeconds === 'number' &&
+            Number.isFinite(params.proactiveMessageNextIntervalSeconds) &&
+            params.proactiveMessageNextIntervalSeconds > 0
+          ? {
+              proactiveMessageNextIntervalSeconds: clampProactiveVariableIntervalSeconds(
+                params.proactiveMessageNextIntervalSeconds,
+              ),
+            }
+          : existing?.proactiveMessageNextIntervalSeconds !== undefined
+            ? { proactiveMessageNextIntervalSeconds: existing.proactiveMessageNextIntervalSeconds }
+            : {}),
       lastMessageTime: params.lastMessageTime ?? existing?.lastMessageTime ?? 0,
       updatedAt: now,
       ...(typeof uiOnlyHiddenBeforeTimestamp === 'number' &&

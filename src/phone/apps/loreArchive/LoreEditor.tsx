@@ -160,17 +160,6 @@ export function LoreEditor({ draft, roster, onChange, onBack, autoSaveLabel }: P
         />
 
         <div className="mt-8">
-          <p className="mb-2 text-[11px] leading-relaxed text-neutral-500">
-            人称约定（全档案统一）：{' '}
-            <code className="rounded bg-neutral-100 px-1 py-0.5 text-[11px] text-neutral-800">
-              {WORLD_BOOK_CHAR_PLACEHOLDER}
-            </code>{' '}
-            = 该条目关联的人设<strong>角色本人</strong>；{' '}
-            <code className="rounded bg-neutral-100 px-1 py-0.5 text-[11px] text-neutral-800">
-              {WORLD_BOOK_USER_PLACEHOLDER}
-            </code>{' '}
-            = <strong>玩家本人</strong>（当前会话人设<strong>在通讯录绑定的</strong>玩家身份）。注入微信/约会前会自动替换为姓名，多身份不会串号。
-          </p>
           <div className="mb-2 flex flex-wrap gap-2">
             <button
               type="button"
@@ -197,9 +186,6 @@ export function LoreEditor({ draft, roster, onChange, onBack, autoSaveLabel }: P
 
         <section className="mt-10 border-t border-black/[0.06] pt-8">
           <p className="text-[12px] font-medium text-neutral-700">生效板块</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-neutral-400">
-            选择本条出现在哪些场景（私聊 / 群聊 / 线下约会剧情 / VN）；「全部板块」表示四类场景均可能注入。
-          </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
@@ -274,9 +260,6 @@ export function LoreEditor({ draft, roster, onChange, onBack, autoSaveLabel }: P
               />
             </button>
           </div>
-          <p className="mt-2 text-[11px] leading-relaxed text-neutral-400">
-            开启表示对全部角色生效；关闭后请勾选具体角色（仅在该角色在场且档案注入时会采纳）。
-          </p>
 
           <AnimatePresence initial={false}>
             {!charAll ? (
@@ -288,8 +271,7 @@ export function LoreEditor({ draft, roster, onChange, onBack, autoSaveLabel }: P
                 transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
                 className="overflow-hidden"
               >
-                <p className="mb-3 mt-6 text-[11px] tracking-wide text-neutral-400">选择生效角色（可多选）</p>
-                <div className="-mx-1 flex gap-3 overflow-x-auto pb-2 pt-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                <div className="-mx-1 mt-6 flex gap-3 overflow-x-auto pb-2 pt-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   {roster.map((c) => {
                     const on = selectedCharIds.has(c.id)
                     return (

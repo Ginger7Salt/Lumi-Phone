@@ -2,15 +2,32 @@ import { generateMomentsImage } from '../../../components/moments/momentsImageGe
 import type { MomentsImageGenSettings } from '../../../components/moments/useMomentsSettingsStore'
 import { isCharacterImageGenEnabled } from '../api/imageGenPresetUtils'
 import { loadResolvedImageGenSettings } from '../api/loadResolvedImageGenSettings'
-import type { WeChatChatMessage, WeChatImageMime, WeChatVoicePayload, WeChatMusicSyncInvitePayload } from './newFriendsPersona/types'
+import type { WeChatChatMessage, WeChatImageMime, WeChatVoicePayload, WeChatMusicSyncInvitePayload, WeChatLocationPayload, WeChatTakeoutOrderPayload } from './newFriendsPersona/types'
 import type { ProactiveMessageRevealBubble } from './proactiveMessageRevealBridge'
 import { parseCharacterStickerLine, ensureStickerStoreHydrated } from './stickers/stickerStore'
+import {
+  formatStickerTranscriptLine,
+  wasCharacterStickerRefUsedRecently,
+} from './stickers/stickerAntiRepeat'
 import { imageGenDataUrlToPayload, parseCharacterImageGenLine } from './wechatCharacterImageGen'
 import { stickerUrlToImagePayload } from './wechatStickerImagePayload'
 import {
   isCharacterMusicSyncDirectiveArtifactLine,
   parseCharacterMusicSyncDirectiveFromArtifactLine,
 } from './musicSync/wechatCharacterMusicSyncAi'
+import { emitTasteOrderPlaced } from '../takeout/tasteOrderBridge'
+import {
+  buildCharacterTakeoutOrderBundle,
+  isTakeoutOrderDirectiveArtifactLine,
+  parseTakeoutOrderDirective,
+  takeoutOrderContentFallback,
+} from './takeout/takeoutOrderShareAiDirective'
+import {
+  buildWeChatLocationPayloadFromAiDirective,
+  isLocationShareDirectiveArtifactLine,
+  parseLocationShareDirective,
+} from './location/locationShareAiDirective'
+import { locationShareContentFallback } from './location/wechatLocationUtils'
 import {
   normalizeVoiceScriptForTts,
   sanitizeVoiceControlForTextBubble,
@@ -26,6 +43,18 @@ export type PlannedProactiveBubble = {
   voice?: WeChatVoicePayload
   images?: { base64: string; type: WeChatImageMime }[]
   musicSync?: WeChatMusicSyncInvitePayload
+  locationShare?: WeChatLocationPayload
+  takeoutOrder?: WeChatTakeoutOrderPayload
+  stickerRef?: string
+}
+
+export type ProactiveTakeoutContext = {
+  characterId: string
+  characterName: string
+  /** 未指定 recipientName 时的默认收货昵称 */
+  defaultRecipientName: string
+  /** @deprecated */
+  userLabel?: string
 }
 
 function flattenProactiveBubbleContent(content: string): string[] {
@@ -44,14 +73,49 @@ async function planProactiveBubbleLineAsync(
   line: string,
   meta: { id: string; thinking?: string; timestamp: number },
   imageGen: { enabled: boolean; settings: MomentsImageGenSettings },
+  takeoutCtx?: ProactiveTakeoutContext,
+  recentCharacterStickerRefs: string[] = [],
 ): Promise<PlannedProactiveBubble | null> {
   const trimmed = String(line ?? '').trim()
   if (!trimmed) return null
   if (
     parseCharacterMusicSyncDirectiveFromArtifactLine(trimmed) ||
-    isCharacterMusicSyncDirectiveArtifactLine(trimmed)
+    isCharacterMusicSyncDirectiveArtifactLine(trimmed) ||
+    isLocationShareDirectiveArtifactLine(trimmed) ||
+    isTakeoutOrderDirectiveArtifactLine(trimmed)
   ) {
     return null
+  }
+
+  const takeoutDirective = parseTakeoutOrderDirective(trimmed)
+  if (takeoutDirective && takeoutCtx) {
+    const bundle = buildCharacterTakeoutOrderBundle(takeoutDirective, {
+      characterId: takeoutCtx.characterId,
+      characterName: takeoutCtx.characterName,
+      defaultRecipientName: takeoutCtx.defaultRecipientName ?? takeoutCtx.userLabel ?? '我',
+    })
+    if (!bundle) return null
+    void emitTasteOrderPlaced(bundle.order)
+    return {
+      id: meta.id,
+      content: takeoutOrderContentFallback(bundle.card),
+      thinking: meta.thinking,
+      timestamp: meta.timestamp,
+      takeoutOrder: bundle.card,
+    }
+  }
+
+  const locDirective = parseLocationShareDirective(trimmed)
+  if (locDirective) {
+    const payload = buildWeChatLocationPayloadFromAiDirective(locDirective)
+    if (!payload) return null
+    return {
+      id: meta.id,
+      content: locationShareContentFallback(payload),
+      thinking: meta.thinking,
+      timestamp: meta.timestamp,
+      locationShare: payload,
+    }
   }
 
   const voiceLineMatch = trimmed.match(/^(?:\[语音\]|【语音】)\s*(.*)$/)
@@ -99,11 +163,16 @@ async function planProactiveBubbleLineAsync(
 
   const charSticker = parseCharacterStickerLine(trimmed)
   if (charSticker) {
+    if (wasCharacterStickerRefUsedRecently(charSticker.ref, recentCharacterStickerRefs)) {
+      return null
+    }
     try {
       const payloadSticker = await stickerUrlToImagePayload(charSticker.url)
+      recentCharacterStickerRefs.push(charSticker.ref)
       return {
         id: meta.id,
-        content: '[表情包]',
+        content: formatStickerTranscriptLine(charSticker.ref),
+        stickerRef: charSticker.ref,
         thinking: meta.thinking,
         timestamp: meta.timestamp,
         images: [{ base64: payloadSticker.base64, type: payloadSticker.mime }],
@@ -125,6 +194,8 @@ async function planProactiveBubbleLineAsync(
 
 export async function planProactiveRevealBubblesAsync(
   bubbles: ProactiveMessageRevealBubble[],
+  takeoutCtx?: ProactiveTakeoutContext,
+  recentCharacterStickerRefs: string[] = [],
 ): Promise<PlannedProactiveBubble[]> {
   await ensureStickerStoreHydrated()
   const imageGenSettings = await loadResolvedImageGenSettings()
@@ -155,12 +226,14 @@ export async function planProactiveRevealBubblesAsync(
           timestamp: bubble.timestamp + i,
         },
         imageGen,
+        takeoutCtx,
+        recentCharacterStickerRefs,
       )
       if (!planned) continue
       if (planned.voice) {
         const transcript = planned.voice.transcriptText?.trim() || planned.content.trim()
         if (voiceTranscriptDuplicatesPlainTexts(transcript, plainTextsThisBatch)) continue
-      } else if (!planned.images?.length) {
+      } else if (!planned.images?.length && !planned.locationShare && !planned.takeoutOrder) {
         const plain = planned.content.trim()
         if (plain) plainTextsThisBatch.push(plain)
       }
@@ -209,7 +282,8 @@ export async function repairStoredStickerMessageRow(m: WeChatChatMessage): Promi
     const payloadSticker = await stickerUrlToImagePayload(charSticker.url)
     return {
       ...m,
-      content: '[表情包]',
+      content: formatStickerTranscriptLine(charSticker.ref),
+      stickerRef: m.stickerRef?.trim() || charSticker.ref,
       images: [{ base64: payloadSticker.base64, type: payloadSticker.mime }],
     }
   } catch {

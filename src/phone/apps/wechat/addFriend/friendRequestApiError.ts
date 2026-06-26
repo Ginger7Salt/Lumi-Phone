@@ -1,5 +1,5 @@
-/** 将模型 API 原始错误转为「新的朋友」场景下的可读说明（勿直接 alert 英文服务端报错） */
-export function formatFriendRequestApiError(err: unknown): string {
+/** 将模型 API / fetch 原始错误转为可读中文（Safari 等常抛英文 `Load failed`） */
+export function formatApiClientError(err: unknown, emptyFallback = '请求失败，请稍后重试。'): string {
   const raw = err instanceof Error ? err.message : String(err ?? '')
   const lower = raw.toLowerCase()
 
@@ -33,7 +33,12 @@ export function formatFriendRequestApiError(err: unknown): string {
   }
 
   const trimmed = raw.trim()
-  if (!trimmed) return '对方回复失败，请稍后重试。'
+  if (!trimmed) return emptyFallback
   if (trimmed.length > 160) return `${trimmed.slice(0, 160)}…`
   return trimmed
+}
+
+/** 将模型 API 原始错误转为「新的朋友」场景下的可读说明（勿直接 alert 英文服务端报错） */
+export function formatFriendRequestApiError(err: unknown): string {
+  return formatApiClientError(err, '对方回复失败，请稍后重试。')
 }

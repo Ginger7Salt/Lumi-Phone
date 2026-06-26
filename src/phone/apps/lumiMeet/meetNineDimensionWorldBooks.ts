@@ -9,7 +9,7 @@ import {
   sanitizeMeetCoreMbtiTone,
   type ComprehensivePersona,
 } from './comprehensivePersona'
-import { MEET_SYNC_WORLD_BOOK_VOLUME_TITLES } from './nineDimensionAccordion'
+import { MEET_SYNC_WORLD_BOOK_VOLUME_TITLES, getMeetSyncWorldBookTitle } from './nineDimensionAccordion'
 import { isMeetTruthMirrorWorldBookId } from './meetTruthMirrorWorldbook'
 
 export { isMeetTruthMirrorWorldBookId }
@@ -125,8 +125,7 @@ export function buildMeetVol10WorldBook(
   now: number,
   epilogue: MeetVol10EpiloguePayload | null,
 ): WorldBook {
-  const meta = MEET_SYNC_WORLD_BOOK_VOLUME_TITLES.find((m) => m.volKey === 'vol10')
-  const bookTitle = meta?.bookTitle ?? '10 ATTITUDE | 尾声延展'
+  const bookTitle = getMeetSyncWorldBookTitle('vol10', '10 · 对你现在（态度、称呼、边界、心思）')
   return mkBook(npcId, 'vol10', bookTitle, buildVol10Items(npcId, nickname, realName, now, epilogue))
 }
 
@@ -248,6 +247,7 @@ export function buildMeetNineDimensionWorldBooks(
     mkItem(npcId, 'vol05', 2, '感官', rewriteLoveBlocksUserPlaceholder(f.sensory), nickname, rn, now),
     mkItem(npcId, 'vol05', 3, '关系动态', rewriteLoveBlocksUserPlaceholder(f.dynamic), nickname, rn, now),
     mkItem(npcId, 'vol05', 4, '吃醋与占有欲', rewriteLoveBlocksUserPlaceholder(f.jealousy), nickname, rn, now),
+    mkItem(npcId, 'vol05', 5, '亲密口语习惯', rewriteLoveBlocksUserPlaceholder(f.intimateSpeech), nickname, rn, now),
   ]
 
   const r = p.relations

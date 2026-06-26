@@ -15,7 +15,7 @@ type Props = {
 export function StickerHub({ groups, onCreate, onOpenGroup, onRequestDeleteGroup }: Props) {
   return (
     <div className="h-full min-h-0 overflow-y-auto px-4 pb-6 pt-3">
-      <p className="text-[12px] text-gray-500">管理你的视觉语料，帮助 AI 更好理解情绪。</p>
+      <p className="text-[12px] text-gray-500">管理视觉语料；描述只写画面内容，AI 会结合语境理解，不会把字面意思当真实行为。</p>
 
       <div className="mt-4 grid grid-cols-2 gap-3">
         <Pressable

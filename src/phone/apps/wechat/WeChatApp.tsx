@@ -16,8 +16,11 @@ import {
 import { useCustomization } from '../../CustomizationContext'
 import { LISTEN_TOGETHER_NAVIGATE_EVENT } from '../../../components/discoverListen/listenTogetherNavigation'
 import {
+  WECHAT_FOCUS_GROUP_CHAT_EVENT,
   WECHAT_FOCUS_PERSONA_CHAT_EVENT,
+  consumeWeChatFocusGroupChatId,
   consumeWeChatFocusPersonaChatId,
+  type WeChatFocusGroupChatDetail,
   type WeChatFocusPersonaChatDetail,
 } from './wechatFocusChatNavigation'
 import { wxFillToStyle } from './wechatThemeFillStyle'
@@ -3792,10 +3795,18 @@ function WeChatAppInner({ onBack }: Props) {
     setRoute({ name: 'chat', chat: { kind: 'persona', characterId: id } })
   }, [])
 
+  const openGroupChatByGroupId = useCallback((groupId: string) => {
+    const id = groupId.trim()
+    if (!id) return
+    setRoute({ name: 'chat', chat: { kind: 'group', groupId: id } })
+  }, [])
+
   useEffect(() => {
     const pending = consumeWeChatFocusPersonaChatId()
     if (pending) openPersonaChatByCharacterId(pending)
-  }, [openPersonaChatByCharacterId])
+    const pendingGroup = consumeWeChatFocusGroupChatId()
+    if (pendingGroup) openGroupChatByGroupId(pendingGroup)
+  }, [openGroupChatByGroupId, openPersonaChatByCharacterId])
 
   useEffect(() => {
     const onFocusChat = (e: Event) => {
@@ -3807,8 +3818,19 @@ function WeChatAppInner({ onBack }: Props) {
     return () => window.removeEventListener(WECHAT_FOCUS_PERSONA_CHAT_EVENT, onFocusChat as EventListener)
   }, [openPersonaChatByCharacterId])
 
+  useEffect(() => {
+    const onFocusGroup = (e: Event) => {
+      const ce = e as CustomEvent<WeChatFocusGroupChatDetail>
+      const id = ce.detail?.groupId?.trim() || consumeWeChatFocusGroupChatId()
+      if (id) openGroupChatByGroupId(id)
+    }
+    window.addEventListener(WECHAT_FOCUS_GROUP_CHAT_EVENT, onFocusGroup as EventListener)
+    return () => window.removeEventListener(WECHAT_FOCUS_GROUP_CHAT_EVENT, onFocusGroup as EventListener)
+  }, [openGroupChatByGroupId])
+
   const [chatOtherTyping, setChatOtherTyping] = useState(false)
   const [chatOpponentRevealPending, setChatOpponentRevealPending] = useState(false)
+  const [orphanPeerNames, setOrphanPeerNames] = useState<Record<string, string>>({})
   const newFriendsUnreadCount = useMemo(
     () => countNewFriendsBadge(pendingNewFriendRequests),
     [pendingNewFriendRequests],
@@ -3899,14 +3921,33 @@ function WeChatAppInner({ onBack }: Props) {
     }
     const row = state.wechatPersonaContacts.find((c) => c.characterId === chat.characterId)
     if (!row) {
+      const fallback = orphanPeerNames[chat.characterId]?.trim()
       return {
         id: `persona-${chat.characterId}`,
-        remarkName: '聊天',
+        remarkName: fallback || '聊天',
         avatarUrl: undefined as string | undefined,
       }
     }
     return { id: row.id, remarkName: row.remarkName, avatarUrl: row.avatarUrl }
-  }, [wxDockChat, activeGroupRow, weChatMergedContacts, weChatSelfAccountContact, state.wechatPersonaContacts])
+  }, [wxDockChat, activeGroupRow, orphanPeerNames, weChatMergedContacts, weChatSelfAccountContact, state.wechatPersonaContacts])
+
+  useEffect(() => {
+    const chat = wxDockChat
+    if (!chat || chat.kind !== 'persona') return
+    const cid = chat.characterId.trim()
+    if (!cid) return
+    if (state.wechatPersonaContacts.some((c) => c.characterId === cid)) return
+    if (orphanPeerNames[cid]) return
+    let cancelled = false
+    void personaDb.getCharacter(cid).then((ch) => {
+      if (cancelled || !ch) return
+      const name = ch.wechatNickname?.trim() || ch.name?.trim() || '聊天'
+      setOrphanPeerNames((prev) => (prev[cid] ? prev : { ...prev, [cid]: name }))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [orphanPeerNames, state.wechatPersonaContacts, wxDockChat])
 
   const chatHeaderShowPsycheRadar =
     route.name === 'chat' && wxDockChat?.kind !== 'group' && wxDockChat?.kind !== 'self'

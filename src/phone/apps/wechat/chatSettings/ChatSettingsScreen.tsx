@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ImageCropperModal } from '../../../components/ImageCropperModal'
 import { Pressable } from '../../../components/Pressable'
 import { useCustomization } from '../../../CustomizationContext'
+import { phoneNumStyle } from '../../../types'
 import type {
   ChatConversationSettingsRow,
   CharacterBusySettingsRow,
@@ -25,7 +26,7 @@ import {
   parseStoredImageRoundCountRange,
   VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT,
 } from '../wechatMediaSendFrequency'
-import { resolveProactiveMessageIntervalSeconds, hasProactiveMessageScheduleSaved, PROACTIVE_MESSAGE_NUMBER_FONT } from '../proactivePrivateMessageTypes'
+import { resolveProactiveMessageIntervalSeconds, hasProactiveMessageScheduleSaved } from '../proactivePrivateMessageTypes'
 import {
   drawProactiveVariableIntervalSeconds,
   formatProactiveVariableIntervalRangeLabel,
@@ -74,8 +75,6 @@ function SettingsListCard({ children }: { children: React.ReactNode }) {
   )
 }
 
-const roundTriggerNumStyle = { fontFamily: PROACTIVE_MESSAGE_NUMBER_FONT } as const
-
 function RoundTriggerPercentControl({
   kind,
   stored,
@@ -102,16 +101,16 @@ function RoundTriggerPercentControl({
         <span className="text-[14px] font-medium text-black">
           {customized ? (
             <>
-              <span style={roundTriggerNumStyle}>{display}%</span>
+              <span style={phoneNumStyle}>{display}%</span>
             </>
           ) : kind === 'voice' ? (
             <>
               系统默认约{' '}
-              <span style={roundTriggerNumStyle}>{VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>
+              <span style={phoneNumStyle}>{VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>
             </>
           ) : kind === 'image' ? (
             <>
-              默认 <span style={roundTriggerNumStyle}>{IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>（不发图）
+              默认 <span style={phoneNumStyle}>{IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>（不发图）
             </>
           ) : (
             defaultHint
@@ -145,10 +144,10 @@ function RoundTriggerPercentControl({
       />
       <div className="mt-1 flex justify-between text-[11px] text-[#8e8e8e]">
         <span>
-          <span style={roundTriggerNumStyle}>0%</span> 不发
+          <span style={phoneNumStyle}>0%</span> 不发
         </span>
         <span>
-          <span style={roundTriggerNumStyle}>100%</span> 每轮必发
+          <span style={phoneNumStyle}>100%</span> 每轮必发
         </span>
       </div>
     </div>
@@ -174,11 +173,11 @@ function ImageRoundCountRangeControl({
       <div className="flex items-center justify-between gap-2">
         <span className="text-[14px] font-medium text-black">
           {customized ? (
-            <span style={roundTriggerNumStyle}>{formatImageRoundCountRangeLabel(range)}</span>
+            <span style={phoneNumStyle}>{formatImageRoundCountRangeLabel(range)}</span>
           ) : (
             <>
               默认{' '}
-              <span style={roundTriggerNumStyle}>
+              <span style={phoneNumStyle}>
                 {IMAGE_DEFAULT_ROUND_COUNT_MIN}～{IMAGE_DEFAULT_ROUND_COUNT_MAX}
               </span>{' '}
               张
@@ -198,7 +197,7 @@ function ImageRoundCountRangeControl({
       <div className="mt-3">
         <div className="flex items-center justify-between text-[12px] text-[#8e8e8e]">
           <span>最少张数</span>
-          <span style={roundTriggerNumStyle}>{range.min} 张</span>
+          <span style={phoneNumStyle}>{range.min} 张</span>
         </div>
         <input
           type="range"
@@ -217,7 +216,7 @@ function ImageRoundCountRangeControl({
       <div className="mt-3">
         <div className="flex items-center justify-between text-[12px] text-[#8e8e8e]">
           <span>最多张数</span>
-          <span style={roundTriggerNumStyle}>{range.max} 张</span>
+          <span style={phoneNumStyle}>{range.max} 张</span>
         </div>
         <input
           type="range"
@@ -235,10 +234,10 @@ function ImageRoundCountRangeControl({
       </div>
       <div className="mt-1 flex justify-between text-[11px] text-[#8e8e8e]">
         <span>
-          <span style={roundTriggerNumStyle}>{IMAGE_ROUND_COUNT_MIN_LIMIT}</span> 张
+          <span style={phoneNumStyle}>{IMAGE_ROUND_COUNT_MIN_LIMIT}</span> 张
         </span>
         <span>
-          <span style={roundTriggerNumStyle}>{IMAGE_ROUND_COUNT_MAX_LIMIT}</span> 张
+          <span style={phoneNumStyle}>{IMAGE_ROUND_COUNT_MAX_LIMIT}</span> 张
         </span>
       </div>
     </div>
@@ -465,6 +464,7 @@ export function ChatSettingsScreen({
         clearImageRoundCountRange?: boolean
         clearProactiveMessageIntervalSeconds?: boolean
         clearProactiveMessageVariableIntervalBounds?: boolean
+        clearProactiveMessageSchedule?: boolean
       },
     ) => {
       await personaDb.upsertChatConversationSettings({
@@ -517,6 +517,7 @@ export function ChatSettingsScreen({
       peerCharacterId,
       playerIdentityId,
       proactiveMessageEnabled: next,
+      ...(next ? { clearProactiveMessageSchedule: true } : {}),
     })
     await load()
   }, [conversationKey, peerCharacterId, playerIdentityId, proactiveEnabled, load])
@@ -567,17 +568,11 @@ export function ChatSettingsScreen({
       await patch({ proactiveMessageVariableIntervalEnabled: false })
       return
     }
-    const explicitBusy = await resolveCharacterExplicitBusyForProactive({
-      row: effective,
-      now: Date.now(),
-    })
-    const nextSeconds = drawProactiveVariableIntervalSeconds(explicitBusy, effective)
     await patch({
       proactiveMessageVariableIntervalEnabled: true,
-      proactiveMessageNextIntervalSeconds: nextSeconds,
-      proactiveMessageLastFiredAtMs: Date.now(),
+      clearProactiveMessageSchedule: true,
     })
-  }, [effective, patch, proactiveVariableEnabled])
+  }, [patch, proactiveVariableEnabled])
 
   const toggleMute = useCallback(async () => {
     await personaDb.updateMuteStatus({
@@ -858,7 +853,7 @@ export function ChatSettingsScreen({
                 <WxSwitch on={proactiveEnabled} onToggle={() => void toggleProactiveMessage()} />
               </div>
               <p className="mt-2 text-[12px] leading-relaxed text-[#8e8e8e]">
-                开启后，角色会按设定频率结合聊天上下文主动发来消息（不重复上一轮内容）。切到后台时若已开启「后台保活」或「后台推送」，仍可收到系统通知。
+                开启后须先保存下方间隔，倒计时才会开始；保存前不会触发主动消息，也不会显示「正在输入」。
               </p>
               {proactiveEnabled ? (
                 <>
@@ -881,7 +876,7 @@ export function ChatSettingsScreen({
                         {proactiveVariableBusyHint
                           ? formatProactiveVariableIntervalRangeLabel(true, effective)
                           : `约 ${formatProactiveVariableIdleRangeLabel(effective)}`}
-                        {proactiveScheduleSaved ? ' · 每次触达后重新随机' : ' · 开启后将立即开始随机倒计时'}
+                        {proactiveScheduleSaved ? ' · 每次触达后重新随机' : ' · 须保存灵动间隔后才开始倒计时'}
                       </p>
                       <ProactiveMessageVariableIntervalControl
                         savedBounds={proactiveVariableIdleBounds}
@@ -930,7 +925,7 @@ export function ChatSettingsScreen({
               <span className="text-[16px] text-black">表情包每轮触发概率</span>
               <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
                 拖动滑块设定角色每轮回复中至少发 1 条表情包的目标概率（
-                <span style={roundTriggerNumStyle}>0%</span> 为完全不发）。
+                <span style={phoneNumStyle}>0%</span> 为完全不发）。
               </p>
               <RoundTriggerPercentControl
                 kind="sticker"
@@ -945,7 +940,7 @@ export function ChatSettingsScreen({
               <span className="text-[16px] text-black">语音消息每轮触发概率</span>
               <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
                 设定该轮回复<strong className="font-normal text-[#666]">会不会出现</strong>语音（门槛概率，不是条数上限）。命中后同一轮可发<strong className="font-normal text-[#666]">多条</strong>语音并与文字穿插。未定制时系统默认约{' '}
-                <span style={roundTriggerNumStyle}>{VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>。
+                <span style={phoneNumStyle}>{VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>。
               </p>
               <RoundTriggerPercentControl
                 kind="voice"
@@ -960,7 +955,7 @@ export function ChatSettingsScreen({
               <span className="text-[16px] text-black">AI 配图每轮触发概率</span>
               <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
                 拖动滑块设定角色每轮回复中至少发 1 张 AI 配图的目标概率（默认{' '}
-                <span style={roundTriggerNumStyle}>{IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>{' '}
+                <span style={phoneNumStyle}>{IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>{' '}
                 不发；用户直接要求发图时不受限制；须已配置生图 API）。
               </p>
               <RoundTriggerPercentControl
@@ -981,6 +976,9 @@ export function ChatSettingsScreen({
               />
             </div>
           </ListRow>
+        </SettingsListCard>
+
+        <SettingsListCard>
           <ListRow
             onClick={() => {
               if (!personaEditTargetId) {

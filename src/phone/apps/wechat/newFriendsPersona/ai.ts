@@ -1,3 +1,5 @@
+import { buildPersonaAiHealthyToneRules } from './personaAiGeneratePrompt'
+import { PERSONA_AI_AFFECTION_GUIDE_EPILOGUE_NAME } from './personaAiWorldBooks'
 import type { Character, PlayerIdentity, WorldBook, WorldBookItem } from './types'
 import { genderLabelZh } from './utils'
 import { formatWorldBookItemLineForPrompt, worldBookPronounGuideAnnotation } from './worldBookPronounGuide'
@@ -1096,7 +1098,8 @@ export async function generateWorldBookItemContent(params: {
     '\n【文风 — 必须遵守】\n' +
     '- 口语化大白话，像平时跟人聊天；短句优先，用词直白，能说明白就行。\n' +
     '- 不要为文采堆砌比喻、排比、对仗；少用「仿佛」「恰似」「氤氲」「缱绻」一类书面腔和莫名其妙的文雅修辞。\n' +
-    '- 禁止无意义的升华、强行感慨、金句收尾或上价值；只写和本条标题、关键词直接相关的具体信息，别写空话。\n'
+    '- 禁止无意义的升华、强行感慨、金句收尾或上价值；只写和本条标题、关键词直接相关的具体信息，别写空话。\n' +
+    `\n${buildPersonaAiHealthyToneRules()}\n`
 
   const coherenceBlock =
     '\n【与已有条目及基础信息 — 必须遵守】\n' +
@@ -1172,6 +1175,41 @@ export async function generateWorldBookItemContent(params: {
       ? `【本条特殊要求】本条目属于「当前对你的态度」：第三人称旁白式叙述该角色对「你」的当前态度与相处体感；指涉操作者只用「你」，正文中禁止出现「玩家」二字；禁止第一人称台词、内心独白、书信体。叙述用直白口语化的旁白，不要文艺腔和空泛升华。须与上文已有条目中对「你」的态度、关系描述一致，勿矛盾、勿重复同义表述。\n`
       : ''
 
+  const userChatMannerExtra =
+    !forId && /对你现在|当前对你的态度/.test(params.worldBook.name) && /称呼|聊天分寸/.test(params.item.name)
+      ? `【本条特殊要求】本条目**只写** {{char}} 对 {{user}} 的称呼、回消息节奏、emoji/语音偏好、会不会主动找话题等**专属聊天分寸**；勿重复 vol08「口语与口头禅」里的通用口语习惯。\n`
+      : ''
+
+  const generalSpeechExtra =
+    !forId && /口语与口头禅|口语习惯|口头禅/.test(params.item.name)
+      ? `【本条特殊要求】本条目写 {{char}} **本人**的通用口语习惯、口头禅、用词节奏与语气（对谁都差不多）；须含 2–4 条可直接引用的引语示例（英文半角双引号）。**禁止**写对 {{user}} 的专属称呼、回消息节奏、暧昧分寸或「只对 TA 怎样说话」——那些只属于 vol10「对你现在」里「对 {{user}} 的称呼与聊天分寸」。\n`
+      : ''
+
+  const intimateSpeechExtra =
+    !forId && /亲密口语习惯/.test(params.item.name)
+      ? `【本条特殊要求】本条目写 {{char}} 与**对方**亲密场景下**说出口的原话**（非 vol08 日常通用口语，非 vol10 对 {{user}} 的微信聊天分寸）。须 **4–6 组**「情境 + 引语」示例，情境指恋人时写 **对方**，禁止男人/女人；格式如：被抱住时会低声说 "别闹"、睡前困极了会嘟囔 "再待一会儿"；引语用英文半角双引号。清水档案禁止露骨性描写；若角色档案本身为成人向，可写情欲向口语但须符合人设。\n`
+      : ''
+
+  const orientationOriginExtra =
+    !forId && /取向与自我认同|性取向由来/.test(params.item.name)
+      ? `【本条特殊要求】本条目只写 {{char}} 对**自我**性取向/浪漫吸引的**当下稳定**认同与由来（历史、主标签）。**禁止**因觉得 {{user}} 好看、颜值服气、审美欣赏，就写「开始怀疑自己的取向」「对 {{user}} 心动所以动摇」——审美欣赏 ≠ 恋爱 ≠ 取向变化；对 {{user}} 的颜值评价应写在 vol10「内心的真实分量」，不要写在本条。若本条目属尾声延展层（UI 勾选了取向「可变」），**「可变」仅指条目层级**，正文仍写稳定认同，**禁止**写「取向可能会变/还在摸索/不确定」。\n`
+      : ''
+
+  const affectionGuideExtra =
+    !forId && params.item.name === PERSONA_AI_AFFECTION_GUIDE_EPILOGUE_NAME
+      ? `【本条特殊要求】本条目是给 {{user}} 的**行为侧写**（第三人称攻略体，非游戏 UI、非选项列表）：须写清 {{user}} 做什么加好感、什么是雷区、宜什么节奏；须贴合 core.values / core.flaws 与当前关系起点。**核心**：好感可累积——只要 {{user}} 持续真诚加分，{{char}} **就有可能**对 {{user}} 心动、喜欢甚至想交往；初始关系只是起点，禁止写死「只能当朋友/永不可能恋爱」；禁止跪舔速成、套路 PUA、打破第四墙提及「玩家」。\n`
+      : ''
+
+  const vol05DesireExtra =
+    !forId && /DESIRE|欲念与底线/.test(params.worldBook.name)
+      ? `【本条特殊要求】vol05 欲念与底线条目须**直白描绘**（黄文义：具体写身体/动作/反应，禁止隐喻与清水化）；语气符合档案亲密种子；指恋人/亲密对象一律写 **对方**，禁止男人/女人；**禁止**超雄、暴力压制、羞辱驯服、ALPHA 狼性。\n`
+      : ''
+
+  const vol07ContrastExtra =
+    !forId && /CONTRAST|恋爱镜像反差/.test(params.worldBook.name)
+      ? `【本条特殊要求】vol07 恋爱反差条目指恋人/亲密对象时一律写 **对方**，禁止男人/女人；勿把泛化恋人写成 {{user}} 或预设性别。\n`
+      : ''
+
   if (!cfg || !cfg.apiUrl || !cfg.apiKey) throw new Error('未配置 AI API')
 
   const systemContent = forId
@@ -1187,7 +1225,7 @@ export async function generateWorldBookItemContent(params: {
     { role: 'system', content: systemContent },
     {
       role: 'user',
-      content: `${baseHint}${pronounWriterNote}${npcBlock}${context}${coherenceBlock}${wbgBlock}${styleBlock}${attitudeBookExtra}请生成本条目的正文内容。`,
+      content: `${baseHint}${pronounWriterNote}${npcBlock}${context}${coherenceBlock}${wbgBlock}${styleBlock}${attitudeBookExtra}${userChatMannerExtra}${generalSpeechExtra}${intimateSpeechExtra}${orientationOriginExtra}${affectionGuideExtra}${vol05DesireExtra}${vol07ContrastExtra}请生成本条目的正文内容。`,
     },
   ]
   return await openAiCompatibleChat(cfg, messages, { max_tokens: maxTokens })

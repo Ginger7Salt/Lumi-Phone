@@ -50,11 +50,14 @@ import {
 } from './time/wechatTimeUtils'
 import { loadCharacterPsycheState } from './characterPsyche/characterPsycheStore'
 import {
+  buildProactiveCatchUpReplyBias,
   buildProactivePrivateMessageReplyBias,
   computeMsSinceLastUserMessage,
   hasProactiveMessageScheduleSaved,
   resolveProactiveMessageAiRound,
 } from './proactivePrivateMessageTypes'
+import { persistProactiveRevealPayload } from './proactiveBubbleRevealPersistence'
+import { stickerTranscriptTextFromFields } from './stickers/stickerAntiRepeat'
 import { buildSyncListeningPlaybackBias } from './musicSync/syncListeningPlaybackBias'
 import { WECHAT_CHARACTER_MUSIC_SYNC_OUTPUT_BLOCK, buildCharacterMusicSyncInviteStateBias } from './musicSync/wechatCharacterMusicSyncAi'
 import {
@@ -74,8 +77,15 @@ import {
 import {
   tryHandoffProactiveMessageReveal,
   stashProactiveMessageReveal,
+  installProactiveMessageRevealLifecycle,
   type ProactiveMessageRevealBubble,
 } from './proactiveMessageRevealBridge'
+import {
+  computeMissedProactiveMessageRoundCount,
+  computeProactiveMessageSlotScheduledAtMs,
+  resolveProactiveHistoricalDisplayTimestampMs,
+  resolveProactiveMessageIntervalMs,
+} from './proactiveScheduling'
 
 const TICK_MS = 5_000
 
@@ -162,22 +172,14 @@ function storedMessagesToTranscript(messages: WeChatChatMessage[]): ChatTranscri
         const voiceText = emo ? `（${who}，情绪：${emo}）${txt}` : `（${who}）${txt}`
         return { id: m.id, from, text: voiceText, replyTo: m.replyTo }
       }
+      const stickerLine = stickerTranscriptTextFromFields(m.content, m.stickerRef)
+      if (stickerLine) return { id: m.id, from, text: stickerLine, replyTo: m.replyTo }
       const text = m.content?.trim()
       if (text) return { id: m.id, from, text, replyTo: m.replyTo }
       if (m.images?.length) return { id: m.id, from, text: '（发送了一张图片）', replyTo: m.replyTo }
       return { id: m.id, from, text: '', replyTo: m.replyTo }
     })
     .filter((t) => t.text.trim())
-}
-
-async function resolveWeChatNowMs(characterId: string): Promise<number> {
-  const realNow = Date.now()
-  const [global, charTime] = await Promise.all([
-    personaDb.getGlobalSettings(),
-    personaDb.getCharacterTimeSettings(characterId),
-  ])
-  const cfg = normalizeWeChatTimeConfig(charTime?.config ?? global.globalTimeConfig)
-  return resolveWeChatCurrentTimeMs(cfg, realNow)
 }
 
 async function shouldFire(row: ChatConversationSettingsRow, now: number): Promise<boolean> {
@@ -220,32 +222,48 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
   const key = row.conversationKey.trim()
   const parsed = parsePrivateWeChatConversationCharacterAndSession(key)
   if (!parsed) return
+
+  const freshRow = (await personaDb.getChatConversationSettings(key)) ?? row
+  const scheduleNow = Date.now()
+  if (!(await shouldFire(freshRow, scheduleNow))) return
+
+  const explicitBusyForSchedule = await resolveCharacterExplicitBusyForProactive({
+    row: freshRow,
+    now: scheduleNow,
+  })
+  const scheduleOptions = { characterExplicitlyBusy: explicitBusyForSchedule }
+  const roundCount = computeMissedProactiveMessageRoundCount(freshRow, scheduleNow, scheduleOptions)
+  if (roundCount <= 0) return
+
+  if (inFlightKeys.has(key) || aiBusyKeys.has(key)) return
+
   const characterId = parsed.characterId.trim()
   const sessionPid = parsed.sessionPlayerId.trim() || '__none__'
-  const peerCharacterId = row.peerCharacterId.trim() || characterId
+  const peerCharacterId = freshRow.peerCharacterId.trim() || characterId
   const playerIdentityId =
-    sessionPid !== '__none__' ? sessionPid : row.playerIdentityId.trim() || sessionPid
+    sessionPid !== '__none__' ? sessionPid : freshRow.playerIdentityId.trim() || sessionPid
   const scoped = parseWechatAccountPrivateConversationKey(key)
   const wechatAccountId = scoped?.wechatAccountId ?? null
+
+  const apiConfig = await loadResolvedApiConfig('chatCard')
+  if (!apiConfig?.apiUrl?.trim() || !apiConfig.apiKey?.trim() || !apiConfig.modelId?.trim()) {
+    return
+  }
+
+  const character = await personaDb.getCharacter(characterId)
+  if (!character) return
+
+  const latestRow = (await personaDb.getChatConversationSettings(key)) ?? freshRow
+  const fireNow = Date.now()
+  if (!(await shouldFire(latestRow, fireNow))) return
+  if (inFlightKeys.has(key) || aiBusyKeys.has(key)) return
 
   inFlightKeys.add(key)
   notifyProactiveMessageInFlightChange()
   setBackgroundNotifyPendingWork({ wechatTyping: true })
+  let activeRow = latestRow
   try {
-    const apiConfig = await loadResolvedApiConfig('chatCard')
-    if (!apiConfig?.apiUrl?.trim() || !apiConfig.apiKey?.trim() || !apiConfig.modelId?.trim()) {
-      return
-    }
-
-    const character = await personaDb.getCharacter(characterId)
-    if (!character) return
-
-    const [messages, bundle] = await Promise.all([
-      personaDb.listWeChatChatMessagesByConversationKey(key),
-      loadAccountsBundle(),
-    ])
-    const transcript = storedMessagesToTranscript(messages).slice(-48)
-    const now = await resolveWeChatNowMs(characterId)
+    const bundle = await loadAccountsBundle()
 
     const account =
       wechatAccountId && bundle?.accounts
@@ -263,51 +281,6 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
       const block = formatWorldBackgroundForPrompt(wbg)
       if (block.trim()) worldBackgroundPrompt = block
     }
-
-    const msSinceLastUserMessage = computeMsSinceLastUserMessage(messages, now)
-    let affection: number | null = null
-    let relationshipDef: string | null = null
-    try {
-      const psyche = await loadCharacterPsycheState({
-        conversationCharacterId: characterId,
-        playerIdentityId,
-        personaCharacterId: characterId,
-        characterFullName: character.name?.trim() || 'TA',
-      })
-      affection = psyche.state?.affection ?? null
-      relationshipDef = psyche.state?.relationshipDef ?? null
-    } catch {
-      // 体征未生成时仍可走通用主动消息偏向
-    }
-
-    const replyBias = [
-      buildProactivePrivateMessageReplyBias(messages, {
-        msSinceLastUserMessage,
-        affection,
-        relationshipDef,
-      }),
-      buildSyncListeningPlaybackBias(characterId, { forProactive: true }),
-      buildCharacterMusicSyncInviteStateBias(characterId, messages),
-      WECHAT_CHARACTER_MUSIC_SYNC_OUTPUT_BLOCK,
-      WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX,
-    ]
-      .filter((x) => x.trim())
-      .join('\n\n')
-    const aiRound = resolveProactiveMessageAiRound(messages)
-
-    const pack = await buildFriendRequestPrivatePromptPack({
-      characterId: peerCharacterId,
-      conversationKey: key,
-      sessionPlayerIdentityId: sessionPid,
-      apiConfig,
-      transcript,
-      biasTextForMemoryHaystack: replyBias,
-      strangerMemoryGuard: false,
-      crossAccountContext:
-        wechatAccountId && bundle?.accounts
-          ? { currentAccountId: wechatAccountId, allAccounts: bundle.accounts }
-          : undefined,
-    })
 
     const playerIdentity =
       sessionPid && sessionPid !== '__none__' && wechatAccountId
@@ -328,6 +301,11 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
     const worldBookBinding = await resolveWorldBookUserBinding(character)
     const charTimeRow = await personaDb.getCharacterTimeSettings(characterId)
     const timePerceptionEnabled = isCharacterTimePerceptionEnabled(charTimeRow)
+    const [global, charTime] = await Promise.all([
+      personaDb.getGlobalSettings(),
+      personaDb.getCharacterTimeSettings(characterId),
+    ])
+    const timeCfg = normalizeWeChatTimeConfig(charTime?.config ?? global.globalTimeConfig)
 
     const resolvedImageGenSettings = await loadResolvedImageGenSettings()
     const characterImageGenEnabled = isCharacterImageGenEnabled(resolvedImageGenSettings)
@@ -354,173 +332,260 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
       .join('\n\n')
 
     const imageCountRange = parseStoredImageRoundCountRange(
-      row.imageRoundCountMin,
-      row.imageRoundCountMax,
+      activeRow.imageRoundCountMin,
+      activeRow.imageRoundCountMax,
     )
-    const imageRoundAllowed = rollImageRoundTriggerAllowed(row.imageRoundTriggerPercent)
-    const imageRoundCountTarget = imageRoundAllowed ? drawRoundImageCount(imageCountRange) : 0
 
-    const ai = await requestWeChatPeerReplyBubbles({
-      apiConfig,
-      character,
-      playerIdentity,
-      playerDisplayName,
-      wechatHomeProfile: wechatHome,
-      meetWechatContinuityBlock,
-      transcript,
-      promptMode: 'persona',
-      longTermMemoryNotes: pack.memory || undefined,
-      longTermMemoryMomentImages: pack.momentImageUrls?.length ? pack.momentImageUrls : undefined,
-      worldBackgroundPrompt,
-      offlineDatingPlotsContext: pack.offlineDatingPlotsContext || undefined,
-      meetEncounterMemoriesContext: pack.meetEncounterMemoriesContext || undefined,
-      unsummarizedPrivateNotes: pack.unsPrivate || undefined,
-      unsummarizedGroupNotes: pack.unsGroup || undefined,
-      unsummarizedMeetNotes: pack.unsMeet || undefined,
-      recentGroupChatsReference: pack.recentGroupChatsReference || undefined,
-      replyBias,
-      includeThinkingChain: true,
-      currentTimeMs: now,
-      timePerceptionEnabled,
-      chatMemberIds: [peerCharacterId],
-      globalWechatPlate: 'private_chat',
-      worldBookPlayerIdentity: worldBookBinding?.row ?? null,
-      worldBookUserLineLabel: worldBookBinding?.lineLabel,
-      stickerRoundTriggerPercent: row.stickerRoundTriggerPercent,
-      voiceRoundTriggerPercent: row.voiceRoundTriggerPercent,
-      ...(characterImageGenEnabled
-        ? {
-            characterImageGenEnabled: true,
-            characterImageGenStyleHint,
-            imageRoundTriggerPercent: row.imageRoundTriggerPercent,
-            imageRoundCountMin: imageCountRange.min,
-            imageRoundCountMax: imageCountRange.max,
-            ...(imageRoundCountTarget > 0 ? { imageRoundCountTarget: imageRoundCountTarget } : {}),
-          }
-        : {}),
-      ...(characterMomentsPinCatalog.trim()
-        ? { characterMomentsPinCatalog }
-        : {}),
-      ...(userMomentsViewerCatalog.trim()
-        ? { userMomentsViewerCatalog }
-        : {}),
-      ...(characterWechatProfileBlock.trim()
-        ? { characterWechatProfileBlock }
-        : {}),
-      proactiveInitiation: aiRound.proactiveInitiation,
-      proactiveInitiationNudge: aiRound.proactiveInitiationNudge,
-    })
+    const realNow = Date.now()
+    const intervalMs = resolveProactiveMessageIntervalMs(activeRow, scheduleOptions)
+    const anchorLastFired = activeRow.proactiveMessageLastFiredAtMs ?? 0
 
-    let bubbles = (ai.bubbles ?? []).map((s) => String(s ?? '').trim()).filter(Boolean)
-    if (characterImageGenEnabled && !imageRoundAllowed) {
-      bubbles = stripCharacterImageGenLinesFromBubbles(bubbles)
-    } else if (characterImageGenEnabled && imageRoundAllowed) {
-      bubbles = limitCharacterImageGenLinesFromBubbles(bubbles, imageCountRange.max)
-    }
-    let musicSyncInvites: WeChatMusicSyncInvitePayload[] = []
-    if (wechatAccountId && characterId) {
-      if (bubbles.length) {
-        const profileImageApplied = await stripAndApplyCharacterProfileImageActions({
-          characterId,
-          bubbles,
-        })
-        bubbles = profileImageApplied.bubbles
-        const profileApplied = await stripAndApplyCharacterWechatProfileUpdates({
-          characterId,
-          bubbles,
-        })
-        bubbles = profileApplied.bubbles
-        bubbles = await stripAndApplyCharacterMomentPublishDirectives({
-          accountId: wechatAccountId,
-          characterId,
-          playerIdentityId,
-          playerDisplayName,
-          apiConfig,
-          bubbles,
-        })
-        bubbles = await stripAndApplyCharacterMomentSongShareDirectives({
-          accountId: wechatAccountId,
-          characterId,
-          playerIdentityId,
-          playerDisplayName,
-          apiConfig,
-          bubbles,
-        })
-        bubbles = await stripAndApplyCharacterMomentPinDirectives({
-          accountId: wechatAccountId,
-          characterId,
-          bubbles,
-        })
-      }
-      const musicSyncStripped = await stripAndApplyCharacterMusicSyncDirectives({
-        bubbles,
-        ctx: buildCharacterMusicSyncSessionContextForProactive({
-          characterId: peerCharacterId,
-          characterDisplayName:
-            character.wechatNickname?.trim() || character.remark?.trim() || character.name?.trim() || '对方',
-          characterAvatarUrl: character.avatarUrl,
-          playerDisplayName,
-          playerAvatarUrl: account?.avatarUrl,
-        }),
-      })
-      bubbles = musicSyncStripped.bubbles
-      musicSyncInvites = musicSyncStripped.invites
-    }
-    if (!bubbles.length && !musicSyncInvites.length) return
-
+    const isCatchUpBatch = roundCount > 1
     const notifyTitle =
       character.wechatNickname?.trim() || character.name?.trim() || '聊天'
 
-    let ts = now
-    const revealBubbles: ProactiveMessageRevealBubble[] = []
-    for (let i = 0; i < bubbles.length; i += 1) {
-      const content = bubbles[i]!
-      ts += i === 0 ? 0 : 800 + Math.floor(Math.random() * 1200)
-      revealBubbles.push({
-        id: newMessageId(),
-        content,
-        thinking: i === 0 ? ai.thinking : undefined,
-        timestamp: ts,
+    let psycheAffection: number | null = null
+    let psycheRelationshipDef: string | null = null
+    try {
+      const psyche = await loadCharacterPsycheState({
+        conversationCharacterId: characterId,
+        playerIdentityId,
+        personaCharacterId: characterId,
+        characterFullName: character.name?.trim() || 'TA',
       })
-    }
-    for (const invite of musicSyncInvites) {
-      ts += 800 + Math.floor(Math.random() * 1200)
-      revealBubbles.push({
-        id: newMessageId(),
-        content: bubbles[bubbles.length - 1]?.trim() || '[音乐共听邀约]',
-        timestamp: ts,
-        musicSync: invite,
-      })
+      psycheAffection = psyche.state?.affection ?? null
+      psycheRelationshipDef = psyche.state?.relationshipDef ?? null
+    } catch {
+      /* ignore */
     }
 
-    const handedOff = tryHandoffProactiveMessageReveal({
-      conversationKey: key,
-      characterId: peerCharacterId,
-      playerIdentityId,
-      notifyPeerTitle: notifyTitle,
-      bubbles: revealBubbles,
-    })
+    let completedRounds = 0
 
-    if (!handedOff) {
-      stashProactiveMessageReveal({
+    for (let slot = 1; slot <= roundCount; slot += 1) {
+      const scheduledRealAt =
+        anchorLastFired > 0
+          ? computeProactiveMessageSlotScheduledAtMs(anchorLastFired, intervalMs, slot)
+          : realNow
+      const displayRealBase = isCatchUpBatch
+        ? scheduledRealAt
+        : resolveProactiveHistoricalDisplayTimestampMs(scheduledRealAt, realNow)
+      const gameNowForRound = timePerceptionEnabled
+        ? resolveWeChatCurrentTimeMs(timeCfg, displayRealBase)
+        : displayRealBase
+      const tsBase = gameNowForRound
+
+      const messages = await personaDb.listWeChatChatMessagesByConversationKey(key)
+      const transcript = storedMessagesToTranscript(messages).slice(-48)
+      const msSinceLastUserMessage = computeMsSinceLastUserMessage(messages, gameNowForRound)
+
+      const replyBias = [
+        buildProactivePrivateMessageReplyBias(messages, {
+          msSinceLastUserMessage,
+          affection: psycheAffection,
+          relationshipDef: psycheRelationshipDef,
+        }),
+        buildProactiveCatchUpReplyBias(slot, roundCount),
+        buildSyncListeningPlaybackBias(characterId, { forProactive: true }),
+        buildCharacterMusicSyncInviteStateBias(characterId, messages),
+        WECHAT_CHARACTER_MUSIC_SYNC_OUTPUT_BLOCK,
+        WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX,
+      ]
+        .filter((x) => x.trim())
+        .join('\n\n')
+      const aiRound = resolveProactiveMessageAiRound(messages)
+
+      const pack = await buildFriendRequestPrivatePromptPack({
+        characterId: peerCharacterId,
+        conversationKey: key,
+        sessionPlayerIdentityId: sessionPid,
+        apiConfig,
+        transcript,
+        biasTextForMemoryHaystack: replyBias,
+        strangerMemoryGuard: false,
+        crossAccountContext:
+          wechatAccountId && bundle?.accounts
+            ? { currentAccountId: wechatAccountId, allAccounts: bundle.accounts }
+            : undefined,
+      })
+
+      const imageRoundAllowed = rollImageRoundTriggerAllowed(activeRow.imageRoundTriggerPercent)
+      const imageRoundCountTarget = imageRoundAllowed ? drawRoundImageCount(imageCountRange) : 0
+
+      const ai = await requestWeChatPeerReplyBubbles({
+        apiConfig,
+        character,
+        playerIdentity,
+        playerDisplayName,
+        wechatHomeProfile: wechatHome,
+        meetWechatContinuityBlock,
+        transcript,
+        promptMode: 'persona',
+        longTermMemoryNotes: pack.memory || undefined,
+        longTermMemoryMomentImages: pack.momentImageUrls?.length ? pack.momentImageUrls : undefined,
+        worldBackgroundPrompt,
+        offlineDatingPlotsContext: pack.offlineDatingPlotsContext || undefined,
+        meetEncounterMemoriesContext: pack.meetEncounterMemoriesContext || undefined,
+        unsummarizedPrivateNotes: pack.unsPrivate || undefined,
+        unsummarizedGroupNotes: pack.unsGroup || undefined,
+        unsummarizedMeetNotes: pack.unsMeet || undefined,
+        recentPrivateAiRoundsNotes: pack.recentPrivateAiRounds || undefined,
+        recentOfflineAiRoundsNotes: pack.recentOfflineAiRounds || undefined,
+        recentMeetAiRoundsNotes: pack.recentMeetAiRounds || undefined,
+        recentGroupChatsReference: pack.recentGroupChatsReference || undefined,
+        replyBias,
+        includeThinkingChain: true,
+        currentTimeMs: gameNowForRound,
+        timePerceptionEnabled,
+        chatMemberIds: [peerCharacterId],
+        globalWechatPlate: 'private_chat',
+        worldBookPlayerIdentity: worldBookBinding?.row ?? null,
+        worldBookUserLineLabel: worldBookBinding?.lineLabel,
+        stickerRoundTriggerPercent: activeRow.stickerRoundTriggerPercent,
+        voiceRoundTriggerPercent: activeRow.voiceRoundTriggerPercent,
+        ...(characterImageGenEnabled
+          ? {
+              characterImageGenEnabled: true,
+              characterImageGenStyleHint,
+              imageRoundTriggerPercent: activeRow.imageRoundTriggerPercent,
+              imageRoundCountMin: imageCountRange.min,
+              imageRoundCountMax: imageCountRange.max,
+              ...(imageRoundCountTarget > 0 ? { imageRoundCountTarget: imageRoundCountTarget } : {}),
+            }
+          : {}),
+        ...(characterMomentsPinCatalog.trim()
+          ? { characterMomentsPinCatalog }
+          : {}),
+        ...(userMomentsViewerCatalog.trim()
+          ? { userMomentsViewerCatalog }
+          : {}),
+        ...(characterWechatProfileBlock.trim()
+          ? { characterWechatProfileBlock }
+          : {}),
+        proactiveInitiation: aiRound.proactiveInitiation,
+        proactiveInitiationNudge: aiRound.proactiveInitiationNudge,
+      })
+
+      let bubbles = (ai.bubbles ?? []).map((s) => String(s ?? '').trim()).filter(Boolean)
+      if (characterImageGenEnabled && !imageRoundAllowed) {
+        bubbles = stripCharacterImageGenLinesFromBubbles(bubbles)
+      } else if (characterImageGenEnabled && imageRoundAllowed) {
+        bubbles = limitCharacterImageGenLinesFromBubbles(bubbles, imageCountRange.max)
+      }
+      let musicSyncInvites: WeChatMusicSyncInvitePayload[] = []
+      if (wechatAccountId && characterId) {
+        if (bubbles.length) {
+          const profileImageApplied = await stripAndApplyCharacterProfileImageActions({
+            characterId,
+            bubbles,
+          })
+          bubbles = profileImageApplied.bubbles
+          const profileApplied = await stripAndApplyCharacterWechatProfileUpdates({
+            characterId,
+            bubbles,
+          })
+          bubbles = profileApplied.bubbles
+          bubbles = await stripAndApplyCharacterMomentPublishDirectives({
+            accountId: wechatAccountId,
+            characterId,
+            playerIdentityId,
+            playerDisplayName,
+            apiConfig,
+            bubbles,
+          })
+          bubbles = await stripAndApplyCharacterMomentSongShareDirectives({
+            accountId: wechatAccountId,
+            characterId,
+            playerIdentityId,
+            playerDisplayName,
+            apiConfig,
+            bubbles,
+          })
+          bubbles = await stripAndApplyCharacterMomentPinDirectives({
+            accountId: wechatAccountId,
+            characterId,
+            bubbles,
+          })
+        }
+        const musicSyncStripped = await stripAndApplyCharacterMusicSyncDirectives({
+          bubbles,
+          ctx: buildCharacterMusicSyncSessionContextForProactive({
+            characterId: peerCharacterId,
+            characterDisplayName:
+              character.wechatNickname?.trim() || character.remark?.trim() || character.name?.trim() || '对方',
+            characterAvatarUrl: character.avatarUrl,
+            playerDisplayName,
+            playerAvatarUrl: account?.avatarUrl,
+          }),
+        })
+        bubbles = musicSyncStripped.bubbles
+        musicSyncInvites = musicSyncStripped.invites
+      }
+      if (!bubbles.length && !musicSyncInvites.length) {
+        completedRounds = slot
+        continue
+      }
+
+      let ts = tsBase
+      const revealBubbles: ProactiveMessageRevealBubble[] = []
+      for (let i = 0; i < bubbles.length; i += 1) {
+        const content = bubbles[i]!
+        ts += i === 0 ? 0 : 800 + Math.floor(Math.random() * 1200)
+        revealBubbles.push({
+          id: newMessageId(),
+          content,
+          thinking: i === 0 ? ai.thinking : undefined,
+          timestamp: ts,
+        })
+      }
+      for (const invite of musicSyncInvites) {
+        ts += 800 + Math.floor(Math.random() * 1200)
+        revealBubbles.push({
+          id: newMessageId(),
+          content: bubbles[bubbles.length - 1]?.trim() || '[音乐共听邀约]',
+          timestamp: ts,
+          musicSync: invite,
+        })
+      }
+
+      const revealPayload = {
         conversationKey: key,
         characterId: peerCharacterId,
         playerIdentityId,
+        playerDisplayName,
         notifyPeerTitle: notifyTitle,
         bubbles: revealBubbles,
+      }
+
+      if (isCatchUpBatch) {
+        await persistProactiveRevealPayload(revealPayload, false)
+      } else {
+        const handedOff = tryHandoffProactiveMessageReveal(revealPayload)
+        if (!handedOff) {
+          stashProactiveMessageReveal(revealPayload)
+        }
+      }
+
+      completedRounds = slot
+      const slotLastFiredMs =
+        anchorLastFired > 0 ? anchorLastFired + slot * intervalMs : Date.now()
+      await personaDb.upsertChatConversationSettings({
+        conversationKey: key,
+        peerCharacterId: activeRow.peerCharacterId,
+        playerIdentityId: activeRow.playerIdentityId,
+        proactiveMessageLastFiredAtMs: slotLastFiredMs,
       })
     }
 
-    const firedAt = Date.now()
-    const explicitBusy = await resolveCharacterExplicitBusyForProactive({ row, now: firedAt })
+    if (completedRounds <= 0) return
+
+    const explicitBusy = await resolveCharacterExplicitBusyForProactive({ row: activeRow, now: realNow })
     const nextPatch: Parameters<typeof personaDb.upsertChatConversationSettings>[0] = {
       conversationKey: key,
-      peerCharacterId: row.peerCharacterId,
-      playerIdentityId: row.playerIdentityId,
-      proactiveMessageLastFiredAtMs: firedAt,
+      peerCharacterId: activeRow.peerCharacterId,
+      playerIdentityId: activeRow.playerIdentityId,
     }
-    if (isProactiveVariableIntervalEnabled(row)) {
-      nextPatch.proactiveMessageNextIntervalSeconds = drawProactiveVariableIntervalSeconds(explicitBusy, row)
+    if (isProactiveVariableIntervalEnabled(activeRow)) {
+      nextPatch.proactiveMessageNextIntervalSeconds = drawProactiveVariableIntervalSeconds(explicitBusy, activeRow)
     }
     await personaDb.upsertChatConversationSettings(nextPatch)
   } catch (err) {
@@ -551,6 +616,8 @@ async function runTick(): Promise<void> {
 export function installProactivePrivateMessageEngine(): void {
   if (installed) return
   installed = true
+
+  installProactiveMessageRevealLifecycle()
 
   const onStorage = () => void runTick()
   window.addEventListener('wechat-storage-changed', onStorage)

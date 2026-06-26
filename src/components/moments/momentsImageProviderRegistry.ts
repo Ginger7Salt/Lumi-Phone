@@ -14,6 +14,12 @@ export type ImageGenProviderMeta = {
 
 export const MOMENTS_IMAGE_PROVIDER_META: ImageGenProviderMeta[] = [
   {
+    id: 'custom',
+    label: '自定义接口',
+    keyUrl: '',
+    keyLinkLabel: '',
+  },
+  {
     id: 'novelai',
     label: 'NovelAI',
     keyUrl: NOVELAI_ACCOUNT_URL,
@@ -67,6 +73,7 @@ export type ImageGenApiKeyField =
   | 'novelaiApiKey'
   | 'geminiApiKey'
   | 'openaiApiKey'
+  | 'customApiKey'
 
 const KEY_FIELD_BY_PROVIDER: Record<MomentsImageProvider, ImageGenApiKeyField> = {
   siliconflow: 'siliconflowApiKey',
@@ -75,6 +82,7 @@ const KEY_FIELD_BY_PROVIDER: Record<MomentsImageProvider, ImageGenApiKeyField> =
   novelai: 'novelaiApiKey',
   gemini: 'geminiApiKey',
   openai: 'openaiApiKey',
+  custom: 'customApiKey',
 }
 
 export function getImageGenApiKeyField(provider: MomentsImageProvider): ImageGenApiKeyField {
@@ -92,7 +100,8 @@ export function isMomentsImageProvider(value: unknown): value is MomentsImagePro
     value === 'volcengine' ||
     value === 'novelai' ||
     value === 'gemini' ||
-    value === 'openai'
+    value === 'openai' ||
+    value === 'custom'
   )
 }
 
@@ -108,5 +117,7 @@ export function buildFetchCatalogOptions(
     novelaiApiKey: settings.novelaiApiKey,
     geminiApiKey: settings.geminiApiKey,
     openaiApiKey: settings.openaiApiKey,
+    customApiUrl: settings.customApiUrl,
+    customApiKey: settings.customApiKey,
   }
 }

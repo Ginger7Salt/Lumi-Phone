@@ -9,6 +9,7 @@ import {
   createEmptyLinkPreviewSettings,
   mergeApiStoreLinkPreview,
 } from './linkPreviewSettingsUtils'
+import { normalizeModelPricingMap } from './modelPricingUtils'
 import type { ApiPreset, ApiStore } from './types'
 import { createEmptyPreset } from './mock'
 import { SILICONFLOW_ASR_DEFAULT_BASE_URL } from '../wechat/voiceCall/siliconflowAsr'
@@ -25,6 +26,7 @@ function normalizeApiConfig(raw: unknown): ApiConfig {
     apiKey: typeof r.apiKey === 'string' ? r.apiKey : '',
     modelId: typeof r.modelId === 'string' ? r.modelId : '',
     modelList,
+    modelPricingById: normalizeModelPricingMap(r.modelPricingById),
     lastTest:
       r.lastTest && typeof r.lastTest === 'object'
         ? {

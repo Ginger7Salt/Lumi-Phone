@@ -11,6 +11,7 @@ const PROVIDER_LABEL: Record<MomentsImageProvider, string> = {
   novelai: 'NovelAI',
   gemini: 'Gemini',
   openai: 'OpenAI GPT 生图',
+  custom: '自定义接口',
 }
 
 type ErrorRule = {
@@ -34,6 +35,10 @@ const ERROR_RULES: ErrorRule[] = [
   {
     test: /quota exceeded|exceeded.*quota|用量超限|配额/i,
     zh: '{p}调用额度已用尽，请充值或明日再试',
+  },
+  {
+    test: /only imagen models are supported|not supported model for image generation/i,
+    zh: '当前中转站的 /images/generations 仅支持 Imagen 等模型；Gemini 原生生图模型（如 gemini-2.5-flash-image）在自定义接口下会自动走 generateContent',
   },
   {
     test: /model not found|model does not exist|unknown model|invalid model|模型不存在|模型未找到/i,

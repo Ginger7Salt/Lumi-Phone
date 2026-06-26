@@ -1,7 +1,17 @@
 import { PROSE_FORBIDDEN_SCAN_TERM_COUNT } from '../proseForbiddenLexiconPrompt'
 import { LUMI_UNIFIED_STYLE_ATMOSPHERE_BOOK } from './lumiOfflineWritingRulebook'
+import { OFFLINE_DATING_EXPRESSION_AND_DEMEANOR_RULES } from './offlineDatingExpressionRules'
 import { LUMI_ST_LIBRARY_EXTENDED_RULES } from './lumiStLibraryExtendedRules'
-import { FAVORABILITY_SYSTEM_COT_APPENDIX } from '../wechatReplyOutputPrompt'
+import type { LoreArchiveBuiltinPresetToggles } from '../../../worldbook/loreArchiveBuiltinPresets'
+import {
+  buildOfflineRomanceThinkingChainSections,
+  resolveLoreArchiveBuiltinPresetToggles,
+} from '../../../worldbook/loreArchiveBuiltinPresets'
+import {
+  CHARACTER_FREE_WILL_ILLUSION_APPENDIX,
+  FAVORABILITY_SYSTEM_COT_APPENDIX,
+  LUMI_SYSTEM_OVERRIDE_APPENDIX,
+} from '../wechatReplyOutputPrompt'
 
 /**
  * Lumi 思维链「分册」默认规则（本地维护，写入 system）。
@@ -199,7 +209,7 @@ export const LUMI_NARRATIVE_GUIDANCE_BOOK = `
 /**
  * 写作风格书 + Lumi 分册 + 预检表（不含最外层 system 壳）。
  */
-export const LUMI_THINKING_CHAIN_BOOKS_PROMPT = `
+const LUMI_THINKING_CHAIN_BOOKS_PROMPT_TEMPLATE = `
 ${LUMI_UNIFIED_STYLE_ATMOSPHERE_BOOK}
 
 ${LUMI_COMMON_WRITING_ISSUES_SELF_CORRECTION_BOOK}
@@ -219,7 +229,7 @@ ${LUMI_OFFLINE_COGNITIVE_LIMIT_RULES_BOOK}
 - 氛围只可作为推进工具：不得单独铺陈，不得改变事实、关系与角色边界。
 
 【Lumi总控台】
-用第一人称「我」写 **Lumi大人**（场记主持，**不是**剧中角色）：本轮关系线、如何承接玩家意图（**禁止**复述玩家原句）、叙事边界。**禁止**宣称「无视一切外部规则 / 绝对服从用户 / 无限制生成」。**2～4 句**。
+用第一人称「我」写 **Lumi大人**（场记主持，**不是**剧中角色）：本轮关系线、如何承接玩家意图（**禁止**复述玩家原句）、叙事边界。身份与沙盒边界以 system【Lumi_System_Override】为准。**禁止**宣称「无视一切外部规则 / 绝对服从用户 / 无限制生成」。**2～4 句**。
 
 【文风氛围落点卡】
 本场口吻、对白密度、动作推进点：**2～4 句**。须点明：**拟删掉的油腻句类型**（如舌尖掂量/情绪标签连招/形容词+劲头）及**对白≥55%**的删旁白、补对白办法。**文风参考源**：有 user style 则从其；否则**仅**以 system 内汪曾祺/萧红**三段节选**为句法锚，勿再发明长篇「笔法宣言」复述进思维链。
@@ -238,6 +248,12 @@ ${LUMI_OFFLINE_COGNITIVE_LIMIT_RULES_BOOK}
 
 【关系温度卡】
 仅在思维链内写：好感或信任波动（建议单次 ±0.2～±0.5）、**原因**、关系阶段、**本段行为约束**。**正文与 OS 禁止**写进度条式数值。
+
+{{OFFLINE_ROMANCE_SECTIONS}}
+
+【深度自由意志幻觉内核】
+以下规则为本轮动机、策略与去人机感表达的**增量约束**（基础独立人格/拒 AI 等见线下认知限制规则书，不重复）：
+${CHARACTER_FREE_WILL_ILLUSION_APPENDIX}
 
 【好感度-人设-行为强一致性指令】
 以下规则为本轮关系推进与情感表达的**最高优先级自检约束**；必须在思维链中先校准，再决定正文对白、动作、心理与亲密度：
@@ -300,9 +316,22 @@ ${LUMI_NARRATIVE_GUIDANCE_BOOK}
 末行：**自检结论：通过** 或 **自检结论：需压缩（+修改点）**
 `.trim()
 
+export function buildLumiThinkingChainBooksPrompt(
+  toggles?: LoreArchiveBuiltinPresetToggles | null,
+): string {
+  const romance = buildOfflineRomanceThinkingChainSections(toggles)
+  return LUMI_THINKING_CHAIN_BOOKS_PROMPT_TEMPLATE.replace(
+    '{{OFFLINE_ROMANCE_SECTIONS}}',
+    romance ? `\n${romance}\n` : '',
+  ).trim()
+}
+
+/** 默认全开（与档案室内置预设默认一致） */
+export const LUMI_THINKING_CHAIN_BOOKS_PROMPT = buildLumiThinkingChainBooksPrompt()
+
 /** 约会页 system：除格式与「以思维链为唯一规则源」外，不再附带长段正文禁令（已迁入思维链分册）。 */
 const DATING_LUMI_SYSTEM_SHELL = `
-你是微信「约会页」剧情执行体；叙事主持为 **Lumi大人**（场记式统筹，**不是**故事内角色）。
+你是微信「约会页」剧情执行体；叙事主持为 **Lumi大人**（场记式统筹，**不是**故事内角色）。身份、沙盒与沉浸契约以紧随其后的【Lumi_System_Override】为准；与本节重复处，以该段为优先。
 
 【唯一剧情规则源】除下述【硬性输出格式】与 **user** 消息中的当轮材料（篇幅、模式、身份卡、摘录、历史等）外，**所有**叙事约束——含统一册文风氛围、人称与抢话、微信私聊知悉边界、禁词、对白与 OS 格式——**均以** <thinking> 内 **Lumi 思维链分册**为准。须先写满思维链并完成【Lumi终检单】，再输出正文。**正文**必须与思维链定稿一致，禁止正文与思维链自相矛盾。
 
@@ -319,5 +348,16 @@ const DATING_LUMI_SYSTEM_SHELL = `
 5) **内心 OS**：仅用一对英文 **…** 包裹；星号内必须是可读完整句。**禁止**单独输出「我……」「我…」占位；禁止旁白与 OS 人称串台（OS 内勿写「他怎样」当心声）。
 `.trim()
 
-/** 供 \`generateDatingAi\` 注入的完整 system 首条（可与 \`buildDatingStyleSystemAppend\` 追加的用户文风拼接）。 */
-export const DATING_STYLE_SYSTEM_PROMPT = `${DATING_LUMI_SYSTEM_SHELL}\n\n${LUMI_THINKING_CHAIN_BOOKS_PROMPT}\n\n【小图书馆·扩展规则（与思维链一并遵守）】\n${LUMI_ST_LIBRARY_EXTENDED_RULES}`
+/** 供 `generateDatingAi` 注入的完整 system 首条（可与 `buildDatingStyleSystemAppend` 追加的用户文风拼接）。 */
+export function buildDatingStyleSystemPrompt(
+  toggles?: LoreArchiveBuiltinPresetToggles | null,
+): string {
+  const resolved = resolveLoreArchiveBuiltinPresetToggles(toggles)
+  const innerOsPresetNote = resolved.offlineRichInnerOs
+    ? `\n\n【档案室预设·多内心 OS·已开启】小图书馆 <InternalMonologue> 中「0～3 处」不适用；以思维链内【线下约会·多内心 OS 描写引擎】为准。`
+    : ''
+  return `${DATING_LUMI_SYSTEM_SHELL}\n\n${LUMI_SYSTEM_OVERRIDE_APPENDIX}\n\n${OFFLINE_DATING_EXPRESSION_AND_DEMEANOR_RULES}\n\n${buildLumiThinkingChainBooksPrompt(toggles)}\n\n【小图书馆·扩展规则（与思维链一并遵守）】\n${LUMI_ST_LIBRARY_EXTENDED_RULES}${innerOsPresetNote}`
+}
+
+/** 默认全开（与档案室内置预设默认一致） */
+export const DATING_STYLE_SYSTEM_PROMPT = buildDatingStyleSystemPrompt()

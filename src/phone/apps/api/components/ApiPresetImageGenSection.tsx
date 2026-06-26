@@ -96,7 +96,7 @@ export function ApiPresetImageGenSection({ imageGen, onPatch }: Props) {
           </div>
         </div>
 
-        {imageGen.enabled ? (
+        {imageGen.enabled && providerMeta.keyUrl ? (
           <p
             className="border-b px-4 py-2.5 text-[12px]"
             style={{ borderColor: apiTheme.border, color: apiTheme.subText }}

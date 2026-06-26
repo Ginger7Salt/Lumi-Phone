@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Sparkles, Trash2, X } from 'lucide-react'
+import { Check, Pencil, Sparkles, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { isAndroidWeb, resolveAndroidKeyboardPadPx } from '../../../hooks/keyboardInset'
 import {
@@ -17,6 +17,7 @@ import {
 } from '../worldBookUserPlaceholderBindings'
 import {
   PlaceholderAwareTextarea,
+  useCharacterFieldPlaceholderPreview,
   type PlaceholderAwareTextareaHandle,
 } from './characterFieldPlaceholderPreview'
 import type { Character, WorldBook, WorldBookItem } from './types'
@@ -24,7 +25,7 @@ import type { Character, WorldBook, WorldBookItem } from './types'
 const WB_ITEM_GENERATING_TEXT = '生成中…'
 
 const BODY_TEXTAREA_CLASS =
-  'block min-h-[220px] w-full resize-y overflow-y-auto border-0 bg-transparent text-[15px] leading-relaxed text-stone-800 outline-none placeholder:text-stone-300 read-only:cursor-wait [-webkit-overflow-scrolling:touch]'
+  'block min-h-[160px] w-full resize-none border-0 bg-transparent text-[15px] leading-relaxed text-stone-800 outline-none placeholder:text-stone-300 read-only:cursor-wait [-webkit-overflow-scrolling:touch]'
 
 type PeerRow = { id: string; label: string; role: 'archive_root' | 'network_npc' }
 
@@ -66,6 +67,29 @@ export function LoreEntryEditorSheet({
   const caretRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
   const inputFocusedRef = useRef(false)
   const [androidKbPad, setAndroidKbPad] = useState(0)
+  const [bodyEditing, setBodyEditing] = useState(false)
+
+  const rawBody = String(item.content ?? '')
+  const { expanded: expandedBody, loading: bodyPreviewLoading } = useCharacterFieldPlaceholderPreview({
+    draft: rawBody,
+    characterId: character.id,
+    worldBookUserPlaceholderBindings: item.userPlaceholderBindings,
+    enabled: open && !bodyEditing && !forPlayerIdentity && rawBody.includes('{{'),
+  })
+  const viewBodyText =
+    !forPlayerIdentity && rawBody.includes('{{') && expandedBody ? expandedBody : rawBody
+
+  useEffect(() => {
+    if (!open) setBodyEditing(false)
+  }, [open, itemId])
+
+  useEffect(() => {
+    if (!open || !bodyEditing || generating) return
+    const t = window.setTimeout(() => {
+      taHandleRef.current?.focusForEdit()
+    }, 60)
+    return () => window.clearTimeout(t)
+  }, [open, bodyEditing, generating])
 
   /** Android：整页 bottom 抬升贴键盘，不压缩 maxHeight（避免顶栏被裁切） */
   useEffect(() => {
@@ -238,7 +262,7 @@ export function LoreEntryEditorSheet({
             role="dialog"
             aria-modal="true"
             aria-labelledby="lore-entry-editor-title"
-            className="fixed inset-x-0 z-[1160] flex max-h-[85vh] flex-col overflow-hidden rounded-t-[26px] border border-white/70 bg-white/80 shadow-[0_-12px_48px_rgba(0,0,0,0.12)] backdrop-blur-2xl"
+            className="fixed inset-x-0 z-[1160] flex h-[min(85dvh,100%)] max-h-[85dvh] flex-col overflow-hidden rounded-t-[26px] border border-white/70 bg-white/80 shadow-[0_-12px_48px_rgba(0,0,0,0.12)] backdrop-blur-2xl"
             initial={{ y: '105%' }}
             animate={{ y: 0 }}
             exit={{ y: '105%' }}
@@ -337,7 +361,7 @@ export function LoreEntryEditorSheet({
                 </div>
               </div>
 
-              {!forPlayerIdentity ? (
+              {!forPlayerIdentity && bodyEditing ? (
                 <div className="mt-4">
                   <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-stone-400">快捷插入</p>
                   <div className="-mx-1 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -412,40 +436,80 @@ export function LoreEntryEditorSheet({
             </div>
 
             <div className="mt-2 flex min-h-0 flex-1 flex-col px-4 pb-2">
-              <p className="mb-1 shrink-0 text-[10px] font-medium uppercase tracking-wider text-stone-400">正文</p>
-              <div className="min-h-[200px] flex-1 basis-0 overflow-y-auto overscroll-contain touch-pan-y rounded-2xl bg-stone-50/50 px-3 py-2 [-webkit-overflow-scrolling:touch]">
-                {forPlayerIdentity ? (
-                  <textarea
-                    value={generating ? WB_ITEM_GENERATING_TEXT : (item.content ?? '')}
-                    readOnly={generating}
-                    onChange={(e) => {
-                      if (!generating) patchContent(e.target.value)
-                    }}
-                    className={BODY_TEXTAREA_CLASS}
-                    placeholder="书写属于你的世界片段…"
-                  />
+              <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
+                <p className="text-[10px] font-medium uppercase tracking-wider text-stone-400">正文</p>
+                {!generating ? (
+                  bodyEditing ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-full bg-stone-900 px-3 py-1.5 text-[12px] font-medium text-white shadow-sm transition-opacity active:opacity-90"
+                      onClick={() => setBodyEditing(false)}
+                    >
+                      <Check className="size-3.5" strokeWidth={2.5} />
+                      完成
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-[12px] font-medium text-stone-700 shadow-sm transition-colors hover:bg-stone-50 active:bg-stone-100"
+                      onClick={() => setBodyEditing(true)}
+                    >
+                      <Pencil className="size-3.5" strokeWidth={2} />
+                      编辑
+                    </button>
+                  )
+                ) : null}
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y rounded-2xl bg-stone-50/50 px-3 py-3 [-webkit-overflow-scrolling:touch]">
+                {bodyEditing ? (
+                  forPlayerIdentity ? (
+                    <textarea
+                      value={generating ? WB_ITEM_GENERATING_TEXT : rawBody}
+                      readOnly={generating}
+                      onChange={(e) => {
+                        if (!generating) patchContent(e.target.value)
+                      }}
+                      className={BODY_TEXTAREA_CLASS}
+                      placeholder="书写属于你的世界片段…"
+                    />
+                  ) : (
+                    <PlaceholderAwareTextarea
+                      ref={(h) => {
+                        taHandleRef.current = h
+                      }}
+                      onCaretInRawText={(start, end) => {
+                        caretRef.current = { start, end }
+                      }}
+                      readOnly={generating}
+                      value={generating ? WB_ITEM_GENERATING_TEXT : rawBody}
+                      onChange={(v) => {
+                        if (!generating) patchContent(v)
+                      }}
+                      characterId={character.id}
+                      worldBookUserPlaceholderBindings={item.userPlaceholderBindings}
+                      placeholderPreview
+                      previewEditRequiresDoubleClick
+                      previewShellWorldBook={false}
+                      rows={12}
+                      className={BODY_TEXTAREA_CLASS}
+                      placeholder="沉浸式书写… 占位符在预览中会展开为姓名"
+                    />
+                  )
                 ) : (
-                  <PlaceholderAwareTextarea
-                    ref={(h) => {
-                      taHandleRef.current = h
-                    }}
-                    onCaretInRawText={(start, end) => {
-                      caretRef.current = { start, end }
-                    }}
-                    readOnly={generating}
-                    value={generating ? WB_ITEM_GENERATING_TEXT : (item.content ?? '')}
-                    onChange={(v) => {
-                      if (!generating) patchContent(v)
-                    }}
-                    characterId={character.id}
-                    worldBookUserPlaceholderBindings={item.userPlaceholderBindings}
-                    placeholderPreview
-                    previewEditRequiresDoubleClick={false}
-                    previewShellWorldBook={false}
-                    rows={14}
-                    className={BODY_TEXTAREA_CLASS}
-                    placeholder="沉浸式书写… 占位符在预览中会展开为姓名"
-                  />
+                  <div
+                    className="whitespace-pre-wrap text-[15px] leading-relaxed text-stone-800"
+                    style={{ wordBreak: 'break-word' }}
+                  >
+                    {generating ? (
+                      WB_ITEM_GENERATING_TEXT
+                    ) : bodyPreviewLoading && rawBody.includes('{{') ? (
+                      <span className="text-stone-400">展开占位符预览…</span>
+                    ) : viewBodyText.trim() ? (
+                      viewBodyText
+                    ) : (
+                      <span className="text-stone-300">暂无正文，点「编辑」开始书写</span>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

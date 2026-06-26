@@ -17,9 +17,18 @@ export function isImageGenSettingsEmpty(settings: MomentsImageGenSettings): bool
     !settings.siliconflowApiKey.trim() &&
     !settings.qianfanApiKey.trim() &&
     !settings.volcengineApiKey.trim() &&
+    !settings.novelaiApiKey.trim() &&
+    !settings.geminiApiKey.trim() &&
+    !settings.openaiApiKey.trim() &&
+    !settings.customApiUrl.trim() &&
+    !settings.customApiKey.trim() &&
     !settings.cachedModelsByProvider.siliconflow.length &&
     !settings.cachedModelsByProvider.qianfan.length &&
-    !settings.cachedModelsByProvider.volcengine.length
+    !settings.cachedModelsByProvider.volcengine.length &&
+    !settings.cachedModelsByProvider.novelai.length &&
+    !settings.cachedModelsByProvider.gemini.length &&
+    !settings.cachedModelsByProvider.openai.length &&
+    !settings.cachedModelsByProvider.custom.length
   )
 }
 

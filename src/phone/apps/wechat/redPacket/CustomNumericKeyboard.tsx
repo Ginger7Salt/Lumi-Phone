@@ -1,4 +1,5 @@
 import { Pressable } from '../../../components/Pressable'
+import { phoneNumStyle } from '../../../types'
 
 type KeyId = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '.' | 'back'
 
@@ -42,8 +43,12 @@ export function CustomNumericKeyboard({
       : 'flex h-12 items-center justify-center rounded-xl border border-[#e8e8e8] bg-white text-[20px] font-medium tracking-wide text-black transition-transform duration-100 ease-out active:scale-[0.98] active:bg-[#f5f5f5]'
   const cellStyle =
     tone === 'platinum'
-      ? { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', borderColor: PLATINUM_BORDER, color: '#333' }
-      : { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }
+      ? {
+          ...phoneNumStyle,
+          borderColor: PLATINUM_BORDER,
+          color: '#333',
+        }
+      : phoneNumStyle
 
   return (
     <div className={`grid gap-2 ${className}`}>
@@ -65,7 +70,7 @@ export function CustomNumericKeyboard({
                     删除
                   </span>
                 ) : (
-                  k
+                  <span style={phoneNumStyle}>{k}</span>
                 )}
               </Pressable>
             ),

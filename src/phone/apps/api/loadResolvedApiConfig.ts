@@ -1,4 +1,5 @@
 import { pullPhoneKvWithLocalStorageLegacy, personaDb } from '../wechat/newFriendsPersona/idb'
+import { normalizeModelPricingMap } from './modelPricingUtils'
 import type { ApiConfig, ApiPreset, ApiStore, SubApiType } from './types'
 import { SILICONFLOW_ASR_DEFAULT_BASE_URL } from '../wechat/voiceCall/siliconflowAsr'
 import { createEmptyApiConfig, createEmptyPreset } from './mock'
@@ -19,6 +20,7 @@ function normalizeApiConfig(raw: unknown): ApiConfig {
     apiKey: typeof r.apiKey === 'string' ? r.apiKey : '',
     modelId: typeof r.modelId === 'string' ? r.modelId : '',
     modelList,
+    modelPricingById: normalizeModelPricingMap(r.modelPricingById),
     lastTest:
       r.lastTest && typeof r.lastTest === 'object'
         ? {

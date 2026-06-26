@@ -276,7 +276,7 @@ export default defineConfig(({ command, mode }) => {
     host: true,
     port: 5173,
     fs: {
-      allow: [__dirname, path.resolve(__dirname, '剧本杀')],
+      allow: [__dirname, path.resolve(__dirname, '剧本杀'), path.resolve(__dirname, '店铺菜品图')],
     },
     ...(devHttps ? { https: {} } : {}),
     proxy: {

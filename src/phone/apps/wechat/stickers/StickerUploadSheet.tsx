@@ -269,7 +269,7 @@ export function StickerUploadSheet({ open, onClose, onSave }: Props) {
                         <input
                           value={row.description}
                           onChange={(e) => updateBatchRowDescription(idx, e.target.value)}
-                          placeholder="填写此表情描述"
+                          placeholder="填写画面内容（如：送戒指的小人）"
                           className="mt-1 h-9 w-full border border-[#eee] px-2 text-[13px] text-black outline-none placeholder:text-gray-400"
                         />
                       </div>
@@ -297,7 +297,7 @@ export function StickerUploadSheet({ open, onClose, onSave }: Props) {
                       if (tab === 'link') updateSingleLinkDescription(e.target.value)
                       else setDescription(e.target.value)
                     }}
-                    placeholder="填写此表情的描述（如：一只流泪的小猫，表达极度委屈）。这能帮助角色更好地理解你的情绪。"
+                    placeholder="填写画面内容（如：一只流泪的小猫）。仅描述图里有什么，AI 会结合语境理解情绪，不会把字面意思当真实行为（如「送戒指」≠ 真的求婚）。"
                     className="mt-2 h-24 w-full resize-none border border-[#eee] bg-white px-3 py-2 text-[13px] text-black outline-none placeholder:text-gray-400"
                   />
                   <div className="mt-2 inline-flex items-center gap-1 border border-[#eee] bg-white px-2 py-1 text-[11px] text-gray-600">

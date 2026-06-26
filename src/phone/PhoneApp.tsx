@@ -43,6 +43,8 @@ import { personaDb } from './apps/wechat/newFriendsPersona/idb'
 import { WeChatApp } from './apps/wechat/WeChatApp'
 import { LumiMeetApp } from './apps/lumiMeet/LumiMeetApp'
 import { SandboxApp } from './apps/sandbox/SandboxApp'
+import { LumiTasteApp } from './apps/takeout/LumiTasteApp'
+import { TasteFeastCeremonyHost } from './apps/takeout/TasteFeastCeremonyHost'
 import { LumiMeetProvider } from './apps/lumiMeet/LumiMeetStore'
 import { WorldbookLoreProvider } from './worldbook/worldbookLoreStore'
 import type { AppSlot } from './types'
@@ -505,12 +507,15 @@ export function PhoneApp() {
                   <BackgroundNotifyApp onBack={goHome} />
                 ) : route.id === 'sandbox' ? (
                   <SandboxApp onBack={goHome} />
+                ) : route.id === 'takeout' ? (
+                  <LumiTasteApp onBack={goHome} />
                 ) : (
                   <AppPlaceholderScreen appId={route.id} onBack={goHome} />
                 )}
               </motion.div>
             )}
           </AnimatePresence>
+          <TasteFeastCeremonyHost />
         </PhoneShell>
         </WorldbookLoreProvider>
         {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}

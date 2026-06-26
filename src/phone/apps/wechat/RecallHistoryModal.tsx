@@ -1,4 +1,5 @@
 import { Pressable } from '../../components/Pressable'
+import { phoneNumStyle } from '../../types'
 
 function fmt(ts?: number): string {
   if (!ts || !Number.isFinite(ts)) return '-'
@@ -35,8 +36,12 @@ export function RecallHistoryModal({
         <div className="text-center text-[15px] font-semibold text-[#111]">撤回记录</div>
         <div className="mt-3 space-y-1 text-[12px] text-[#666]">
           <div>发送者：{senderLabel}</div>
-          <div>发送时间：{fmt(record.sentAt)}</div>
-          <div>撤回时间：{fmt(record.recalledAt)}</div>
+          <div>
+            发送时间：<span style={phoneNumStyle}>{fmt(record.sentAt)}</span>
+          </div>
+          <div>
+            撤回时间：<span style={phoneNumStyle}>{fmt(record.recalledAt)}</span>
+          </div>
         </div>
         <div className="mt-3 rounded-xl bg-white/70 px-3 py-2 text-[14px] leading-[1.5] text-[#222]">{record.originalText || '（无内容）'}</div>
         <Pressable type="button" className="mt-4 w-full rounded-xl bg-[#f5f5f5] py-2 text-[14px] text-[#222] active:bg-[#ededed]" onClick={onClose}>

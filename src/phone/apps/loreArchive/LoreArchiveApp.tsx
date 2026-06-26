@@ -25,7 +25,7 @@ function newEmptyEntry(): LoreEntry {
 
 export function LoreArchiveApp({ onBack }: Props) {
   const { state } = useCustomization()
-  const { entries, upsertEntry, hydrated } = useWorldbookStore()
+  const { entries, upsertEntry, hydrated, builtinPresets, setBuiltinPresetEnabled } = useWorldbookStore()
   const [platformTab, setPlatformTab] = useState<'wechat' | 'weibo'>('wechat')
   const [screen, setScreen] = useState<'list' | 'edit'>('list')
   const [draft, setDraft] = useState<LoreEntry | null>(null)
@@ -257,10 +257,12 @@ export function LoreArchiveApp({ onBack }: Props) {
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 <LoreArchiveList
                   entries={entries}
+                  builtinPresets={builtinPresets}
                   resolveTargets={resolveTargets}
                   onOpenEntry={openEdit}
                   onCreate={openCreate}
                   onSetEntryEnabled={setEntryEnabled}
+                  onSetBuiltinPresetEnabled={setBuiltinPresetEnabled}
                   onDuplicateEntry={duplicateEntry}
                   onMoveToWeiboReserved={moveToWeiboReserved}
                   onDeleteEntry={deleteEntry}

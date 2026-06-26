@@ -42,12 +42,17 @@ import {
   type ChatTranscriptTurn,
   type UnifiedMemorySummaryWithLinkedResult,
 } from './wechatChatAi'
-import { resolveActivePrivateChatSessionPlayerIdentityId } from './wechatCharacterPlayerIdentity'
+import {
+  getCharacterLinkedPlayerIdentityIds,
+  resolveActivePrivateChatSessionPlayerIdentityId,
+} from './wechatCharacterPlayerIdentity'
+import { identityBelongsToWechatAccount } from './wechatAccountScope'
 import {
   groupMemoryBucketCharacterId,
   parseWechatAccountGroupConversationKey,
   parseWechatAccountPrivateConversationKey,
   resolvePrivateWeChatStorageConversationKey,
+  wechatAccountPrivateConversationKey,
   WECHAT_GROUP_BOT_CHARACTER_ID,
   WECHAT_GROUP_USER_CHAR_ID,
 } from './wechatConversationKey'
@@ -70,6 +75,13 @@ import {
 import { loadMeetPersisted } from '../lumiMeet/meetPersistLoad'
 import { meetMessagesToAiTranscript } from '../lumiMeet/meetEncounterTranscript'
 import type { MeetChatMessage } from '../lumiMeet/meetTypes'
+import { isMeetImportedWeChatMessageId } from '../lumiMeet/meetMemoryConstants'
+import {
+  MEMORY_UNSUMMARIZED_BLOCK_CHAR_CAP,
+  MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT,
+} from './wechatMemoryPromptBlocks'
+import { discoverOtherAccountPrivateConversationKeys } from './wechatCrossAccountChatDigest'
+import { loadAccountsBundle } from './wechatAccountPersistence'
 
 const DATING_ARCHIVES_KV = 'wechat-dating-archives-v1'
 
@@ -151,6 +163,149 @@ export type UnifiedMemoryGatherResult = {
   npcLinked: { linkedArchiveOwnerId: string; allowedNpcIds: Set<string>; block: string }
   plotsArchiveId: string
   chunkMessages: WeChatChatMessage[]
+  /** 本轮 chunk 内各身份线私聊各自应推进到的游标（多马甲/多扮演档合并总结时用） */
+  onlineCursorAdvancesByConversationKey: Record<string, number>
+  /** 本轮纳入总结的遇见消息（游标推进与模型输入一致） */
+  meetMessagesSummarized: MeetChatMessage[]
+}
+
+async function buildSummarizedOnlineBatchFromChunk(
+  chunkMessages: WeChatChatMessage[],
+  charCap = MEMORY_UNSUMMARIZED_BLOCK_CHAR_CAP,
+): Promise<{
+  onlineTranscript: ChatTranscriptTurn[]
+  summarizedMessages: WeChatChatMessage[]
+  onlineCursorAdvancesByConversationKey: Record<string, number>
+}> {
+  const onlineTranscript: ChatTranscriptTurn[] = []
+  const summarizedMessages: WeChatChatMessage[] = []
+  let bodyLen = 0
+  for (const m of chunkMessages) {
+    if (isMeetImportedWeChatMessageId(m.id)) continue
+    const text = await formatWeChatMessageTextForMemorySummary(m)
+    if (!text?.trim()) continue
+    const who = m.type === 'player' ? '我' : '对方'
+    const line = `${who}：${text.trim()}`
+    const addLen = (onlineTranscript.length ? 1 : 0) + line.length
+    if (bodyLen + addLen > charCap && onlineTranscript.length > 0) break
+    bodyLen += addLen
+    onlineTranscript.push({
+      id: m.id,
+      from: m.type === 'player' ? 'self' : 'other',
+      text,
+    })
+    summarizedMessages.push(m)
+  }
+  const onlineCursorAdvancesByConversationKey: Record<string, number> = {}
+  for (const m of summarizedMessages) {
+    const ck = m.conversationKey?.trim()
+    if (!ck) continue
+    const ts = m.timestamp
+    if (typeof ts === 'number' && Number.isFinite(ts)) {
+      onlineCursorAdvancesByConversationKey[ck] = Math.max(onlineCursorAdvancesByConversationKey[ck] ?? 0, ts)
+    }
+  }
+  return { onlineTranscript, summarizedMessages, onlineCursorAdvancesByConversationKey }
+}
+
+function buildSummarizedMeetBatch(
+  meetMessagesPrior: MeetChatMessage[],
+  charCap = MEMORY_UNSUMMARIZED_BLOCK_CHAR_CAP,
+): { meetTranscript: ChatTranscriptTurn[]; meetMessagesSummarized: MeetChatMessage[] } {
+  const meetTranscript: ChatTranscriptTurn[] = []
+  const meetMessagesSummarized: MeetChatMessage[] = []
+  let bodyLen = 0
+  for (const m of meetMessagesPrior) {
+    const rows = meetMessagesToAiTranscript([m])
+    let includedThisMessage = false
+    for (const row of rows) {
+      const text = String(row.content || '').trim()
+      if (!text || text.length <= 2) continue
+      const who = row.role === 'user' ? '我' : '对方'
+      const line = `${who}：${text}`
+      const addLen = (meetTranscript.length ? 1 : 0) + line.length
+      if (bodyLen + addLen > charCap && meetTranscript.length > 0) break
+      bodyLen += addLen
+      meetTranscript.push({ from: row.role === 'user' ? 'self' : 'other', text })
+      includedThisMessage = true
+    }
+    if (includedThisMessage) meetMessagesSummarized.push(m)
+    if (bodyLen >= charCap && meetTranscript.length > 0) break
+  }
+  return { meetTranscript, meetMessagesSummarized }
+}
+
+async function listPrivateConversationKeysForMemoryGather(
+  characterId: string,
+  wechatAccountId: string | null | undefined,
+  primaryConversationKey: string,
+): Promise<string[]> {
+  const cid = characterId.trim()
+  const primary = primaryConversationKey.trim()
+  const keys = new Set<string>()
+  if (primary) keys.add(primary)
+  const acc = wechatAccountId?.trim()
+  if (!acc || !cid) return [...keys]
+  const ch = await personaDb.getCharacter(cid).catch(() => null)
+  for (const pid of getCharacterLinkedPlayerIdentityIds(ch)) {
+    if (!pid || pid === '__none__') continue
+    const row = await personaDb.getPlayerIdentity(pid).catch(() => null)
+    if (row && !identityBelongsToWechatAccount(row, acc)) continue
+    keys.add(wechatAccountPrivateConversationKey(acc, cid, pid))
+  }
+  const bundle = await loadAccountsBundle()
+  if (bundle && bundle.accounts.length > 1) {
+    const others = await discoverOtherAccountPrivateConversationKeys({
+      characterId: cid,
+      currentAccountId: acc,
+      currentConversationKey: primary,
+      allAccounts: bundle.accounts,
+    })
+    for (const sec of others) keys.add(sec.conversationKey)
+  }
+  return [...keys]
+}
+
+/** 合并同角色在本马甲下各身份线的未总结私聊，避免约会总结只推进「最近活跃线」游标。 */
+async function gatherPrivateChatChunkAcrossIdentityLines(params: {
+  characterId: string
+  wechatAccountId: string | null | undefined
+  primaryConversationKey: string
+  limit?: number
+}): Promise<{
+  chunkMessages: WeChatChatMessage[]
+}> {
+  const lim = Math.max(
+    1,
+    Math.min(MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT, Math.floor(params.limit ?? MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT)),
+  )
+  const keys = await listPrivateConversationKeysForMemoryGather(
+    params.characterId,
+    params.wechatAccountId,
+    params.primaryConversationKey,
+  )
+  const byId = new Map<string, WeChatChatMessage>()
+  for (const ck of keys) {
+    const cursorTs = await personaDb.getMemorySummaryCursorTimestamp(ck)
+    const fromTs = (cursorTs ?? 0) + 1
+    const rows = await personaDb.listWeChatChatMessagesFromTimestampAsc({
+      conversationKey: ck,
+      fromTimestampInclusive: fromTs,
+      limit: lim,
+    })
+    for (const m of rows) {
+      const tagged =
+        m.conversationKey?.trim() === ck
+          ? m
+          : { ...m, conversationKey: ck }
+      byId.set(tagged.id, tagged)
+    }
+  }
+  const merged = [...byId.values()]
+    .filter((m) => !isMeetImportedWeChatMessageId(m.id))
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(0, lim)
+  return { chunkMessages: merged }
 }
 
 export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
@@ -180,24 +335,17 @@ export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
   const conversationKey =
     explicit || resolvePrivateWeChatStorageConversationKey(cid, params.wechatAccountId, pidForConv)
 
-  const cursorTs = await personaDb.getMemorySummaryCursorTimestamp(conversationKey)
-  const fromTs = (cursorTs ?? 0) + 1
-  const chunkMessages = await personaDb.listWeChatChatMessagesFromTimestampAsc({
-    conversationKey,
-    fromTimestampInclusive: fromTs,
-    limit: 500,
-  })
-
-  const onlineTranscript: ChatTranscriptTurn[] = []
-  for (const m of chunkMessages) {
-    const text = await formatWeChatMessageTextForMemorySummary(m)
-    if (!text) continue
-    onlineTranscript.push({
-      id: m.id,
-      from: m.type === 'player' ? 'self' : 'other',
-      text,
+  const { chunkMessages: pendingChunk } = await gatherPrivateChatChunkAcrossIdentityLines({
+      characterId: cid,
+      wechatAccountId: params.wechatAccountId ?? null,
+      primaryConversationKey: conversationKey,
     })
-  }
+
+  const {
+    onlineTranscript,
+    summarizedMessages: chunkMessages,
+    onlineCursorAdvancesByConversationKey,
+  } = await buildSummarizedOnlineBatchFromChunk(pendingChunk)
 
   const archCtx = await resolveOfflineDatingArchiveContext(cid)
   const plotsArchiveId = archCtx?.archiveCharacterId?.trim() || cid
@@ -256,13 +404,7 @@ export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
       })
       .sort((a, b) => a.ts - b.ts)
   }
-  const meetTranscript: ChatTranscriptTurn[] = meetMessagesToAiTranscript(meetMessagesPrior).flatMap(
-    (row) => {
-      const text = String(row.content || '').trim()
-      if (!text || text.length <= 2) return []
-      return [{ from: row.role === 'user' ? 'self' : 'other', text } satisfies ChatTranscriptTurn]
-    },
-  )
+  const { meetTranscript, meetMessagesSummarized } = buildSummarizedMeetBatch(meetMessagesPrior)
   const hadMeet = meetTranscript.length > 0
 
   const npcLinked = await buildNpcLinkedOfflineExcerptUserBlock({
@@ -281,6 +423,7 @@ export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
     onlineTranscript,
     meetTranscript,
     meetMessagesPrior,
+    meetMessagesSummarized,
     offlinePlotsPrior,
     offlineBlock,
     npcLinked: {
@@ -290,6 +433,7 @@ export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
     },
     plotsArchiveId,
     chunkMessages,
+    onlineCursorAdvancesByConversationKey,
   }
 }
 
@@ -676,15 +820,25 @@ export async function applyUnifiedMemoryFromParsedSummary(
   const advanceUnifiedCursors = primaryWritten
 
   if (advanceUnifiedCursors && gather.hadOnline && gather.chunkMessages.length) {
-    const latestTs = gather.chunkMessages[gather.chunkMessages.length - 1]!.timestamp
-    if (typeof latestTs === 'number' && Number.isFinite(latestTs)) {
-      await personaDb.setMemorySummaryCursorTimestamp(ck, latestTs)
+    const perKey = gather.onlineCursorAdvancesByConversationKey ?? {}
+    const entries = Object.entries(perKey).filter(
+      ([key, ts]) => key.trim() && typeof ts === 'number' && Number.isFinite(ts),
+    )
+    if (entries.length > 0) {
+      for (const [key, latestTs] of entries) {
+        await personaDb.setMemorySummaryCursorTimestamp(key, latestTs)
+      }
+    } else {
+      const latestTs = gather.chunkMessages[gather.chunkMessages.length - 1]!.timestamp
+      if (typeof latestTs === 'number' && Number.isFinite(latestTs)) {
+        await personaDb.setMemorySummaryCursorTimestamp(ck, latestTs)
+      }
     }
   }
 
-  if (advanceUnifiedCursors && gather.hadMeet && gather.meetMessagesPrior.length) {
+  if (advanceUnifiedCursors && gather.hadMeet && gather.meetMessagesSummarized.length) {
     const maxMeetTs = Math.max(
-      ...gather.meetMessagesPrior.map((m) =>
+      ...gather.meetMessagesSummarized.map((m) =>
         typeof m.ts === 'number' && Number.isFinite(m.ts) && m.ts > 0 ? m.ts : 1,
       ),
     )
@@ -1102,7 +1256,7 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
   const chunkMessages = await personaDb.listWeChatChatMessagesFromTimestampAsc({
     conversationKey: ck,
     fromTimestampInclusive: fromTs,
-    limit: 500,
+    limit: MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT,
   })
 
   const onlineTranscript = await chunkMessagesToGroupTranscript(chunkMessages, group)

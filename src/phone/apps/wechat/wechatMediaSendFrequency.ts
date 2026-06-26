@@ -157,11 +157,11 @@ export function buildMediaSendFrequencyPromptBlock(params: {
       )
     } else if (sticker >= 100) {
       lines.push(
-        '- **表情包**：概率 **100%**，每轮回复**须**包含至少 1 条 `[表情包]` 行（仍须贴合语境，禁止无意义刷屏）。',
+        '- **表情包**：概率 **100%**，每轮回复**宜**包含至少 1 条 `[表情包]` 行——**仍须**在目录中找到**贴脸**条目；若无合适表情则**只发文字**，禁止乱选凑数。',
       )
     } else {
       lines.push(
-        `- **表情包**：每轮约 **${sticker}%** 概率包含至少 1 条 \`[表情包]\` 行（其余轮次 **0 条**）；约 **${100 - sticker}%** 轮次不发。仍须贴合语境，禁止用表情包替代道歉/严肃信息。`,
+        `- **表情包**：每轮约 **${sticker}%** 概率包含至少 1 条 \`[表情包]\` 行（其余轮次 **0 条**）；约 **${100 - sticker}%** 轮次不发。**即使该轮「允许发」**，也须贴脸才发；无合适条目则只文字，禁止乱选。`,
       )
     }
   }
@@ -185,23 +185,25 @@ export function buildMediaSendFrequencyPromptBlock(params: {
   if (imagePercent !== undefined && imageCountRange) {
     if (params.userExplicitCharacterImageRequest) {
       lines.push(
-        '- **AI 配图（\`[图片]\` 行）**：用户本轮**已明确要求**你发图——若你愿意可输出 \`[图片]\` 行，**不受**下列概率限制；不愿则只文字婉拒。',
+        '- **AI 配图（\`[图片]\` 行）**：用户本轮**已明确要求**发图/照片/自拍——**完全无视**本会话发图概率设置；本轮**须**至少输出 1 条 \`[图片]\` 行（仍须贴合语境；确实不宜发图时只用文字婉拒，**禁止**口头假装已发）。',
       )
-    }
-    if (imagePercent <= 0) {
+      lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
+    } else if (imagePercent <= 0) {
       lines.push(
-        `- **AI 配图（\`[图片]\` 行）**：概率 **0%**，**禁止**输出任何 \`[图片]\` 行；**例外**：用户本轮**直接要求**你发图/照片/自拍时，若你愿意可按张数规则发图。`,
+        `- **AI 配图（\`[图片]\` 行）**：概率 **0%**，**禁止**输出任何 \`[图片]\` 行；**例外**：用户本轮**直接要求**你发图/照片/自拍时，须按张数规则发图。`,
       )
+      lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
     } else if (imagePercent >= 100) {
       lines.push(
         '- **AI 配图（\`[图片]\` 行）**：概率 **100%**，每轮回复**须**包含至少 1 条 \`[图片]\` 行（仍须贴合语境，禁止无意义刷屏）。',
       )
+      lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
     } else {
       lines.push(
         `- **AI 配图（\`[图片]\` 行）**：每轮约 **${imagePercent}%** 概率包含至少 1 条 \`[图片]\` 行；约 **${100 - imagePercent}%** 轮次不发。用户**直接要求**发图时不受此概率限制。`,
       )
+      lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
     }
-    lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
   }
 
   return `${lines.join('\n')}\n`

@@ -5,13 +5,14 @@ import {
   getMeetVol10WorldBookId,
   type MeetVol10Preview,
 } from './meetNineDimensionWorldBooks'
+import { getMeetSyncWorldBookTitle } from './nineDimensionAccordion'
 import { getMeetTruthMirrorWorldBookId, MEET_TRUTH_MIRROR_WORLD_BOOK_TITLE } from './meetTruthMirrorWorldbook'
 import { getMeetVol11WorldBookId } from './meetUserProfileSnapshot'
 
 const PLATINUM = '#D4AF37'
 
-const VOL10_TITLE = '10 ATTITUDE | 尾声延展'
-const VOL11_TITLE = '11 MEET MASK | 遇见对外档案快照'
+const VOL10_TITLE = getMeetSyncWorldBookTitle('vol10', '10 · 对你现在（态度、称呼、边界、心思）')
+const VOL11_TITLE = getMeetSyncWorldBookTitle('vol11', '11 MEET MASK | 遇见对外档案快照')
 
 type StoredVolSection = {
   id: string
@@ -50,8 +51,8 @@ export function MeetStoredWorldbookVolumesAccordion({
     {
       id: 'vol10',
       num: '10',
-      titleEn: 'ATTITUDE',
-      titleZh: '尾声延展 · 邂逅结业初印象',
+      titleEn: '对你现在',
+      titleZh: '态度、称呼、边界、心思',
       wbId: getMeetVol10WorldBookId(npcId),
       wbTitle: VOL10_TITLE,
       content: vol10.content,

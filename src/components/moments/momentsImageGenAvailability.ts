@@ -12,5 +12,6 @@ export function isMomentsImageGenConfigured(settings: MomentsImageGenSettings): 
   if (provider === 'novelai') return !!settings.novelaiApiKey?.trim()
   if (provider === 'gemini') return !!settings.geminiApiKey?.trim()
   if (provider === 'openai') return !!settings.openaiApiKey?.trim()
+  if (provider === 'custom') return !!settings.customApiUrl?.trim() && !!settings.customApiKey?.trim()
   return false
 }

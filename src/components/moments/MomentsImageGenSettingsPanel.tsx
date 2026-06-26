@@ -16,6 +16,7 @@ import {
   type MomentsImageModelOption,
   type MomentsImageProvider,
 } from './momentsImageModelCatalog'
+import { isGeminiNativeImageModel } from './geminiImageCatalog'
 import { generateMomentsImage } from './momentsImageGen'
 import {
   getSupportedImageSizes,
@@ -55,9 +56,10 @@ const API_KEY_PLACEHOLDERS: Record<MomentsImageProvider, string> = {
   siliconflow: 'sk-...',
   qianfan: 'bce-v3/ALTAK-...',
   volcengine: 'ark-...',
+  custom: 'sk-...',
 }
 
-function ImageGenProviderApiKeyField({
+function ImageGenProviderCredentialsFields({
   provider,
   imageGen,
   onPatch,
@@ -69,6 +71,50 @@ function ImageGenProviderApiKeyField({
   const meta = getImageGenProviderMeta(provider)
   const field = getImageGenApiKeyField(provider)
   const [visible, setVisible] = useState(false)
+
+  if (provider === 'custom') {
+    return (
+      <div className="space-y-3">
+        <label className="block">
+          <span className="text-[11px] font-medium text-[#6B7280]">API URL</span>
+          <input
+            type="url"
+            value={imageGen.customApiUrl}
+            onChange={(e) => onPatch({ customApiUrl: e.target.value })}
+            placeholder="https://api.example.com/v1"
+            className="mt-1.5 w-full rounded-xl border border-[#F3F4F6] bg-white px-3 py-2.5 text-[13px] text-[#111827] outline-none"
+            autoComplete="off"
+          />
+          <p className="mt-1.5 text-[11px] text-[#9CA3AF]">
+            填写 OpenAI 兼容接口根地址（通常到 <span className="font-mono">/v1</span>），将自动请求{' '}
+            <span className="font-mono">/models</span> 与 <span className="font-mono">/images/generations</span>
+            。若拉取失败，请确认与聊天 API 使用相同根地址，且该地址在浏览器中可访问（部分中转站有 CORS 限制）。
+          </p>
+        </label>
+        <label className="block">
+          <span className="text-[11px] font-medium text-[#6B7280]">API Key</span>
+          <div className="relative mt-1.5">
+            <input
+              type={visible ? 'text' : 'password'}
+              value={imageGen.customApiKey}
+              onChange={(e) => onPatch({ customApiKey: e.target.value })}
+              placeholder={API_KEY_PLACEHOLDERS.custom}
+              className="w-full rounded-xl border border-[#F3F4F6] bg-white py-2.5 pl-3 pr-10 text-[13px] text-[#111827] outline-none"
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              onClick={() => setVisible((v) => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#9CA3AF]"
+              aria-label={visible ? '隐藏密钥' : '显示密钥'}
+            >
+              {visible ? <EyeOff className="size-4" strokeWidth={1.75} /> : <Eye className="size-4" strokeWidth={1.75} />}
+            </button>
+          </div>
+        </label>
+      </div>
+    )
+  }
 
   return (
     <label className="block">
@@ -296,11 +342,22 @@ export function MomentsImageGenSettingsPanel({
   )
 
   const pullModels = useCallback(async () => {
-    const apiKey = getImageGenApiKey(imageGen, provider).trim()
-    if (!apiKey) {
-      const label = IMAGE_PROVIDERS.find((p) => p.id === provider)?.label ?? '当前引擎'
-      setStatus({ ok: false, text: `请先填写 ${label} API Key` })
-      return
+    if (provider === 'custom') {
+      if (!imageGen.customApiUrl.trim()) {
+        setStatus({ ok: false, text: '请先填写 API URL' })
+        return
+      }
+      if (!imageGen.customApiKey.trim()) {
+        setStatus({ ok: false, text: '请先填写 API Key' })
+        return
+      }
+    } else {
+      const apiKey = getImageGenApiKey(imageGen, provider).trim()
+      if (!apiKey) {
+        const label = IMAGE_PROVIDERS.find((p) => p.id === provider)?.label ?? '当前引擎'
+        setStatus({ ok: false, text: `请先填写 ${label} API Key` })
+        return
+      }
     }
 
     setLoading(true)
@@ -345,7 +402,9 @@ export function MomentsImageGenSettingsPanel({
               ? `已检测 ${catalog.length} 个模型：${activatedCount} 个已开通，${notActivatedCount} 个未开通${pendingCount ? `，${pendingCount} 个待确认` : ''}`
               : provider === 'novelai' || provider === 'gemini' || provider === 'openai'
                 ? `已加载 ${catalog.length} 个${IMAGE_PROVIDERS.find((p) => p.id === provider)?.label ?? ''}模型`
-                : `已拉取 ${catalog.length} 个文生图模型（${priced} 个已匹配价格）`,
+                : provider === 'custom'
+                  ? `已拉取 ${catalog.length} 个生图模型`
+                  : `已拉取 ${catalog.length} 个文生图模型（${priced} 个已匹配价格）`,
       })
     } catch (e) {
       setStatus({
@@ -365,6 +424,8 @@ export function MomentsImageGenSettingsPanel({
     imageGen.novelaiApiKey,
     imageGen.geminiApiKey,
     imageGen.openaiApiKey,
+    imageGen.customApiUrl,
+    imageGen.customApiKey,
     onPatch,
     provider,
   ])
@@ -534,7 +595,7 @@ export function MomentsImageGenSettingsPanel({
                     创建 API Key 后填入。
                   </p>
                 </div>
-              ) : (
+              ) : provider === 'openai' ? (
                 <div className="rounded-xl bg-white px-3.5 py-3 text-[12px] leading-relaxed text-[#6B7280]">
                   <p>
                     <span className="font-medium text-[#111827]">OpenAI GPT 生图：</span>支持{' '}
@@ -553,13 +614,23 @@ export function MomentsImageGenSettingsPanel({
                     创建 API Key；需可访问 OpenAI API 的网络环境。
                   </p>
                 </div>
-              )}
+              ) : provider === 'custom' ? (
+                <div className="rounded-xl bg-white px-3.5 py-3 text-[12px] leading-relaxed text-[#6B7280]">
+                  <p>
+                    <span className="font-medium text-[#111827]">自定义 OpenAI 兼容接口：</span>支持硅基流动、
+                    OneAPI、NewAPI 等聚合网关，或自建中转服务。
+                  </p>
+                  <p className="mt-1.5 text-[11px] text-[#9CA3AF]">
+                    填入 API URL 与 Key 后点击「拉取模型列表」，将自动识别可用的文生图模型。
+                  </p>
+                </div>
+              ) : null}
 
               {provider === 'volcengine' ? (
                 <VolcengineModelActivationGuide modelName={selected?.modelName} compact />
               ) : null}
 
-              <ImageGenProviderApiKeyField provider={provider} imageGen={imageGen} onPatch={onPatch} />
+              <ImageGenProviderCredentialsFields provider={provider} imageGen={imageGen} onPatch={onPatch} />
 
               <button
                 type="button"
@@ -576,7 +647,7 @@ export function MomentsImageGenSettingsPanel({
                   ? provider === 'volcengine'
                     ? '检测开通状态中…'
                     : '加载中…'
-                  : provider === 'siliconflow'
+                  : provider === 'siliconflow' || provider === 'custom'
                     ? '拉取模型列表'
                     : '加载模型列表'}
               </button>
@@ -647,6 +718,12 @@ export function MomentsImageGenSettingsPanel({
                   {provider === 'volcengine' && selected.serviceActivated === false ? (
                     <p className="mt-1 text-[11px] text-rose-600">
                       该模型尚未开通，请前往开通管理激活后再生图。
+                    </p>
+                  ) : null}
+                  {provider === 'custom' && isGeminiNativeImageModel(selected.modelName) ? (
+                    <p className="mt-1 text-[11px] text-[#6B7280]">
+                      将自动走中转站的 Gemini <span className="font-mono">generateContent</span> 接口（非
+                      <span className="font-mono"> /images/generations</span>）。
                     </p>
                   ) : null}
                   {selected.description ? (

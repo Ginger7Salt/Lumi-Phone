@@ -6,13 +6,26 @@ import {
   type LoreArchiveStoreShapeV3,
   type LoreEntry,
 } from './loreArchiveTypes'
+import {
+  type LoreArchiveBuiltinPresetId,
+  type LoreArchiveBuiltinPresetToggles,
+  resolveLoreArchiveBuiltinPresetToggles,
+} from './loreArchiveBuiltinPresets'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../apps/wechat/newFriendsPersona/idb'
 
 export const LUMI_LORE_ARCHIVE_KV_KEY = 'lumi-lore-archive-v1'
 
-type Snap = { entries: LoreEntry[]; hydrated: boolean }
+type Snap = {
+  entries: LoreEntry[]
+  hydrated: boolean
+  builtinPresets: Record<LoreArchiveBuiltinPresetId, boolean>
+}
 
-let snap: Snap = { entries: [], hydrated: false }
+let snap: Snap = {
+  entries: [],
+  hydrated: false,
+  builtinPresets: resolveLoreArchiveBuiltinPresetToggles(null),
+}
 const listeners = new Set<() => void>()
 let persistTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -94,21 +107,27 @@ function migrateV2ToUnified(v2: LoreArchiveStoreShapeV2): LoreEntry[] {
   return out
 }
 
-function parseStore(raw: unknown): LoreEntry[] {
-  if (!raw || typeof raw !== 'object') return []
+function parseStore(raw: unknown): { entries: LoreEntry[]; builtinPresets: LoreArchiveBuiltinPresetToggles } {
+  if (!raw || typeof raw !== 'object') {
+    return { entries: [], builtinPresets: {} }
+  }
   const rec = raw as Record<string, unknown>
   const ver = rec.version
+  const builtinPresets =
+    rec.builtinPresets && typeof rec.builtinPresets === 'object'
+      ? (rec.builtinPresets as LoreArchiveBuiltinPresetToggles)
+      : {}
 
   if (ver === 3) {
     const v3 = rec as LoreArchiveStoreShapeV3
-    return parseArchiveEntriesArray(v3.entries)
+    return { entries: parseArchiveEntriesArray(v3.entries), builtinPresets }
   }
 
   if (ver === 2) {
-    return migrateV2ToUnified(rec as unknown as LoreArchiveStoreShapeV2)
+    return { entries: migrateV2ToUnified(rec as unknown as LoreArchiveStoreShapeV2), builtinPresets }
   }
 
-  return parseLegacyLoreFlat(raw)
+  return { entries: parseLegacyLoreFlat(raw), builtinPresets }
 }
 
 function schedulePersist() {
@@ -118,6 +137,10 @@ function schedulePersist() {
     const payload: LoreArchiveStoreShapeV3 = {
       version: 3,
       entries: snap.entries,
+      builtinPresets: {
+        lumiDoctrineOfLove: snap.builtinPresets.lumiDoctrineOfLove,
+        activeConfession: snap.builtinPresets.activeConfession,
+      },
       weibo: { _reserved: true },
     }
     void personaDb.setPhoneKv(LUMI_LORE_ARCHIVE_KV_KEY, payload).catch(() => {})
@@ -160,9 +183,29 @@ export function removeLoreEntry(id: string) {
   schedulePersist()
 }
 
+export function getLoreArchiveBuiltinPresetTogglesSnapshot(): Record<LoreArchiveBuiltinPresetId, boolean> {
+  return { ...snap.builtinPresets }
+}
+
+export function setLoreArchiveBuiltinPresetEnabled(id: LoreArchiveBuiltinPresetId, enabled: boolean) {
+  snap = {
+    ...snap,
+    builtinPresets: {
+      ...snap.builtinPresets,
+      [id]: enabled,
+    },
+  }
+  emit()
+  schedulePersist()
+}
+
 /** 微信深度注销：清空档案室内存并删除持久化键（由 {@link LUMI_LORE_ARCHIVE_KV_KEY} 承载） */
 export function resetWorldbookLoreArchiveAfterWeChatErase(): void {
-  snap = { entries: [], hydrated: true }
+  snap = {
+    entries: [],
+    hydrated: true,
+    builtinPresets: resolveLoreArchiveBuiltinPresetToggles(null),
+  }
   emit()
   void personaDb.deletePhoneKv(LUMI_LORE_ARCHIVE_KV_KEY).catch(() => {})
   try {
@@ -179,8 +222,12 @@ export function WorldbookLoreProvider({ children }: { children: ReactNode }) {
       try {
         const raw = await pullPhoneKvWithLocalStorageLegacy(LUMI_LORE_ARCHIVE_KV_KEY, [LUMI_LORE_ARCHIVE_KV_KEY])
         if (cancelled) return
-        const entries = parseStore(raw)
-        snap = { entries, hydrated: true }
+        const parsed = parseStore(raw)
+        snap = {
+          entries: parsed.entries,
+          hydrated: true,
+          builtinPresets: resolveLoreArchiveBuiltinPresetToggles(parsed.builtinPresets),
+        }
         emit()
         schedulePersist()
       } catch {
@@ -203,9 +250,11 @@ export function useWorldbookStore() {
     () => ({
       hydrated: state.hydrated,
       entries: state.entries,
+      builtinPresets: state.builtinPresets,
       upsertEntry: upsertLoreEntry,
       removeEntry: removeLoreEntry,
+      setBuiltinPresetEnabled: setLoreArchiveBuiltinPresetEnabled,
     }),
-    [state.entries, state.hydrated],
+    [state.entries, state.hydrated, state.builtinPresets],
   )
 }

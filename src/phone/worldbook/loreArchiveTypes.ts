@@ -73,9 +73,13 @@ export type LoreArchiveStoreShapeV2 = {
   weibo?: { _reserved: true }
 }
 
+import type { LoreArchiveBuiltinPresetToggles } from './loreArchiveBuiltinPresets'
+
 /** v3：统一条目（板块 + 角色） */
 export type LoreArchiveStoreShapeV3 = {
   version: 3
   entries: ArchiveWorldbookEntry[]
+  /** 系统内置预设开关；未写入时默认全部开启 */
+  builtinPresets?: LoreArchiveBuiltinPresetToggles
   weibo?: { _reserved: true }
 }

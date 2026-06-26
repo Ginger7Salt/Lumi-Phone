@@ -123,6 +123,10 @@ export function getSupportedImageSizes(
   if (provider === 'novelai') return NOVELAI_IMAGE_SIZES
   if (provider === 'gemini') return GEMINI_IMAGE_SIZES
   if (provider === 'openai') return getOpenaiImageSizes(modelName)
+  if (provider === 'custom') {
+    if (/^(dall-?e|gpt-image)/i.test(modelName)) return getOpenaiImageSizes(modelName)
+    return GENERIC_SILICONFLOW_IMAGE_SIZES
+  }
   if (/Kolors/i.test(modelName)) return KOLORS_IMAGE_SIZES
   if (/Qwen\/Qwen-Image/i.test(modelName) && !/Edit/i.test(modelName)) return QWEN_IMAGE_SIZES
   return GENERIC_SILICONFLOW_IMAGE_SIZES

@@ -81,6 +81,7 @@ import { formatIdentityBindingDisplay } from './personaRoster/personaRosterDispl
 import { usePersonaRoster } from './personaRoster/usePersonaRoster'
 import type { PersonaRosterTabId } from './personaRoster/personaRosterTypes'
 import { WeChatThemePageBackdrop } from './WeChatThemePageBackdrop'
+import { PersonaAiGeneratePage } from './PersonaAiGeneratePage'
 
 const bg = '#F7F7F9'
 const text = '#262626'
@@ -287,6 +288,56 @@ function ImportAddressingDialog({
             style={{ color: sub }}
           >
             暂不更改
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CharacterCreateModeModal({
+  open,
+  onClose,
+  onPickCustom,
+  onPickAi,
+}: {
+  open: boolean
+  onClose: () => void
+  onPickCustom: () => void
+  onPickAi: () => void
+}) {
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/35 px-4" onClick={onClose}>
+      <div
+        className="w-full max-w-[400px] rounded-2xl border bg-white p-4"
+        style={{ borderColor: border, boxShadow: '0 10px 30px rgba(0,0,0,0.18)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="text-center text-[16px] font-semibold" style={{ color: text }}>
+          新建角色人设
+        </p>
+        <p className="mt-2 text-center text-[13px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
+          选择创建方式：自定义编辑，或由 AI 根据预设一键生成立体人设与世界书。
+        </p>
+        <div className="mt-4 flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={onPickCustom}
+            className="rounded-xl bg-[#111827] py-3 text-[14px] font-semibold text-white transition-all duration-200 ease-out hover:bg-[#0b1220]"
+          >
+            自定义编辑
+          </button>
+          <button
+            type="button"
+            onClick={onPickAi}
+            className="rounded-xl border bg-white py-3 text-[14px] font-semibold transition-all duration-200 ease-out hover:bg-[#fafafa]"
+            style={{ borderColor: border, color: text }}
+          >
+            AI 生成
+          </button>
+          <button type="button" onClick={onClose} className="rounded-xl py-2 text-[13px]" style={{ color: sub }}>
+            取消
           </button>
         </div>
       </div>
@@ -1003,6 +1054,11 @@ export function NewFriendsPersonaApp({
         /** NPC 编辑页返回目标：名册直入为 list，人脉内打开为 parent */
         backTo?: 'list' | 'parent'
       }
+    | {
+        name: 'ai-generate'
+        draft: Character
+        playerIdentityId: string
+      }
   >(() =>
     initialEditCharacterId?.trim()
       ? { name: 'edit', id: initialEditCharacterId.trim(), isNew: false }
@@ -1020,6 +1076,8 @@ export function NewFriendsPersonaApp({
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [deleteTargetDetachHint, setDeleteTargetDetachHint] = useState<string | null>(null)
   const [identityPickOpen, setIdentityPickOpen] = useState(false)
+  const [createModeOpen, setCreateModeOpen] = useState(false)
+  const [pendingCreateMode, setPendingCreateMode] = useState<'custom' | 'ai' | null>(null)
   const [mainPickOpen, setMainPickOpen] = useState(false)
   const [identityLoading, setIdentityLoading] = useState(false)
   const [pendingNewDraft, setPendingNewDraft] = useState<Character | null>(null)
@@ -1404,8 +1462,7 @@ export function NewFriendsPersonaApp({
             onClick={async () => {
               const c = newCharacter()
               setPendingNewDraft(c)
-              setIdentityPickOpen(true)
-              await refreshIdentities()
+              setCreateModeOpen(true)
             }}
           >
             <Plus className="size-5" />
@@ -1508,6 +1565,27 @@ export function NewFriendsPersonaApp({
           }}
         />
 
+        <CharacterCreateModeModal
+          open={createModeOpen}
+          onClose={() => {
+            setCreateModeOpen(false)
+            setPendingNewDraft(null)
+            setPendingCreateMode(null)
+          }}
+          onPickCustom={async () => {
+            setCreateModeOpen(false)
+            setPendingCreateMode('custom')
+            setIdentityPickOpen(true)
+            await refreshIdentities()
+          }}
+          onPickAi={async () => {
+            setCreateModeOpen(false)
+            setPendingCreateMode('ai')
+            setIdentityPickOpen(true)
+            await refreshIdentities()
+          }}
+        />
+
         <IdentityPickModal
           open={identityPickOpen}
           loading={identityLoading}
@@ -1515,10 +1593,12 @@ export function NewFriendsPersonaApp({
           onClose={() => {
             setIdentityPickOpen(false)
             setPendingNewDraft(null)
+            setPendingCreateMode(null)
           }}
           onCreateNew={() => {
             setIdentityPickOpen(false)
             setPendingNewDraft(null)
+            setPendingCreateMode(null)
             onOpenIdentityManager?.()
           }}
           onPick={async (identityId) => {
@@ -1527,7 +1607,12 @@ export function NewFriendsPersonaApp({
             await setActivePlayerIdentityForCurrentAccount(identityId)
             setIdentityPickOpen(false)
             setPendingNewDraft(null)
-            // 仅创建草稿，不写入 IndexedDB；只有点击“保存”才会持久化
+            const mode = pendingCreateMode ?? 'custom'
+            setPendingCreateMode(null)
+            if (mode === 'ai') {
+              setPage({ name: 'ai-generate', draft, playerIdentityId: identityId })
+              return
+            }
             setPage({ name: 'edit', id: draft.id, isNew: true, draft })
           }}
         />
@@ -1555,6 +1640,26 @@ export function NewFriendsPersonaApp({
       {importIdentitySyncDialogs}
       </>
     )
+  }
+
+  if (page.name === 'ai-generate') {
+    const playerIdentity =
+      identityList.find((it) => it.id === page.playerIdentityId) ?? null
+    return (
+      <PersonaAiGeneratePage
+        draft={page.draft}
+        playerIdentity={playerIdentity}
+        apiConfig={apiConfigList}
+        onBack={() => setPage({ name: 'list' })}
+        onGenerated={(generated) => {
+          setPage({ name: 'edit', id: generated.id, isNew: true, draft: generated })
+        }}
+      />
+    )
+  }
+
+  if (page.name !== 'edit') {
+    return null
   }
 
   return (

@@ -50,6 +50,26 @@ export function buildOpenAiEmbeddingsEndpoint(apiUrl: string): string {
   return buildOpenAiCompatibleEndpoint(apiUrl, 'embeddings')
 }
 
+export function buildOpenAiImagesGenerationsEndpoint(apiUrl: string): string {
+  return buildOpenAiCompatibleEndpoint(apiUrl, 'images/generations')
+}
+
+/** 自定义中转：Gemini 原生图模走 /v1beta/models/{model}:generateContent */
+export function buildGeminiGenerateContentEndpoint(apiUrl: string, modelName: string): string {
+  const base = trimApiBase(apiUrl)
+  if (!base) return ''
+  if (/:generateContent$/i.test(base)) return base
+
+  let root = base
+  if (OPENAI_API_VERSION_SUFFIX_RE.test(root)) {
+    root = root.replace(/\/v\d+$/i, '/v1beta')
+  } else if (!/\/v1beta$/i.test(root)) {
+    root = `${root}/v1beta`
+  }
+
+  return `${root}/models/${encodeURIComponent(modelName)}:generateContent`
+}
+
 export function buildOpenAiAudioTranscriptionsEndpoint(apiUrl: string): string {
   return buildOpenAiCompatibleEndpoint(apiUrl, 'audio/transcriptions')
 }

@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react'
+import { motion } from 'framer-motion'
 
 import type { WeChatBubbleTheme } from '../../types'
 import { WeChatChatMixedText } from './WeChatChatMixedText'
@@ -8,6 +9,12 @@ import {
 } from './group/ChatGroupSpeakerAvatarWrap'
 import { useWeChatLongPress } from './hooks/useWeChatLongPress'
 import { composeMultiSelectLeading } from './chatHistory/MultiSelectAvatarSlot'
+import {
+  CHAT_BUBBLE_ENTER_ANIMATE,
+  CHAT_BUBBLE_ENTER_INITIAL,
+  CHAT_BUBBLE_ENTER_SPRING,
+  chatBubbleTransformOrigin,
+} from './chatBubbleEnterMotion'
 
 /** 聊天气泡最大宽：100vw - 左右基准线 24px×2 - 头像列预留 80px（40 头像 + 12 间距 + 28 冗余） */
 const CHAT_BUBBLE_MAX = 'max-w-[calc(100vw-24px-24px-80px)]'
@@ -305,12 +312,63 @@ export function WeChatMessageBubbleRow({
     [onBubbleLongPress],
   )
 
-  const { bind, pressing } = useWeChatLongPress({
+  const { bind } = useWeChatLongPress({
     enabled: variant === 'chat' && !!onBubbleLongPress,
     ms: 500,
     moveThresholdPx: 10,
     onLongPress: () => onLongPress(),
   })
+
+  const bubbleSurfaceStyle: CSSProperties = {
+    ...(chatBubbleSurfaceStyle?.background
+      ? {}
+      : {
+          backgroundColor: variant === 'chat' ? bubbleBgChatResolved : bubbleBgPreview,
+        }),
+    color: variant === 'chat' ? bubbleTextResolved : bubbleTextPreview,
+    borderRadius: bubbleRadius,
+    userSelect: variant === 'chat' ? 'none' : undefined,
+    WebkitUserSelect: variant === 'chat' ? ('none' as any) : undefined,
+    WebkitTouchCallout: variant === 'chat' ? ('none' as any) : undefined,
+    ...(variant === 'chat' && luxuryDark
+      ? { border: '1px solid rgba(255,255,255,0.12)' }
+      : variant === 'chat' && chatBubbleShowBorder && !chatBubbleSurfaceStyle
+        ? { border: `1px solid ${chatBubbleBorderColor}` }
+        : {}),
+    ...chatBubbleSurfaceStyle,
+  }
+
+  const bubbleInner = (
+    <>
+      {replyPreview ? (
+        <ChatBubbleReplyPreview
+          preview={replyPreview}
+          isSelf={isSelf}
+          insetStyle={replyPreviewInsetStyle}
+        />
+      ) : null}
+      {messageBodyVisible ? (
+        messagePrefixIcon ? (
+          <span className="inline-flex items-center gap-1.5 align-middle">
+            <span className="inline-flex shrink-0">{messagePrefixIcon}</span>
+            {messageBody}
+          </span>
+        ) : (
+          messageBody
+        )
+      ) : null}
+      {variant === 'chat' && bubbleSelected ? (
+        <span
+          className="pointer-events-none absolute inset-0"
+          style={{
+            borderRadius: bubbleRadius,
+            background: 'rgba(0,0,0,0.08)',
+          }}
+          aria-hidden
+        />
+      ) : null}
+    </>
+  )
 
   const bubbleBlock = (
     <div className={`relative min-w-0 ${bubbleMax}`}>
@@ -321,61 +379,31 @@ export function WeChatMessageBubbleRow({
         avatarMidlinePx={avatarPx / 2}
         color={variant === 'preview' ? bubbleBgPreview : solidChatBg ? solidChatBg : undefined}
       />
-      <div
-        ref={contentRef}
-        className={`relative z-[1] inline-block max-w-full px-3 py-2 leading-[1.5] select-none transition-[transform,opacity,background-color] duration-150 ease-out ${textCls} ${bubbleContentClassName}`}
-        style={{
-          ...(chatBubbleSurfaceStyle?.background
-            ? {}
-            : {
-                backgroundColor: variant === 'chat' ? bubbleBgChatResolved : bubbleBgPreview,
-              }),
-          color: variant === 'chat' ? bubbleTextResolved : bubbleTextPreview,
-          borderRadius: bubbleRadius,
-          userSelect: variant === 'chat' ? 'none' : undefined,
-          WebkitUserSelect: variant === 'chat' ? ('none' as any) : undefined,
-          WebkitTouchCallout: variant === 'chat' ? ('none' as any) : undefined,
-          transform:
-            variant === 'chat' && pressing && !bubbleSelected ? 'scale(0.98)' : variant === 'chat' ? 'scale(1)' : undefined,
-          opacity: variant === 'chat' && pressing && !bubbleSelected ? 0.9 : 1,
-          transformOrigin: variant === 'chat' ? (isSelf ? 'right bottom' : 'left bottom') : undefined,
-          ...(variant === 'chat' && luxuryDark
-            ? { border: '1px solid rgba(255,255,255,0.12)' }
-            : variant === 'chat' && chatBubbleShowBorder && !chatBubbleSurfaceStyle
-              ? { border: `1px solid ${chatBubbleBorderColor}` }
-              : {}),
-          ...chatBubbleSurfaceStyle,
-        }}
-        {...(variant === 'chat' ? bind : {})}
-      >
-        {replyPreview ? (
-          <ChatBubbleReplyPreview
-            preview={replyPreview}
-            isSelf={isSelf}
-            insetStyle={replyPreviewInsetStyle}
-          />
-        ) : null}
-        {messageBodyVisible ? (
-          messagePrefixIcon ? (
-            <span className="inline-flex items-center gap-1.5 align-middle">
-              <span className="inline-flex shrink-0">{messagePrefixIcon}</span>
-              {messageBody}
-            </span>
-          ) : (
-            messageBody
-          )
-        ) : null}
-        {variant === 'chat' && bubbleSelected ? (
-          <span
-            className="pointer-events-none absolute inset-0"
-            style={{
-              borderRadius: bubbleRadius,
-              background: 'rgba(0,0,0,0.08)',
-            }}
-            aria-hidden
-          />
-        ) : null}
-      </div>
+      {variant === 'chat' ? (
+        <motion.div
+          ref={contentRef}
+          className={`relative z-[1] inline-block max-w-full px-3 py-2 leading-[1.5] select-none ${textCls} ${bubbleContentClassName}`}
+          style={{
+            ...bubbleSurfaceStyle,
+            ...chatBubbleTransformOrigin(isSelf),
+          }}
+          initial={CHAT_BUBBLE_ENTER_INITIAL}
+          animate={CHAT_BUBBLE_ENTER_ANIMATE}
+          transition={CHAT_BUBBLE_ENTER_SPRING}
+          whileTap={onBubbleLongPress ? { scale: 0.98, opacity: 0.9 } : undefined}
+          {...bind}
+        >
+          {bubbleInner}
+        </motion.div>
+      ) : (
+        <div
+          ref={contentRef}
+          className={`relative z-[1] inline-block max-w-full px-3 py-2 leading-[1.5] select-none transition-[transform,opacity,background-color] duration-150 ease-out ${textCls} ${bubbleContentClassName}`}
+          style={bubbleSurfaceStyle}
+        >
+          {bubbleInner}
+        </div>
+      )}
       {variant === 'chat' && isSelf ? chatBubbleOverlay : null}
     </div>
   )

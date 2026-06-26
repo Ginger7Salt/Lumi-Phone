@@ -4,6 +4,13 @@ import { publicAssetUrl } from '../publicAssetUrl'
 export const PHONE_NUM_FONT_FAMILY =
   '"Songti SC", "STSong", "Noto Serif SC", "Georgia", "Times New Roman", serif'
 
+/** 全局数字样式（内联使用，覆盖父级无衬线 fontFamily） */
+export const phoneNumStyle = {
+  fontFamily: PHONE_NUM_FONT_FAMILY,
+  fontVariantNumeric: 'tabular-nums',
+  fontFeatureSettings: '"tnum" 1, "lnum" 1',
+} as const
+
 /** 全局拉丁字母字体栈（仅用于显式混排组件，如模型 id、聊天英文片段） */
 export const PHONE_LATIN_FONT_FAMILY = '"DejaVu Math TeX Gyre", "DejaVu Sans", sans-serif'
 
@@ -491,7 +498,13 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
       pageBg: '#F5F6F8',
       pageBgImageUrl: DEFAULT_WECHAT_CHAT_WALLPAPER_PATH,
     },
-    takeout: { ...DEFAULT_APP_PAGE_STYLE },
+    takeout: {
+      ...DEFAULT_APP_PAGE_STYLE,
+      pageBg: '#FFFFFF',
+      headerBg: '#FFFFFF',
+      cardBg: '#F9FAFB',
+      fontFamily: '"Inter", "Noto Serif SC", system-ui, -apple-system, sans-serif',
+    },
     weibo: { ...DEFAULT_APP_PAGE_STYLE },
     lumiMeet: {
       ...DEFAULT_APP_PAGE_STYLE,

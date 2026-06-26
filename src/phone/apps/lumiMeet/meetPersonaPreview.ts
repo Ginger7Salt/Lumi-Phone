@@ -67,6 +67,7 @@ export function expandComprehensivePersonaPlaceholders(
       sensory: ex(p0.fetish.sensory),
       dynamic: ex(p0.fetish.dynamic),
       jealousy: ex(p0.fetish.jealousy),
+      intimateSpeech: ex(p0.fetish.intimateSpeech),
     },
     relations: {
       family: ex(p0.relations.family),

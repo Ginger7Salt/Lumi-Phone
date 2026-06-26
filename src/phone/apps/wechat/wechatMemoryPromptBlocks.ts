@@ -13,6 +13,11 @@ import {
 /** 未总结聊天摘录单块汉字硬顶（默认入参仍较小；约会等可传入更大 maxChars） */
 const UNSUMMARIZED_BLOCK_CHAR_HARD_MAX = 500_000
 
+/** 与自动总结 gather / 模型输入共用：单次最多纳入的游标后消息条数 */
+export const MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT = 500
+/** 与自动总结模型输入、私聊 prompt「尚未总结」块共用（超出时优先保留更早未总结段，下次总结继续） */
+export const MEMORY_UNSUMMARIZED_BLOCK_CHAR_CAP = 12_000
+
 /** 合并多段文本供「关键词长期记忆」命中；规范空白并小写拉丁字母。 */
 export function buildMemoryRelevanceHaystack(parts: Array<string | undefined | null>): string {
   return String(
@@ -34,7 +39,7 @@ function clipOneLine(s: string, max = 220): string {
   return `${t.slice(0, max)}…`
 }
 
-function formatPrivateLineUnsummarized(m: WeChatChatMessage): string | null {
+export function formatPrivateLineUnsummarized(m: WeChatChatMessage): string | null {
   if (m.isRecalled) return null
   let raw = stripWechatGroupEventNoticePrefix(String(m.content ?? '')).trim()
   if (m.redPacket) raw = raw || '[红包]'
@@ -109,7 +114,10 @@ export async function formatUnsummarizedPrivateChatBlock(params: {
   if (!ck) return ''
   const cursor = await personaDb.getMemorySummaryCursorTimestamp(ck)
   const fromTs = (cursor ?? 0) + 1
-  const lim = Math.max(1, Math.min(500, Math.floor(params.maxMessages ?? 120)))
+  const lim = Math.max(
+    1,
+    Math.min(MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT, Math.floor(params.maxMessages ?? MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT)),
+  )
   const rows = await personaDb.listWeChatChatMessagesFromTimestampAsc({
     conversationKey: ck,
     fromTimestampInclusive: fromTs,
@@ -124,12 +132,15 @@ export async function formatUnsummarizedPrivateChatBlock(params: {
   }
   if (!lines.length) return ''
   let body = lines.join('\n')
-  const charCap = Math.max(400, Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.maxChars ?? 3200)))
+  const charCap = Math.max(
+    400,
+    Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.maxChars ?? MEMORY_UNSUMMARIZED_BLOCK_CHAR_CAP)),
+  )
   if (body.length > charCap) {
     const parts = body.split('\n')
-    while (parts.join('\n').length > charCap && parts.length > 4) parts.shift()
+    while (parts.join('\n').length > charCap && parts.length > 4) parts.pop()
     body = parts.join('\n')
-    if (body.length > charCap) body = `${body.slice(-charCap)}\n…（更早未总结私聊已截断）`
+    if (body.length > charCap) body = `${body.slice(0, charCap)}\n…（更晚未总结私聊下次总结继续）`
   }
   return `${body}\n（↑ 尚未经自动总结写入长期记忆的私聊片段；若与上文气泡重叠，以衔接「总结空白期」为主。）`
 }
@@ -181,7 +192,10 @@ export async function formatUnsummarizedCurrentGroupChatBlock(params: {
   const ck = wechatGroupConversationKey(gid, pid)
   const cursor = await personaDb.getMemorySummaryCursorTimestamp(ck)
   const fromTs = (cursor ?? 0) + 1
-  const lim = Math.max(1, Math.min(500, Math.floor(params.maxMessages ?? 120)))
+  const lim = Math.max(
+    1,
+    Math.min(MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT, Math.floor(params.maxMessages ?? MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT)),
+  )
   const rows = await personaDb.listWeChatChatMessagesFromTimestampAsc({
     conversationKey: ck,
     fromTimestampInclusive: fromTs,

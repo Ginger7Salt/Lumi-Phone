@@ -50,8 +50,8 @@ export function normalizeChatTheme(raw: unknown): ChatTheme {
   const str = (v: unknown, d: string) => (typeof v === 'string' ? v : d)
   const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d)
   return {
-    id: str(o.id, base.id),
-    name: str(o.name, base.name),
+    id: o.id === 'imessage' ? base.id : str(o.id, base.id),
+    name: o.id === 'imessage' ? base.name : str(o.name, base.name),
     isDefault: bool(o.isDefault, base.isDefault),
     inputBar: {
       borderRadius: num(ib.borderRadius, base.inputBar.borderRadius, 8, 28),

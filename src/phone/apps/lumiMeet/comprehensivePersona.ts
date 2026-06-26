@@ -35,7 +35,14 @@ export interface ComprehensivePersona {
     orientationOrigin: string
   }
   abilities: { skills: string; hobbies: string; socialMode: string }
-  fetish: { preference: string; sensory: string; dynamic: string; jealousy: string }
+  fetish: {
+    preference: string
+    sensory: string
+    dynamic: string
+    jealousy: string
+    /** 与恋人亲密场景下的口语习惯（情境 + 引语示例） */
+    intimateSpeech: string
+  }
   relations: { family: string; friends: string; enemies: string }
   contrast: { beforeLove: string; afterLove: string; conflict: string }
   daily: { speech: string; habits: string; money: string; quirks: string }
@@ -183,6 +190,7 @@ export function sanitizeLoveBlocksForStaticLore(p: ComprehensivePersona): Compre
       sensory: rw(p.fetish.sensory),
       dynamic: rw(p.fetish.dynamic),
       jealousy: rw(p.fetish.jealousy),
+      intimateSpeech: rw(p.fetish.intimateSpeech),
     },
     contrast: {
       beforeLove: rw(p.contrast.beforeLove),
@@ -193,10 +201,15 @@ export function sanitizeLoveBlocksForStaticLore(p: ComprehensivePersona): Compre
 }
 
 /** 从模型 JSON 归一化为完整九维对象；缺字段时用占位，避免 UI 崩溃。 */
-export function normalizeComprehensivePersona(raw: unknown): ComprehensivePersona {
+export function normalizeComprehensivePersona(
+  raw: unknown,
+  opts?: { preserveUserPlaceholder?: boolean },
+): ComprehensivePersona {
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const g = (p: string[]) => readNested(o, p)
-  const lv = (v: unknown, max: number) => rewriteLoveBlocksUserPlaceholder(pickStr(v, max, PLACEHOLDER))
+  const lv = opts?.preserveUserPlaceholder
+    ? (v: unknown, max: number) => pickStr(v, max, PLACEHOLDER)
+    : (v: unknown, max: number) => rewriteLoveBlocksUserPlaceholder(pickStr(v, max, PLACEHOLDER))
 
   const birthdayRaw = pickStr(g(['base', 'birthdayMD']), 8, '01-01')
   const birthdayMD = normalizeBirthdayMD(birthdayRaw.includes('-') ? birthdayRaw : '01-01')
@@ -237,6 +250,7 @@ export function normalizeComprehensivePersona(raw: unknown): ComprehensivePerson
       sensory: lv(g(['fetish', 'sensory']), 1000),
       dynamic: lv(g(['fetish', 'dynamic']), 1000),
       jealousy: lv(g(['fetish', 'jealousy']), 1000),
+      intimateSpeech: lv(g(['fetish', 'intimateSpeech']), 1200),
     },
     relations: {
       family: pickStr(g(['relations', 'family']), 1000, PLACEHOLDER),
@@ -549,6 +563,7 @@ export function buildOfflineComprehensivePersona(
       sensory: `对气味和声音挺敏感，腻人的甜香会直接皱眉。`,
       dynamic: `谈恋爱也需要 "喘口气" 的空间，不喜欢被盯死。`,
       jealousy: `吃醋不太会直接问，语气变冷、信息回得慢，其实心里酸得要命。`,
+      intimateSpeech: `和恋人独处时话会变少但更软：被抱住时会低声说 "别闹"；睡前困极了会嘟囔 "再待一会儿"；吵完和好想碰对方又拉不下脸，只会闷声来一句 "过来"。`,
     },
     relations: {
       family: `跟家里联系不算密，该尽的责还是会尽，烦心事不爱跟爸妈讲。`,

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { personaDb } from '../newFriendsPersona/idb'
 import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
 import { useDating } from './DatingContext'
+import { datingNumStyle } from './datingTypography'
 
 /** 列表副标题：与简介/签名存库一致，展开 {{id:…}} / {{user}} 等为可读名 */
 function DatingListSignatureLine({ characterId, text }: { characterId: string; text: string }) {
@@ -70,7 +71,10 @@ export function DatingRoleSelectPage({ onEnterStory, onOpenPersonaManager }: Pro
             <div className="ml-3 text-left">
               <p className="text-[16px] font-semibold text-[#262626]">{lastPlayed.c.realName}</p>
               <p className="text-[14px] text-[#8e8e8e]">
-                上次约会：{new Date(lastPlayed.t).toLocaleString()}
+                上次约会：
+                <span className="ml-0.5 tabular-nums" style={datingNumStyle}>
+                  {new Date(lastPlayed.t).toLocaleString('zh-CN', { hour12: false })}
+                </span>
               </p>
             </div>
             <span className="ml-auto flex items-center gap-1 text-[14px] text-stone-500">

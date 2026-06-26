@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
 import { useCustomization } from '../../../CustomizationContext'
+import { phoneNumStyle } from '../../../types'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { WeChatTimeConfig } from '../newFriendsPersona/types'
 import {
@@ -187,7 +188,12 @@ export function ChatTimeSettingsScreen({
                   <section className="rounded-[14px] border border-[#e5e5e5] bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
                     <div className="rounded-[10px] bg-[#f9f9f9] px-3 py-3">
                       <p className="text-[12px] uppercase tracking-[0.08em] text-[#888888]">当前角色时间</p>
-                      <p className="mt-1 text-[20px] font-semibold text-[#111111]">{new Date(currentTimeMs).toLocaleString('zh-CN', { hour12: false })}</p>
+                      <p
+                        className="mt-1 text-[20px] font-semibold tabular-nums text-[#111111]"
+                        style={phoneNumStyle}
+                      >
+                        {new Date(currentTimeMs).toLocaleString('zh-CN', { hour12: false })}
+                      </p>
                     </div>
                     <div className={`mt-4 ${form.mode === 'custom' ? '' : 'pointer-events-none opacity-45'}`}>
                       <label className="block text-[14px] text-[#333333]">
@@ -196,13 +202,16 @@ export function ChatTimeSettingsScreen({
                           type="datetime-local"
                           value={toDateTimeLocalValue(form.customBaseTime)}
                           onChange={(e) => setForm((prev) => ({ ...prev, mode: 'custom', customBaseTime: parseDateTimeLocalValue(e.target.value), customAnchorRealTime: Date.now() }))}
-                          className="mt-2 h-11 w-full rounded-[10px] border border-[#e5e5e5] bg-white px-3 text-[14px] text-[#111111] outline-none"
+                          className="mt-2 h-11 w-full rounded-[10px] border border-[#e5e5e5] bg-white px-3 text-[14px] text-[#111111] outline-none tabular-nums"
+                          style={phoneNumStyle}
                         />
                       </label>
                       <div className="mt-4">
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-[14px] text-[#333333]">时间流速</span>
-                          <span className="text-[13px] text-[#888888]">{multiplierText(form.timeMultiplier)}</span>
+                          <span className="text-[13px] tabular-nums text-[#888888]" style={phoneNumStyle}>
+                            {multiplierText(form.timeMultiplier)}
+                          </span>
                         </div>
                         <input
                           type="range"
@@ -219,7 +228,8 @@ export function ChatTimeSettingsScreen({
                           step={1}
                           value={Math.round(form.timeMultiplier)}
                           onChange={(e) => setForm((prev) => ({ ...prev, mode: 'custom', timeMultiplier: Math.max(1, Number(e.target.value) || 1), customBaseTime: currentTimeMs, customAnchorRealTime: Date.now() }))}
-                          className="mt-3 h-11 w-full rounded-[10px] border border-[#e5e5e5] bg-white px-3 text-[14px] text-[#111111] outline-none"
+                          className="mt-3 h-11 w-full rounded-[10px] border border-[#e5e5e5] bg-white px-3 text-[14px] text-[#111111] outline-none tabular-nums"
+                          style={phoneNumStyle}
                         />
                       </div>
                     </div>
@@ -228,7 +238,9 @@ export function ChatTimeSettingsScreen({
                   <section className="rounded-[14px] border border-[#e5e5e5] bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
                     <p className="text-[14px] font-medium text-[#111111]">时间戳预览</p>
                     <div className="mt-3 flex justify-center">
-                      <span className="text-[12px] text-[#999999]">{formatWeChatChatTimestamp(previewMessageTime, currentTimeMs)}</span>
+                      <span className="text-[12px] tabular-nums text-[#999999]" style={phoneNumStyle}>
+                        {formatWeChatChatTimestamp(previewMessageTime, currentTimeMs)}
+                      </span>
                     </div>
                   </section>
                 </div>

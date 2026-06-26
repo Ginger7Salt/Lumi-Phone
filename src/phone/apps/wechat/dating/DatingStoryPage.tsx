@@ -50,6 +50,9 @@ import {
 } from './types'
 import type { BranchOption, DatingCardStyle, NarrativePerspective } from './types'
 import { DirectorModeHelpButton, DirectorModeHelpPanel } from './DirectorModeHelp'
+import { DatingNum } from './DatingNum'
+import { datingNumStyle } from './datingTypography'
+import { AccountNumericText } from '../../../userSystem/AccountNum'
 import { DatingNetworkMentionControls } from './DatingNetworkMentionControls'
 import {
   collectDatingNetworkMentionIds,
@@ -597,6 +600,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     setBranchEnabled,
     setOfflineDanmakuEnabled,
     setGodPerspective,
+    setMainCharacterOffstage,
     setVnVoiceDisabled,
     setDirectorMode,
     setAutoUserReaction,
@@ -3061,6 +3065,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                       }}
                       onBlur={applyFloorsDraft}
                       className="min-w-0 flex-1 rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-[13px] tabular-nums text-stone-800 outline-none focus:border-stone-400"
+                      style={datingNumStyle}
                     />
                     <button
                       type="button"
@@ -3084,19 +3089,23 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                     <h2 className="text-[28px] font-bold leading-tight">{currentCharacter.realName}</h2>
                     <div className="mt-2 grid grid-cols-2 text-[12px] leading-6 opacity-70">
                       <p className="whitespace-nowrap">
-                        AGE <span className="ml-1 opacity-95">{currentCharacter.age}</span>
+                        AGE <DatingNum className="ml-1 opacity-95">{currentCharacter.age}</DatingNum>
                       </p>
                       <p className="whitespace-nowrap">
-                        HEIGHT <span className="ml-1 opacity-95">{currentCharacter.heightCm}</span>
+                        HEIGHT <DatingNum className="ml-1 opacity-95">{currentCharacter.heightCm}</DatingNum>
                       </p>
                       <p className="whitespace-nowrap">
-                        WEIGHT <span className="ml-1 opacity-95">{currentCharacter.weightKg}</span>
+                        WEIGHT <DatingNum className="ml-1 opacity-95">{currentCharacter.weightKg}</DatingNum>
                       </p>
                       <p className="whitespace-nowrap text-[11px] tracking-[0.08em]">
                         ZODIAC <span className="ml-1 opacity-95">{currentCharacter.zodiac}</span>
                       </p>
                       <p className="whitespace-nowrap text-[11px] tracking-[0.08em]">
-                        BIRTHDAY <span className="ml-1 opacity-95">{currentCharacter.birthdayMD}</span>
+                        BIRTHDAY{' '}
+                        <AccountNumericText
+                          text={currentCharacter.birthdayMD}
+                          className="ml-1 inline opacity-95"
+                        />
                       </p>
                     </div>
                     <p className="mt-2 text-[12px] leading-snug opacity-60">{currentCharacter.motto}</p>
@@ -3284,12 +3293,16 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   />
                   导演模式
                 </label>
+                <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[#262626]">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-stone-200 accent-neutral-800"
+                    checked={!!currentArchive.mainCharacterOffstage}
+                    onChange={(e) => setMainCharacterOffstage(e.target.checked)}
+                  />
+                  侧幕叙写
+                </label>
                 <DirectorModeHelpButton onClick={() => setDirectorModeHelpOpen(true)} />
-                {currentArchive.godPerspective ? (
-                  <span className="text-[12px] leading-snug text-[#8e8e8e]">
-                    上帝视角：只写你看不见的屏外剧情，玩家不在场；不与玩家直接对话；开启时固定不抢话
-                  </span>
-                ) : null}
               </div>
               <p className="mb-2 text-[12px] leading-snug text-[#8e8e8e]">
                 旁白直接写；弯引号 / 英文引号为对白；** 为内心 OS（NPC 默认不知）；旁白上的轻吐槽勿用 ** 包裹
@@ -3459,7 +3472,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 onKeyDown={(e) => applyMentionKeyDown(e, input, setInput)}
                 onFocus={() => scrollComposerIntoView()}
                 placeholder={
-                  currentArchive.directorMode ? '输入下一段剧情走向 / 导演指令…' : '输入你想说的话或动作，推进约会剧情…'
+                  currentArchive.mainCharacterOffstage
+                    ? '输入你与 NPC/人脉的场景、对白或动作…'
+                    : currentArchive.directorMode
+                      ? '输入下一段剧情走向 / 导演指令…'
+                      : '输入你想说的话或动作，推进约会剧情…'
                 }
                 rows={4}
                 enterKeyHint="send"
@@ -3893,7 +3910,10 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         <div className="absolute inset-0 z-50 flex items-end justify-center bg-black/35 p-4">
           <div className="w-full max-w-[520px] rounded-2xl border border-stone-200 bg-white shadow-lg">
             <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
-              <p className="text-[14px] font-semibold text-stone-900">自定义输入</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[14px] font-semibold text-stone-900">自定义输入</p>
+                <DirectorModeHelpButton onClick={() => setDirectorModeHelpOpen(true)} />
+              </div>
               <button
                 type="button"
                 className="rounded-lg px-2 py-1 text-[13px] text-stone-500 hover:bg-stone-50 hover:text-stone-700"
@@ -3906,7 +3926,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               <div className="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50/80 px-3 py-2.5">
                 <div className="flex min-w-0 items-center gap-1">
                   <p className="text-[13px] font-medium text-[#262626]">导演模式</p>
-                  <DirectorModeHelpButton onClick={() => setDirectorModeHelpOpen(true)} />
                 </div>
                 <button
                   type="button"
@@ -3944,6 +3963,26 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                     />
                   </button>
                 </div>
+                <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2">
+                  <p className="text-[13px] text-[#262626]">侧幕叙写</p>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={!!currentArchive.mainCharacterOffstage}
+                    onClick={() => setMainCharacterOffstage(!currentArchive.mainCharacterOffstage)}
+                    className={`relative h-8 w-[52px] rounded-full p-1 transition-colors ${
+                      currentArchive.mainCharacterOffstage ? 'bg-black' : 'bg-[#cccccc]'
+                    }`}
+                  >
+                    <span
+                      className={`block h-6 w-6 rounded-full bg-white transition-transform ${
+                        currentArchive.mainCharacterOffstage ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
                 <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2">
                   <p className={`text-[13px] ${godLocksNoInterrupt ? 'text-[#a3a3a3]' : 'text-[#262626]'}`}>抢话</p>
                   <button
@@ -4003,7 +4042,13 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 value={vnCustomInput}
                 onChange={(e) => setVnCustomInput(e.target.value)}
                 onKeyDown={(e) => applyMentionKeyDown(e, vnCustomInput, setVnCustomInput)}
-                placeholder={currentArchive.directorMode ? '输入剧情走向…' : '输入已发生的剧情…'}
+                placeholder={
+                  currentArchive.mainCharacterOffstage
+                    ? '输入你与 NPC/人脉的场景…'
+                    : currentArchive.directorMode
+                      ? '输入剧情走向…'
+                      : '输入已发生的剧情…'
+                }
                 rows={4}
                 enterKeyHint="send"
                 autoComplete="off"

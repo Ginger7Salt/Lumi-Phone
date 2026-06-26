@@ -98,7 +98,7 @@ export function ApiPresetEditPage() {
   const { id: rawRouteId } = useParams()
   const presetId = decodeApiPresetRouteId(rawRouteId)
   const [searchParams, setSearchParams] = useSearchParams()
-  const { presets, upsertPreset, createPreset, apiHydrated } = useApiSettings()
+  const { presets, upsertPreset, createPreset, apiHydrated, flushPersist } = useApiSettings()
 
   const initialPreset = useMemo(() => {
     if (!presetId || presetId === 'new') return null
@@ -148,8 +148,15 @@ export function ApiPresetEditPage() {
   const toastTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
-    if (initialPreset) setDraft(clonePreset(initialPreset))
-  }, [initialPreset])
+    if (!initialPreset) return
+    setDraft(clonePreset(initialPreset))
+    setDirty(false)
+  }, [presetId])
+
+  useEffect(() => {
+    if (!initialPreset || dirty) return
+    setDraft(clonePreset(initialPreset))
+  }, [initialPreset, dirty])
 
   useEffect(() => {
     if (tabFromUrl === 'linkPreview') {
@@ -206,9 +213,10 @@ export function ApiPresetEditPage() {
       showToast(err)
       return
     }
-    upsertPreset({ ...draft, updatedAt: Date.now() })
+    const next = { ...draft, updatedAt: Date.now() }
+    upsertPreset(next)
     setDirty(false)
-    setSaveOk(true)
+    void flushPersist().then(() => setSaveOk(true))
   }
 
   const askBack = () => {

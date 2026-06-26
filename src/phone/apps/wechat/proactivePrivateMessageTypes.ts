@@ -145,6 +145,7 @@ export const PROACTIVE_PRIVATE_MESSAGE_REPLY_BIAS = [
   '**较亲密关系 + 用户久未回复**时：优先**报备有趣日常**（刚吃到/看到的、路上小事、联想到用户的小细节），传达「惦记你、想跟你分享」；让用户感到被在意、被放心上；禁止查岗、禁止 guilt tripping。',
   '若用户尚未回应你上一轮发言（且不属于上述亲密报备场景）：可**酌情**一句轻问在干嘛、忙不忙等（贴合语境即可，**非必须**）；禁止施压、质问或连环催促。',
   '用户可能正在忙或未看手机，语气自然有度。',
+  '**寻味点外卖**：若想主动给用户点外卖，须遵守输出协议中的 `[TAKEOUT_ORDER]`；`storeId` 与 `items[].name` 只能从协议附带的寻味菜单价目表原样选取；口语与指令须一致（禁止嘴上说 A 店、指令点 B 店）；口语里**禁止编造具体金额**，卡片会显示真实总价。',
 ].join('\n')
 
 const PROACTIVE_INTIMATE_DAILY_LIFE_SHARE_BIAS = [
@@ -230,6 +231,16 @@ function shouldPreferIntimateDailyLifeShare(ctx: ProactivePrivateMessageReplyBia
 }
 
 /** 根据最近聊天记录追加「勿复读 / 亲密报备 / 可轻追问 / 待回复用户」偏向 */
+export function buildProactiveCatchUpReplyBias(slotIndex: number, totalSlots: number): string {
+  if (totalSlots <= 1 || slotIndex < 1 || slotIndex > totalSlots) return ''
+  return [
+    `【主动消息·离线补发 ${slotIndex}/${totalSlots}】`,
+    `用户离线期间错过了多轮主动消息；本条对应时间线上第 ${slotIndex} 个到期时点（共 ${totalSlots} 轮）。`,
+    '须与前面已补发轮次**内容不同**，勿复读、勿同义换皮；按各自时点自然推进或报备日常。',
+    '勿在本条里解释「我刚连发好几条」——每条都是独立时点发出的微信消息。',
+  ].join('\n')
+}
+
 export function buildProactivePrivateMessageReplyBias(
   messages: WeChatChatMessage[],
   ctx: ProactivePrivateMessageReplyBiasContext = {},

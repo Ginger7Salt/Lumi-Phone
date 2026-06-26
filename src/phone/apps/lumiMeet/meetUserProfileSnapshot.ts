@@ -6,9 +6,10 @@ import { formatMeetMasqueradeIntentions } from './meetMaskTruthPrompt'
 import { MEET_DEFAULT_PUBLIC_DISPLAY_NAME } from './meetPublicProfileDisplay'
 import type { EncounterNPC, MeetPublicProfile, MeetUserProfileSnapshot } from './meetTypes'
 import { consolidateMeetCharacterWorldBooks } from './meetWorldbookConsolidate'
+import { getMeetSyncWorldBookTitle } from './nineDimensionAccordion'
 import { rewriteMeetWorldbookNamesToPlaceholders } from './meetWorldbookPlaceholders'
 
-const VOL11_TITLE = '11 MEET MASK | 遇见对外档案快照'
+const VOL11_TITLE = getMeetSyncWorldBookTitle('vol11', '11 MEET MASK | 遇见对外档案快照')
 
 /** 从当前遇见档案截取「匹配成功时对方在 App 里看到的假面」 */
 export function captureMeetUserProfileSnapshot(profile: MeetPublicProfile): MeetUserProfileSnapshot {

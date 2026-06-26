@@ -63,7 +63,15 @@ export function buildGeminiImageModelCatalog(): MomentsImageModelOption[] {
 }
 
 export function isGeminiImagenModel(modelName: string): boolean {
-  return modelName.startsWith('imagen-')
+  return modelName.replace(/^\[[^\]]+\]/, '').trim().startsWith('imagen-')
+}
+
+/** Gemini 原生多模态生图（generateContent），含中转站前缀如 [官]gemini-2.5-flash-image */
+export function isGeminiNativeImageModel(modelName: string): boolean {
+  const id = modelName.trim()
+  if (!id || isGeminiImagenModel(id)) return false
+  const core = id.replace(/^\[[^\]]+\]/, '').trim()
+  return /^gemini-/i.test(core) && /image/i.test(id)
 }
 
 export async function fetchGeminiImageModelCatalog(apiKey: string): Promise<MomentsImageModelOption[]> {

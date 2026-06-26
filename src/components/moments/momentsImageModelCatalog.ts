@@ -3,6 +3,7 @@ import { DEFAULT_NOVELAI_IMAGE_MODEL_ID } from './novelaiImageCatalog'
 import { DEFAULT_OPENAI_IMAGE_MODEL_ID } from './openaiImageCatalog'
 import { DEFAULT_QIANFAN_IMAGE_MODEL_ID } from './qianfanImageCatalog'
 import { DEFAULT_SILICONFLOW_IMAGE_MODEL_ID } from './siliconflowImageCatalog'
+import { DEFAULT_CUSTOM_IMAGE_MODEL_ID } from './customImageCatalog'
 import { DEFAULT_VOLCENGINE_IMAGE_MODEL_ID } from './volcengineImageCatalog'
 
 export type MomentsImageProvider =
@@ -12,6 +13,7 @@ export type MomentsImageProvider =
   | 'novelai'
   | 'gemini'
   | 'openai'
+  | 'custom'
 
 export type MomentsImageModelCacheByProvider = Record<MomentsImageProvider, MomentsImageModelOption[]>
 
@@ -24,6 +26,7 @@ export const EMPTY_MODEL_CACHE_BY_PROVIDER: MomentsImageModelCacheByProvider = {
   novelai: [],
   gemini: [],
   openai: [],
+  custom: [],
 }
 
 export const EMPTY_MODELS_FETCHED_AT_BY_PROVIDER: MomentsImageModelsFetchedAtByProvider = {
@@ -33,6 +36,7 @@ export const EMPTY_MODELS_FETCHED_AT_BY_PROVIDER: MomentsImageModelsFetchedAtByP
   novelai: null,
   gemini: null,
   openai: null,
+  custom: null,
 }
 
 export function getCachedModelsForProvider(
@@ -83,6 +87,7 @@ const PROVIDER_PREFIXES: MomentsImageProvider[] = [
   'novelai',
   'gemini',
   'openai',
+  'custom',
 ]
 
 export function getDefaultModelIdForProvider(provider: MomentsImageProvider): string {
@@ -91,6 +96,7 @@ export function getDefaultModelIdForProvider(provider: MomentsImageProvider): st
   if (provider === 'novelai') return DEFAULT_NOVELAI_IMAGE_MODEL_ID
   if (provider === 'gemini') return DEFAULT_GEMINI_IMAGE_MODEL_ID
   if (provider === 'openai') return DEFAULT_OPENAI_IMAGE_MODEL_ID
+  if (provider === 'custom') return DEFAULT_CUSTOM_IMAGE_MODEL_ID
   return DEFAULT_SILICONFLOW_IMAGE_MODEL_ID
 }
 
@@ -139,6 +145,8 @@ export type FetchMomentsImageModelCatalogOptions = {
   novelaiApiKey?: string
   geminiApiKey?: string
   openaiApiKey?: string
+  customApiUrl?: string
+  customApiKey?: string
 }
 
 export async function fetchMomentsImageModelCatalog(
@@ -163,6 +171,10 @@ export async function fetchMomentsImageModelCatalog(
   if (options.provider === 'openai') {
     const { fetchOpenaiImageModelCatalog } = await import('./openaiImageCatalog')
     return fetchOpenaiImageModelCatalog(options.openaiApiKey ?? '')
+  }
+  if (options.provider === 'custom') {
+    const { fetchCustomImageModelCatalog } = await import('./customImageCatalog')
+    return fetchCustomImageModelCatalog(options.customApiUrl ?? '', options.customApiKey ?? '')
   }
   const { fetchSiliconFlowImageModelCatalog } = await import('./siliconflowImageCatalog')
   return fetchSiliconFlowImageModelCatalog(options.siliconflowApiKey ?? '')

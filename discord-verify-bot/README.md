@@ -58,51 +58,54 @@ npm start
 
 ---
 
-## 三、Render 免费云托管（推荐）
+## 三、云托管（选一种）
 
-Render 免费 **Background Worker** 可 24 小时跑 Discord 机器人（无公网 URL 也行）。
+### 方案 A：Render（付费，最省心）— 你现在看到的 $7/月
 
-### 3.1 推送代码到 GitHub
+**2024 年后 Render 的 Background Worker 对新账号已无免费档**，最低约 **$7/月（Starter）**。界面里只有付费实例是正常的。
 
-把 `discord-verify-bot` 文件夹放进你的 Git 仓库并 push。  
-也可以单独建一个仓库只放这个目录。
+若接受 $7/月：
 
-### 3.2 创建 Render 服务
+1. [render.com](https://render.com) → **New +** → **Background Worker**
+2. 连仓库 **Lumi-Phone**，**Root Directory** 填 `discord-verify-bot`
+3. Build：`npm install`，Start：`npm start`，Plan 选 **Starter $7**
+4. 填环境变量（见下文「环境变量」）
+5. Deploy 后看 Logs 有 `验证机器人已上线`
 
-1. 登录 [render.com](https://render.com)（可用 GitHub 注册）
-2. **New +** → **Background Worker**
-3. 连接你的 GitHub 仓库
-4. 配置：
+---
 
-| 项 | 值 |
-|----|-----|
-| Name | `lumi-discord-verify` |
-| Root Directory | `discord-verify-bot`（若仓库根目录就是本 bot 则留空） |
-| Runtime | Node |
-| Build Command | `npm install` |
-| Start Command | `npm start` |
-| Plan | **Free** |
+### 方案 B：免费 Discord 机器人面板（$0，推荐预算为 0 时用）
 
-5. **Environment** 添加变量：
+专用免费 bot 主机（如 [Monkey Network](https://monkey-network.xyz/)、[Kerit Cloud](https://kerit.cloud/) 等）通常提供：
 
-| Key | Value |
-|-----|-------|
-| `DISCORD_TOKEN` | 机器人 Token |
-| `DISCORD_CLIENT_ID` | Application ID |
-| `GUILD_ID` | 服务器 ID |
-| `VERIFIED_ROLE_ID` | Lumi 身份组 ID |
-| `COOLDOWN_MINUTES` | `10`（可选） |
+- 不用信用卡
+- 24/7 跑 bot（各平台规则以官网为准）
+- **SFTP 上传代码** 或面板上传
 
-6. 点击 **Create Background Worker**，等待 Deploy 成功
-7. 日志里应出现：`验证机器人已上线：xxx`
+**通用上传步骤：**
 
-若仓库根目录包含 `render.yaml`，也可用 **Blueprint** 一键部署。
+1. 注册免费 bot 主机，新建 **Node.js** 机器人
+2. 用 SFTP 或文件管理器上传 `discord-verify-bot` 里这些内容（**不要上传 `.env`**）：
+   - `package.json`
+   - `package-lock.json`
+   - `questions.json`
+   - `src/` 整个文件夹
+3. 在面板 **环境变量** 里添加：
+   - `DISCORD_TOKEN`
+   - `DISCORD_CLIENT_ID`
+   - `GUILD_ID`
+   - `VERIFIED_ROLE_ID`
+   - `COOLDOWN_MINUTES=10`
+4. 启动命令填：`npm start`（或先在控制台执行 `npm install` 再 `npm start`）
+5. 看控制台日志出现 `验证机器人已上线`
 
-### 3.3 Render 免费版说明
+> 免费第三方主机请自行判断可信度；不要在这些平台填写已泄露过的旧 Token，先在 Discord 后台 **Reset Token**。
 
-- 免费 Worker 在长时间无活动后可能被休眠，但 Discord 机器人保持 WebSocket 连接通常会一直在线
-- 若实例重启，冷却计时器会清空（不影响已验证用户）
-- 完全 $0，无答题人数上限
+---
+
+### 方案 C：本机常开（国内不推荐）
+
+国内直连 Discord 会 `ConnectTimeout`，需稳定代理；电脑关机 bot 就下线。
 
 ---
 

@@ -15,6 +15,10 @@ import {
   clampProactiveCharacterMomentPickCount,
   type ProactiveCharacterMomentsSettings,
 } from './proactiveCharacterMomentTypes'
+import {
+  computeProactiveMomentScheduledPublishAtMs,
+  resolveProactiveMomentHistoricalTimestampMs,
+} from './proactiveMomentScheduling'
 import { loadResolvedMomentsImageGenSettings } from './resolveMomentsImageGenSettings'
 import {
   loadMomentsSettings,
@@ -153,6 +157,7 @@ async function publishProactiveMomentForCharacter(params: {
   characterId: string
   playerIdentityId: string
   playerDisplayName: string
+  publishedAt?: number
 }): Promise<boolean> {
   const apiConfig = await loadResolvedApiConfig('chatCard')
   if (!isMomentsChatApiConfigured(apiConfig)) return false
@@ -179,6 +184,7 @@ async function publishProactiveMomentForCharacter(params: {
     triggeredByUserRequest: false,
     musicShareLanguageRatio: settings.proactiveCharacterMoments.musicShareLanguageRatio,
     followUserMusicTaste: settings.proactiveCharacterMoments.followUserMusicTaste,
+    publishedAt: params.publishedAt,
   })
 
   await upsertUserMoment(params.accountId, result.item)
@@ -218,6 +224,9 @@ async function fireProactiveCharacterMoment(): Promise<void> {
       )
       if (!characterIds.length) return
 
+      const scheduledAt = computeProactiveMomentScheduledPublishAtMs(pm.global, now)
+      const publishedAt = resolveProactiveMomentHistoricalTimestampMs(scheduledAt, now)
+
       let anyOk = false
       for (const characterId of characterIds) {
         const ok = await publishProactiveMomentForCharacter({
@@ -225,6 +234,7 @@ async function fireProactiveCharacterMoment(): Promise<void> {
           characterId,
           playerIdentityId,
           playerDisplayName,
+          publishedAt,
         })
         if (ok) anyOk = true
       }
@@ -241,11 +251,16 @@ async function fireProactiveCharacterMoment(): Promise<void> {
       )
       if (!characterId) return
 
+      const schedule = resolveCharacterProactiveMomentSchedule(pm, account.accountId, characterId)
+      const scheduledAt = computeProactiveMomentScheduledPublishAtMs(schedule, now)
+      const publishedAt = resolveProactiveMomentHistoricalTimestampMs(scheduledAt, now)
+
       const ok = await publishProactiveMomentForCharacter({
         accountId: account.accountId,
         characterId,
         playerIdentityId,
         playerDisplayName,
+        publishedAt,
       })
       if (!ok) return
 

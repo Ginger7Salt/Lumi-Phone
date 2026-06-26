@@ -83,6 +83,13 @@ export async function formatWeChatMessageTextForMemorySummary(
     return '（转账）'
   }
 
+  if (m.locationShare) {
+    const ls = m.locationShare
+    const place = ls.address?.trim() ? `${ls.name} — ${ls.address}` : ls.name
+    const who = m.type === 'player' ? '用户' : '对方'
+    return `（${who}坐标覆写：${place}；TARGET DISTANCE: ${ls.distance}）`
+  }
+
   const text = String(m.content || '').trim()
   return text || null
 }

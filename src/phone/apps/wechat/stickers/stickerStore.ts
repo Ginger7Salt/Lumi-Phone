@@ -26,7 +26,14 @@ const STICKER_DB_KEY = 'wechat-sticker-center-v2'
 const STICKER_CHANGED_EVENT = 'wechat-sticker-storage-changed'
 const DEFAULT_GROUP_ID_1 = 'default-sticker-pack-1'
 const DEFAULT_GROUP_ID_2 = 'default-sticker-pack-2'
-const READONLY_GROUP_IDS = new Set([DEFAULT_GROUP_ID_1, DEFAULT_GROUP_ID_2])
+const DEFAULT_GROUP_ID_3 = 'default-sticker-pack-3'
+const DEFAULT_GROUP_ID_4 = 'default-sticker-pack-4'
+const READONLY_GROUP_IDS = new Set([
+  DEFAULT_GROUP_ID_1,
+  DEFAULT_GROUP_ID_2,
+  DEFAULT_GROUP_ID_3,
+  DEFAULT_GROUP_ID_4,
+])
 
 const defaultPack1Modules = import.meta.glob('../../../../../image/默认表情包1/*.{png,jpg,jpeg,webp,gif}', {
   eager: true,
@@ -34,6 +41,16 @@ const defaultPack1Modules = import.meta.glob('../../../../../image/默认表情�
 }) as Record<string, string>
 
 const defaultPack2Modules = import.meta.glob('../../../../../image/默认表情包2/*.{png,jpg,jpeg,webp,gif}', {
+  eager: true,
+  import: 'default',
+}) as Record<string, string>
+
+const defaultPack3Modules = import.meta.glob('../../../../../image/蒜皮宝宝表情包/*.{png,jpg,jpeg,webp,gif}', {
+  eager: true,
+  import: 'default',
+}) as Record<string, string>
+
+const defaultPack4Modules = import.meta.glob('../../../../../image/月薪喵表情包/*.{png,jpg,jpeg,webp,gif}', {
   eager: true,
   import: 'default',
 }) as Record<string, string>
@@ -57,7 +74,7 @@ function buildDefaultItems(modules: Record<string, string>, idPrefix: string): S
 const DEFAULT_GROUPS: StickerGroup[] = [
   {
     id: DEFAULT_GROUP_ID_1,
-    name: '默认表情包 1',
+    name: '这狗',
     coverUrl: buildDefaultItems(defaultPack1Modules, 'df1')[0]?.url ?? '',
     items: buildDefaultItems(defaultPack1Modules, 'df1'),
     createdAt: 0,
@@ -65,9 +82,25 @@ const DEFAULT_GROUPS: StickerGroup[] = [
   },
   {
     id: DEFAULT_GROUP_ID_2,
-    name: '默认表情包 2',
+    name: '杂混抽象',
     coverUrl: buildDefaultItems(defaultPack2Modules, 'df2')[0]?.url ?? '',
     items: buildDefaultItems(defaultPack2Modules, 'df2'),
+    createdAt: 0,
+    readonly: true,
+  },
+  {
+    id: DEFAULT_GROUP_ID_3,
+    name: '蒜皮宝宝',
+    coverUrl: buildDefaultItems(defaultPack3Modules, 'df3')[0]?.url ?? '',
+    items: buildDefaultItems(defaultPack3Modules, 'df3'),
+    createdAt: 0,
+    readonly: true,
+  },
+  {
+    id: DEFAULT_GROUP_ID_4,
+    name: '月薪喵',
+    coverUrl: buildDefaultItems(defaultPack4Modules, 'df4')[0]?.url ?? '',
+    items: buildDefaultItems(defaultPack4Modules, 'df4'),
     createdAt: 0,
     readonly: true,
   },
@@ -203,6 +236,11 @@ export function resolveKnownStickerUrl(rawUrl: string): string | null {
   return null
 }
 
+import {
+  WECHAT_STICKER_DESCRIPTION_SEMANTICS_RULE,
+  WECHAT_STICKER_SEND_CONSERVATIVE_RULE,
+} from './stickerPromptRules'
+
 export type StickerCatalogEntry = {
   url: string
   /** 展示给模型的一行「引用名」，须原样用于 `[表情包]引用名` */
@@ -319,6 +357,33 @@ function normalizeStickerLabel(s: string): string {
     .trim()
 }
 
+export function resolveStickerCatalogRefForUrl(url: string): string | null {
+  const u = String(url ?? '').trim()
+  if (!u) return null
+  for (const e of getStickerCatalogEntries()) {
+    if (e.url === u) return e.ref
+  }
+  return null
+}
+
+export function extractStickerRefFromContent(content: string): string | null {
+  const t = String(content ?? '').trim()
+  if (!t.startsWith('[表情包]')) return null
+  const payload = t.slice('[表情包]'.length).trim()
+  if (!payload) return null
+  const hit = resolveStickerCatalogMatch(payload)
+  return hit?.ref ?? payload
+}
+
+export function resolveStickerCatalogMatch(rawInput: string): { url: string; ref: string } | null {
+  const url = resolveStickerOutputRef(rawInput)
+  if (!url) return null
+  const catalogRef = resolveStickerCatalogRefForUrl(url)
+  const ref = catalogRef || normalizeStickerLabel(rawInput) || String(rawInput ?? '').trim()
+  if (!ref) return null
+  return { url, ref }
+}
+
 export function resolveStickerOutputRef(rawInput: string): string | null {
   let ref = String(rawInput ?? '').trim().replace(/^['"`「」]+|['"`」]+$/g, '').trim()
   ref = ref.normalize('NFKC')
@@ -382,7 +447,7 @@ export function resolveStickerOutputRef(rawInput: string): string | null {
 }
 
 /** 角色侧：单行 `[表情包]引用名` 或兼容旧版 `[表情包]URL/路径`（须能解析到表情包资源库） */
-export function parseCharacterStickerLine(line: string): { url: string } | null {
+export function parseCharacterStickerLine(line: string): { url: string; ref: string } | null {
   const t = String(line ?? '')
     .trim()
     .replace(/^\uFEFF+/, '')
@@ -392,9 +457,7 @@ export function parseCharacterStickerLine(line: string): { url: string } | null 
   if (!m) return null
   const raw = m[1]!.trim().replace(/^['"`「」]+|['"`」]+$/g, '').trim()
   if (!raw) return null
-  const url = resolveStickerOutputRef(raw)
-  if (!url) return null
-  return { url }
+  return resolveStickerCatalogMatch(raw)
 }
 
 /**
@@ -416,7 +479,7 @@ export function buildStickerCatalogPromptBlock(maxLines = 96, maxChars = 9500): 
       : ''
   if (body.length > maxChars) body = `${body.slice(0, maxChars)}${truncated || '\n…（目录过长已截断，请只用上方已列出的引用名）'}`
   else if (truncated) body = `${body}${truncated}`
-  return `---------------------\n【表情包资源（含默认包与用户自建分组；日常回复可主动选用，不限于用户刚发表情时才能用）】\n---------------------\n${body}\n`
+  return `---------------------\n【表情包资源（含默认包与用户自建分组；选用须贴脸，默认不发）】\n---------------------\n${WECHAT_STICKER_SEND_CONSERVATIVE_RULE}\n\n${WECHAT_STICKER_DESCRIPTION_SEMANTICS_RULE}\n\n${body}\n`
 }
 
 function writeState(next: StickerState) {

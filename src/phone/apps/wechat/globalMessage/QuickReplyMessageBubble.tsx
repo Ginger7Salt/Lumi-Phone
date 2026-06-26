@@ -65,15 +65,11 @@ function QuickReplyVoiceBubble({
 
 function QuickReplyStickerImage({ src, isSelf }: { src: string; isSelf: boolean }) {
   return (
-    <div
-      className={`inline-block overflow-hidden rounded-2xl border ${
-        isSelf ? 'border-neutral-900' : 'border-neutral-200'
-      } bg-white`}
-    >
+    <div className={`inline-block overflow-hidden ${isSelf ? '' : 'rounded-2xl border border-neutral-200 bg-white'}`}>
       <img
         src={src}
         alt=""
-        className="block h-auto max-h-[120px] w-[96px] object-cover"
+        className={`block h-auto max-h-[120px] w-[96px] object-cover ${isSelf ? '' : 'rounded-2xl'}`}
         draggable={false}
       />
     </div>

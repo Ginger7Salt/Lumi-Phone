@@ -106,5 +106,47 @@ export function buildCharacterImageGenPromptBlock(styleHint?: string): string {
 - 若当前不适合发图，请**只输出文字行**，不要输出 \`[图片]\` 行。
 
 ■ 与表情包区分
-- \`[表情包]引用名\` 仅用于**表情包库**资源；**实拍/场景/物品**类请用 \`[图片]描述\`，不要用表情包行冒充。`
+- \`[表情包]引用名\` 仅用于**表情包库**资源；**实拍/场景/物品**类请用 \`[图片]描述\`，不要用表情包行冒充。
+
+■ 禁止假发图（硬性）
+- 凡口头写「发过去了」「拍好了」「传给你了」「给你发了」等，**同一轮回复中必须**有对应 \`[图片]\` 行；否则客户端**不会**出图。
+- **没有** \`[图片]\` 行时，禁止写已发送/已拍好类措辞；应继续文字说明，或直接输出 \`[图片]\` 行。`
+}
+
+const CHARACTER_FAKE_SENT_IMAGE_RE =
+  /(?:发过去了|发给你了|发给你啦|拍好了|传过去了|图发你了|照片发你了|给你发了|已发送|发你(?:了|啦)?)/u
+
+/** 模型口头声称已发图，但输出中无 `[图片]` 行 */
+export function characterOutputClaimsSentImageWithoutLine(bubbles: string[]): boolean {
+  if (bubbles.some((b) => parseCharacterImageGenLine(String(b).trim()))) return false
+  return bubbles.some((b) => {
+    const t = String(b ?? '').trim()
+    if (!t || /^\[表情包\]/.test(t)) return false
+    return CHARACTER_FAKE_SENT_IMAGE_RE.test(t)
+  })
+}
+
+export function buildCharacterImageFakeSendRetryBias(): string {
+  return `[系统纠错] 你上一轮口头写了「发过去了/拍好了」等，但**缺少** \`[图片]画面描述\` 行，客户端**不会**生图。
+请立刻补发：单独占一行 \`[图片]…\`（与上一轮口头承诺一致的画面，如前置自拍），可保留原有文字气泡；**禁止**再次假装已发而无 \`[图片]\` 行。`
+}
+
+export function mergeCharacterImageRetryBubbles(original: string[], retry: string[]): string[] {
+  const imageLines: string[] = []
+  for (const b of retry) {
+    for (const line of String(b ?? '').split('\n')) {
+      const trimmed = line.trim()
+      if (parseCharacterImageGenLine(trimmed)) imageLines.push(trimmed)
+    }
+  }
+  if (!imageLines.length) return original
+
+  const fakeIdx = original.findIndex((b) => {
+    const t = String(b ?? '').trim()
+    return t && !/^\[表情包\]/.test(t) && CHARACTER_FAKE_SENT_IMAGE_RE.test(t)
+  })
+  if (fakeIdx >= 0) {
+    return [...original.slice(0, fakeIdx), ...imageLines, ...original.slice(fakeIdx)]
+  }
+  return [...imageLines, ...original]
 }

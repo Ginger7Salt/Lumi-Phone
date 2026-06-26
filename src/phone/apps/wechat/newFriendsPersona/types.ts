@@ -691,6 +691,63 @@ export type WeChatMusicSyncPayload =
   | WeChatMusicSyncAcceptPayload
   | WeChatMusicSyncDeclinePayload
 
+export type WeChatLocationCoordSpace = 'world' | 'wgs84'
+
+export type WeChatLocationCharacterAnchor = 'psyche' | 'world_pin' | 'manual' | 'unknown'
+
+export type WeChatLocationDistanceMode = 'auto' | 'manual'
+
+/** 微信位置分享 · 坐标覆写卡片（持久化于 chatMessages.locationShare） */
+export type WeChatLocationPayload = {
+  locationId: string
+  /** 地点主标题 TARGET */
+  name: string
+  /** 详细地址 DETAILS */
+  address?: string
+  /** 相对距离展示，如 "0.1 KM" / "8,500 KM" / "Unknown" */
+  distance: string
+  /** 距离数值（米），供 AI / 滑条回显 */
+  distanceMeters?: number
+  /** 灰度地图生成种子 */
+  mapImageSeed?: string
+  /** 静态灰度地图 data URL */
+  snapshotUrl?: string
+}
+
+/** 微信外卖订单卡片（角色为用户点餐；备注不在卡片展示） */
+export type WeChatTakeoutOrderPayload = {
+  orderId: string
+  storeId: string
+  storeName: string
+  storeLogoUrl: string
+  items: Array<{ name: string; quantity: number }>
+  itemCount: number
+  total: number
+  characterId: string
+  characterName: string
+  placedAt: number
+}
+
+/** @deprecated 旧版字段，加载时由 idb 迁移；新消息勿写 */
+export type WeChatLocationPayloadLegacy = WeChatLocationPayload & {
+  label?: string
+  subtitle?: string
+  distanceText?: string
+  coordSpace?: WeChatLocationCoordSpace
+  worldX?: number
+  worldY?: number
+  worldBackgroundId?: string
+  lat?: number
+  lng?: number
+  zoom?: number
+  distanceMode?: WeChatLocationDistanceMode
+  manualDistanceMeters?: number
+  characterAnchor?: WeChatLocationCharacterAnchor
+  characterAnchorLabel?: string
+  characterPinXPct?: number
+  characterPinYPct?: number
+}
+
 /** 听一听评论分享卡片（持久化于 chatMessages.listenCommentShare） */
 export type WeChatListenCommentSharePayload = {
   kind: 'listen_comment_share'
@@ -797,6 +854,7 @@ export type WeChatForwardedMessageItem = {
   voice?: WeChatVoicePayload
   redPacket?: WeChatRedPacketPayload
   transfer?: WeChatTransferPayload
+  locationShare?: WeChatLocationPayload
 }
 
 export type WeChatChatHistoryParticipantRef = {
@@ -845,6 +903,12 @@ export type WeChatChatMessage = {
   listenTrackShare?: WeChatListenTrackSharePayload
   /** 收藏记忆切片转发卡 */
   sharedRecord?: WeChatSharedRecordPayload
+  /** 位置分享卡片 */
+  locationShare?: WeChatLocationPayload
+  /** 角色为用户点的外卖卡片 */
+  takeoutOrder?: WeChatTakeoutOrderPayload
+  /** 表情包引用名（与 `[表情包]引用名` 一致，供 AI 历史与防重复） */
+  stickerRef?: string
   /** 合并转发聊天记录卡片 */
   chatHistory?: WeChatChatHistoryPayload
   /** 图片消息：纯图片时 content 允许为空串 */

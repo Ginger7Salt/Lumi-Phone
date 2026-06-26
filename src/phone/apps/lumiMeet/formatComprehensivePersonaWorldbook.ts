@@ -62,6 +62,7 @@ export function formatComprehensivePersonaMarkdown(
     f('SENSORY', '感官', p.fetish.sensory),
     f('DYNAMIC', '关系动态', p.fetish.dynamic),
     f('JEALOUSY', '吃醋与占有欲', p.fetish.jealousy),
+    f('INTIMATE SPEECH', '亲密口语习惯', p.fetish.intimateSpeech),
     h('06', 'SOCIAL · 人际法则'),
     f('FAMILY', '家庭', p.relations.family),
     f('FRIENDS', '友人', p.relations.friends),
