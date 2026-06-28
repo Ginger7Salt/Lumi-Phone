@@ -19,6 +19,33 @@ const UNSUMMARIZED_BLOCK_CHAR_HARD_MAX = 500_000
 
 /** 与自动总结 gather / 模型输入共用：单次最多纳入的游标后消息条数 */
 export const MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT = 500
+
+/** 游标已覆盖的私聊消息原文（供语义召回索引；非长期记忆 prose 摘要） */
+export async function listSummarizedPrivateChatContextLines(
+  conversationKey: string,
+  opts?: { maxMessages?: number },
+): Promise<Array<{ line: string; timestamp: number; messageId: string }>> {
+  const ck = conversationKey.trim()
+  if (!ck) return []
+  const cursor = await personaDb.getMemorySummaryCursorTimestamp(ck)
+  if (cursor == null || !Number.isFinite(cursor)) return []
+  const lim = Math.max(1, Math.min(200, Math.floor(opts?.maxMessages ?? 200)))
+  const rows = await personaDb.listWeChatChatMessagesBeforeTimestampAsc({
+    conversationKey: ck,
+    beforeTimestampExclusive: cursor + 1,
+    limit: lim,
+  })
+  const out: Array<{ line: string; timestamp: number; messageId: string }> = []
+  for (const m of rows) {
+    if (isMeetImportedWeChatMessageId(m.id)) continue
+    const formatted = formatPrivateLineUnsummarized(m, { includeTimestamp: true })
+    if (!formatted) continue
+    const line = `- [私聊·原文] ${formatted}`
+    if (line.length < 12) continue
+    out.push({ line, timestamp: m.timestamp, messageId: m.id })
+  }
+  return out
+}
 /** 与自动总结模型输入、私聊 prompt「尚未总结」块共用（超出时优先保留更早未总结段，下次总结继续） */
 export const MEMORY_UNSUMMARIZED_BLOCK_CHAR_CAP = 12_000
 

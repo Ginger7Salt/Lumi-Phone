@@ -5,6 +5,8 @@ export type StoryTimelinePerRoundSyncResultDetail = {
   ok: boolean
   displayName: string
   failureReason?: string
+  /** ok 为 true 时在 toast 展示的成功说明 */
+  successMessage?: string
 }
 
 export function dispatchStoryTimelinePerRoundSyncResult(
@@ -19,6 +21,7 @@ export function dispatchStoryTimelinePerRoundSyncResult(
           ok: detail.ok === true,
           displayName: detail.displayName?.trim() || '角色',
           failureReason: detail.failureReason?.trim() || undefined,
+          successMessage: detail.successMessage?.trim() || undefined,
         },
       },
     ),

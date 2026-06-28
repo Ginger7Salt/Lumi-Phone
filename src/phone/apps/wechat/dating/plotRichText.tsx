@@ -24,6 +24,11 @@ function normalizeRichTextSource(s: string): string {
     .replace(/\uFF0A/g, '*')
 }
 
+/** 平行事件等 plain 模式：旧稿「」统一成半角双引号，且不再套对白底纹 */
+function normalizePlainDialogueSource(s: string): string {
+  return normalizeRichTextSource(s).replace(/「([^」\n]*)」/g, '"$1"')
+}
+
 type Match = { end: number; node: ReactNode }
 
 /**
@@ -32,8 +37,17 @@ type Match = { end: number; node: ReactNode }
  * 优先级：** → * → 「」 → “” / ‟ → 半角 ""
  * 半角直引号对白在展示层映射为弯引号并套用 dialogueCls；顶层将全角＊规范为半角 * 以便 **内心** 命中。
  */
-export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
-  const t = depth === 0 ? normalizeRichTextSource(s) : s
+export function parsePlotRichText(
+  s: string,
+  depth = 0,
+  opts?: { plainDialogue?: boolean },
+): ReactNode[] {
+  const t =
+    depth === 0
+      ? opts?.plainDialogue
+        ? normalizePlainDialogueSource(s)
+        : normalizeRichTextSource(s)
+      : s
   if (!t) return []
   if (depth > 24) return [<Fragment key="deep">{t}</Fragment>]
 
@@ -52,6 +66,15 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
     out.push(<Fragment key={nextKey()}>{chunk}</Fragment>)
   }
 
+  const wrapDialogue = (k: string, children: ReactNode) =>
+    opts?.plainDialogue ? (
+      <Fragment key={k}>{children}</Fragment>
+    ) : (
+      <span key={k} className={dialogueCls}>
+        {children}
+      </span>
+    )
+
   const tryOs = (): Match | null => {
     if (!t.slice(i).startsWith('**')) return null
     const end = t.indexOf('**', i + 2)
@@ -62,7 +85,7 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
       end: end + 2,
       node: (
         <span key={k} className={osCls}>
-          {parsePlotRichText(inner, depth + 1)}
+          {parsePlotRichText(inner, depth + 1, opts)}
         </span>
       ),
     }
@@ -81,7 +104,7 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
       end: end + 1,
       node: (
         <span key={k} className={osCls}>
-          {parsePlotRichText(inner, depth + 1)}
+          {parsePlotRichText(inner, depth + 1, opts)}
         </span>
       ),
     }
@@ -95,10 +118,19 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
     const k = nextKey()
     return {
       end: end + 1,
-      node: (
-        <span key={k} className={dialogueCls}>
-          「{parsePlotRichText(inner, depth + 1)}」
-        </span>
+      node: wrapDialogue(
+        k,
+        opts?.plainDialogue ? (
+          <>
+            {QL}
+            {parsePlotRichText(inner, depth + 1, opts)}
+            {QR}
+          </>
+        ) : (
+          <>
+            「{parsePlotRichText(inner, depth + 1, opts)}」
+          </>
+        ),
       ),
     }
   }
@@ -111,12 +143,13 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
     const k = nextKey()
     return {
       end: end + 1,
-      node: (
-        <span key={k} className={dialogueCls}>
+      node: wrapDialogue(
+        k,
+        <>
           {QL}
-          {parsePlotRichText(inner, depth + 1)}
+          {parsePlotRichText(inner, depth + 1, opts)}
           {QR}
-        </span>
+        </>,
       ),
     }
   }
@@ -129,18 +162,21 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
     const k = nextKey()
     return {
       end: end + 1,
-      node: (
-        <span key={k} className={dialogueCls}>
+      node: wrapDialogue(
+        k,
+        <>
           {QL}
-          {parsePlotRichText(inner, depth + 1)}
+          {parsePlotRichText(inner, depth + 1, opts)}
           {QR}
-        </span>
+        </>,
       ),
     }
   }
 
   while (i < t.length) {
-    const m = tryOs() ?? trySingleOs() ?? tryCorner() ?? tryCurve() ?? tryAscii()
+    const m = opts?.plainDialogue
+      ? tryOs() ?? trySingleOs()
+      : tryOs() ?? trySingleOs() ?? tryCorner() ?? tryCurve() ?? tryAscii()
     if (m) {
       emitPlain(plainStart, i)
       out.push(m.node)
@@ -154,7 +190,18 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
   return out
 }
 
-export function PlotRichParagraph({ content, className }: { content: string; className?: string }) {
+export function PlotRichParagraph({
+  content,
+  className,
+  plainDialogue,
+}: {
+  content: string
+  className?: string
+  /** 为 true 时不解析对白标记、不套底纹框，引号按原文显示（平行/IF 面板） */
+  plainDialogue?: boolean
+}) {
   const merged = ['whitespace-pre-wrap break-words', className].filter(Boolean).join(' ')
-  return <span className={merged}>{parsePlotRichText(content)}</span>
+  return (
+    <span className={merged}>{parsePlotRichText(content, 0, { plainDialogue })}</span>
+  )
 }

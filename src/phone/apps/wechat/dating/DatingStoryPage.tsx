@@ -604,6 +604,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     setVnVoiceDisabled,
     setDirectorMode,
     setAutoUserReaction,
+    setGenerateParallelOnSend,
+    setGenerateIfLineOnSend,
     setDatingLengthTargetChars,
     sendPlayerInput,
     stageBranchChoice,
@@ -2821,6 +2823,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       lengthTargetChars: lengthTargetNum,
       autoUserReaction: godLocksNoInterrupt ? false : autoUserReaction,
       directorMode: !!currentArchive.directorMode,
+      generateParallelOnSend: !!currentArchive.generateParallelOnSend,
+      generateIfLineOnSend: !!currentArchive.generateIfLineOnSend,
       ...(styleTuning.stylePrompt.trim() ? { stylePrompt: styleTuning.stylePrompt.trim() } : {}),
       ...(styleTuning.referenceSnippet.trim() ? { referenceSnippet: styleTuning.referenceSnippet.trim() } : {}),
     }),
@@ -2829,6 +2833,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       autoUserReaction,
       godLocksNoInterrupt,
       currentArchive.directorMode,
+      currentArchive.generateParallelOnSend,
+      currentArchive.generateIfLineOnSend,
       styleTuning.stylePrompt,
       styleTuning.referenceSnippet,
     ],
@@ -3240,10 +3246,12 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               {currentArchive.plots.length ? (
                 <StoryFeed
                   plots={currentArchive.plots}
+                  timelineExpandCharacterId={currentCharacter.id}
                   tailVisibleCount={plotTailVisible}
                   onTailVisibleCountChange={persistPlotTail}
                   regeneratingPlotId={regeneratingPlotId}
                   interactionLocked={branchesLoading || Boolean(regeneratingPlotId)}
+                  narrativePerspective={perspective}
                   onUpdatePlot={(id, patch) => updatePlotItem(id, patch)}
                   onRegeneratePlot={openRetryBiasPanel}
                   onSetPlotVersionIndex={(id, idx) => setPlotVersionIndex(id, idx)}
@@ -3301,6 +3309,24 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                     onChange={(e) => setMainCharacterOffstage(e.target.checked)}
                   />
                   侧幕叙写
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[#262626]">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-stone-200 accent-violet-700"
+                    checked={!!currentArchive.generateParallelOnSend}
+                    onChange={(e) => setGenerateParallelOnSend(e.target.checked)}
+                  />
+                  平行事件
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[#262626]">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-stone-200 accent-violet-700"
+                    checked={!!currentArchive.generateIfLineOnSend}
+                    onChange={(e) => setGenerateIfLineOnSend(e.target.checked)}
+                  />
+                  IF线
                 </label>
                 <DirectorModeHelpButton onClick={() => setDirectorModeHelpOpen(true)} />
               </div>

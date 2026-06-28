@@ -75,6 +75,8 @@ function isUnusableMemoryIdDisplayName(displayName: string, placeholderId: strin
   if (prefix.length >= 6 && dn.toLowerCase() === prefix) return true
   if (/^[a-f0-9]{6,12}$/i.test(dn)) return true
   if (dn === placeholderId.trim()) return true
+  /** characterDisplayNameForIdMap 在无姓名时的 id 截断占位，不算有效展示名 */
+  if (dn.endsWith('…') && /^ch-/i.test(dn)) return true
   return false
 }
 
@@ -259,24 +261,63 @@ export async function resolveMissingIdPlaceholderDisplayNames(
     if (nid) pool.add(nid)
   }
   for (const id of collectMemoryIdPlaceholderIds(texts)) {
+    pool.add(id)
     const existing = String(out[id] ?? '').trim()
     if (existing && !isUnusableMemoryIdDisplayName(existing, id)) continue
 
     const resolvedId = await resolveCanonicalCharacterIdForMemoryPlaceholder(id, pool)
     const lookupId = resolvedId || id
-    try {
-      const ch = await personaDb.getCharacter(lookupId)
-      const dn = characterDisplayNameForIdMap(ch, lookupId)
-      out[id] = isUnusableMemoryIdDisplayName(dn, id) ? '其他角色' : dn
-      if (resolvedId && resolvedId !== id) {
-        out[resolvedId] = out[id]
-        pool.add(resolvedId)
-      }
-    } catch {
-      out[id] = isUnusableMemoryIdDisplayName(existing, id) ? '其他角色' : existing || '其他角色'
+    const ch = await personaDb.getCharacter(lookupId)
+    if (!ch) {
+      out[id] = '其他角色'
+      continue
+    }
+    const dn = characterDisplayNameForIdMap(ch, lookupId)
+    out[id] = isUnusableMemoryIdDisplayName(dn, id) ? '其他角色' : dn
+    if (resolvedId && resolvedId !== id) {
+      out[resolvedId] = out[id]
+      pool.add(resolvedId)
     }
   }
   return out
+}
+
+/** 剧情摘要 / 记忆展示：解析正文内全部 `{{id:…}}` → 显示名（含人脉表未收录的人设） */
+export async function buildMemoryIdPlaceholderDisplayNameMap(params: {
+  ownerCharacterId: string
+  texts: Iterable<string>
+  seed?: Readonly<Record<string, string>>
+}): Promise<Record<string, string>> {
+  const owner = params.ownerCharacterId.trim()
+  const textList = [...params.texts]
+  let map: Record<string, string> = { ...(params.seed ?? {}) }
+  if (owner) {
+    const ownerRow = await personaDb.getCharacter(owner)
+    const rootId = ownerRow?.generatedForCharacterId?.trim() || owner
+    map = await buildLinkedMemoryIdDisplayNameMap(rootId, map)
+    if (rootId !== owner) {
+      map = await buildLinkedMemoryIdDisplayNameMap(owner, map)
+    }
+    const ownerName = characterDisplayNameForIdMap(ownerRow, owner)
+    if (ownerName.trim()) map[owner] = ownerName.trim()
+  }
+  const placeholderIds = collectMemoryIdPlaceholderIds(textList)
+  map = await resolveMissingIdPlaceholderDisplayNames(map, textList, [
+    ...Object.keys(map),
+    owner,
+    ...placeholderIds,
+  ])
+  for (const id of placeholderIds) {
+    if (String(map[id] ?? '').trim() && !isUnusableMemoryIdDisplayName(String(map[id]), id)) continue
+    const ch = await personaDb.getCharacter(id)
+    if (ch) {
+      const dn = characterDisplayNameForIdMap(ch, ch.id).trim()
+      map[id] = dn && !isUnusableMemoryIdDisplayName(dn, id) ? dn : '其他角色'
+      continue
+    }
+    map[id] = '其他角色'
+  }
+  return map
 }
 
 export async function listAllLinkedMemoryEligibleCharacters(archiveOwnerId: string): Promise<{

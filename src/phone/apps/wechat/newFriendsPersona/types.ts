@@ -588,8 +588,8 @@ export type MemorySettingsRow = {
   /** 本地向量模型（Transformers.js）；缺省 Xenova/bge-small-zh-v1.5 */
   memoryLocalEmbeddingModelId?: string
   /**
-   * 是否对已入库长期记忆 / 剧情时间轴摘要建索引并语义召回；显式 `false` 关闭。
-   * 不含游标后未总结原文（由「尚未总结」块全文注入）。缺省开启（需语义召回总开关开启）。
+   * 是否对游标已覆盖的私聊 / 线下剧情原文建索引并语义召回；显式 `false` 关闭。
+   * 不含游标后未总结原文（由「尚未总结」块全文注入）；不含线下摘要表 rowText。
    */
   memoryContextVectorRecallEnabled?: boolean
   /**

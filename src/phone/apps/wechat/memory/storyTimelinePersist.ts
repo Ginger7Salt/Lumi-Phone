@@ -1,14 +1,21 @@
 import { personaDb } from '../newFriendsPersona/idb'
+import type { ApiConfigCore } from '../../api/types'
 import type { PlotItem } from '../dating/types'
 import { getAiPlotActiveTimelineDelta } from '../dating/plotTimelineDelta'
+import {
+  buildParallelEventTimelineRowsForPlot,
+  parallelEventMainPlotSummaryFootnote,
+} from './storyTimelineParallelFanOut'
 import { recallStoryTimelineRowsByVector } from './storyTimelineRowRecall'
+import { MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS } from './memorySummaryRetention'
 import {
   buildStoryTimelinePlotRowFromDelta,
   formatStoryTimelineDeltaForDisplay,
   formatStoryTimelineInjectBody,
+  formatStoryTimelineOpenAnchorsForSummaryPrompt,
   hasTimelineDeltaContent,
   mergeStoryTimelineState,
-  STORY_TIMELINE_INJECT_RECENT_ROWS,
+  selectStoryTimelineRecentInjectRows,
   type StoryTimelineEventScope,
   type StoryTimelinePromptLoadOpts,
   type StoryTimelineSummaryDelta,
@@ -62,32 +69,51 @@ export async function persistStoryTimelineFromSummaryDelta(
 export async function rebuildStoryTimelineFromDatingPlots(
   characterId: string,
   plots: PlotItem[],
-): Promise<void> {
+  opts?: { apiConfig?: ApiConfigCore | null },
+): Promise<{ parallelSummaryPlotIds: string[] }> {
   const cid = characterId.trim()
-  if (!cid) return
+  if (!cid) return { parallelSummaryPlotIds: [] }
 
   let merged: import('./storyTimelineTypes').StoryTimelineState | null = null
   const plotRows: NonNullable<ReturnType<typeof buildStoryTimelinePlotRowFromDelta>>[] = []
+  const parallelSummaryPlotIds: string[] = []
 
   for (const plot of plots) {
     if (plot.type !== 'ai') continue
-    const delta = getAiPlotActiveTimelineDelta(plot)
-    if (!delta || !hasTimelineDeltaContent(delta)) continue
-    merged = mergeStoryTimelineState(merged, cid, delta, 'offline')
-    const row = buildStoryTimelinePlotRowFromDelta(cid, delta, 'offline', {
-      plotId: plot.id,
-      recordedAtMs: plot.timestamp,
-    })
-    if (row) plotRows.push(row)
+    let delta = getAiPlotActiveTimelineDelta(plot)
+    if (plot.parallelEvent?.content?.trim() && delta && hasTimelineDeltaContent(delta)) {
+      const foot = parallelEventMainPlotSummaryFootnote()
+      const base = String(delta.event_summary ?? '').trim()
+      delta = {
+        ...delta,
+        event_summary: `${base ? `${base}\n` : ''}${foot}`.trim().slice(0, 400),
+      }
+    }
+    if (delta && hasTimelineDeltaContent(delta)) {
+      merged = mergeStoryTimelineState(merged, cid, delta, 'offline')
+      const row = buildStoryTimelinePlotRowFromDelta(cid, delta, 'offline', {
+        plotId: plot.id,
+        recordedAtMs: plot.timestamp,
+      })
+      if (row) plotRows.push(row)
+    }
+    if (plot.parallelEvent?.content?.trim()) {
+      const parallelRows = await buildParallelEventTimelineRowsForPlot(cid, plot, {
+        apiConfig: opts?.apiConfig ?? null,
+      })
+      if (parallelRows.length) parallelSummaryPlotIds.push(plot.id)
+      plotRows.push(...parallelRows)
+    }
   }
 
-  if (!merged && !plotRows.length) return
+  if (!merged && !plotRows.length) return { parallelSummaryPlotIds: [] }
 
   await personaDb.deleteStoryTimelinePlotRowsWithPlotIdForCharacter(cid)
   if (merged) await personaDb.putStoryTimelineState(merged)
   for (const row of plotRows) {
     await personaDb.upsertStoryTimelinePlotRow(row)
   }
+  return { parallelSummaryPlotIds }
 }
 
 /** 旧 state.recentEvents → 行表（一次性迁移） */
@@ -123,13 +149,17 @@ export async function loadStoryTimelinePromptBlock(
 
   await migrateStoryTimelineRecentEventsToRows(cid)
 
-  const [state, allRows, memSettings] = await Promise.all([
+  const [state, allRows, memSettings, datingPlotCursor] = await Promise.all([
     personaDb.getStoryTimelineState(cid),
     personaDb.listStoryTimelinePlotRowsByCharacterId(cid),
     personaDb.getMemorySettings(),
+    personaDb.getDatingPlotSummaryCursor(cid),
   ])
 
-  const recentRows = allRows.slice(-STORY_TIMELINE_INJECT_RECENT_ROWS)
+  const recentRows = selectStoryTimelineRecentInjectRows(allRows, {
+    datingPlotCursor,
+    skipUnsummarizedOfflineAiRounds: MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS,
+  })
   const excludeIds = new Set(recentRows.map((r) => r.id))
 
   let vectorRows: Awaited<ReturnType<typeof recallStoryTimelineRowsByVector>> = []
@@ -146,10 +176,25 @@ export async function loadStoryTimelinePromptBlock(
     })
   }
 
-  const body = formatStoryTimelineInjectBody({ state, recentRows, vectorRows })
+  const body = formatStoryTimelineInjectBody({
+    state,
+    recentRows,
+    vectorRows,
+    rowInjectOpts: { redactSidePerspectiveForMainChar: true },
+  })
   if (!body.trim()) return ''
 
   const expandedBody = await personaDb.expandStoryTimelineTextForDisplay(cid, body)
   if (!expandedBody.trim()) return ''
   return `\n\n---\n【剧情时间轴】\n${expandedBody}\n`
+}
+
+/** 摘要补救 / 自动总结：加载未收动机伏笔与待办清单 */
+export async function loadStoryTimelineOpenAnchorsBlockForSummary(
+  characterId: string,
+): Promise<string> {
+  const cid = characterId.trim()
+  if (!cid) return ''
+  const state = await personaDb.getStoryTimelineState(cid)
+  return formatStoryTimelineOpenAnchorsForSummaryPrompt(state)
 }

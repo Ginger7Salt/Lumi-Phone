@@ -2,7 +2,7 @@ import type { MemoryEmbeddingProviderKind } from './memoryEmbeddingProvider'
 
 export type MemoryContextVectorSourceKind = 'private_chat' | 'offline_plot' | 'meet_chat'
 
-/** IndexedDB `memoryContextVectors` 行：已总结记忆 / 剧情时间轴片段向量 */
+/** IndexedDB `memoryContextVectors` 行：游标前私聊 / 线下剧情原文片段向量 */
 export type MemoryContextVectorEntry = {
   id: string
   characterId: string

@@ -49,12 +49,17 @@ import {
   type DatingOnlineInjectScopeMeta,
 } from './datingOnlineInjectScope'
 import { formatSystemRecordTime, resolveOnlineMessageTimeBoundsForConversation } from '../wechatCrossChannelTimeline'
-import { loadStoryTimelinePromptBlock, rebuildStoryTimelineFromDatingPlots } from '../memory/storyTimelinePersist'
+import { loadStoryTimelinePromptBlock, loadStoryTimelineOpenAnchorsBlockForSummary, rebuildStoryTimelineFromDatingPlots } from '../memory/storyTimelinePersist'
 import { buildStoryTimelineCalendarContextBlock, resolveStoryTimeHintMsFromPlots } from '../memory/storyTimelineCalendarContext'
 import {
   buildDatingStoryTimelineFallbackMaterial,
 } from '../memory/storyTimelineSummaryFallback'
 import { resolveStoryTimelineDeltaWithSeparateAttempt } from '../memory/storyTimelinePerRoundSync'
+import { dispatchStoryTimelinePerRoundSyncResult } from '../memory/storyTimelinePerRoundResultEvents'
+import {
+  matchNpcIdsInParallelEventText,
+  resolveParallelEventSummaryDelta,
+} from '../memory/storyTimelineParallelFanOut'
 import { deleteStoryTimelineLinkedRowsForDatingRound } from '../memory/storyTimelineLinkedFanOut'
 import { hasTimelineDeltaContent } from '../memory/storyTimelineTypes'
 import { peekWillSummarizeOnNextAiRound } from '../memory/memoryAutoSummaryInterval'
@@ -67,7 +72,7 @@ import {
 import { isOpenAiEmptyAssistantParseError, openAiCompatibleChatLenient } from '../newFriendsPersona/ai'
 import { formatApiClientError } from '../addFriend/friendRequestApiError'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
-import type { ApiConfig } from '../../api/types'
+import type { ApiConfig, ApiConfigCore } from '../../api/types'
 import { useCustomization } from '../../../CustomizationContext'
 import type {
   BranchOption,
@@ -79,10 +84,13 @@ import type {
   NarrativeGenOptions,
   NarrativePerspective,
   PlotItem,
+  PlotDimensionKind,
+  PlotDimensionArtifact,
   WorldBookAfterRevertEntry,
 } from './types'
 import {
   clampDatingLengthTargetChars,
+  parsePlotDimensionLengthTarget,
   DATING_AI_HISTORY_PROMPT_MAX,
   DATING_AI_MAX_OUTPUT_TOKENS,
   DATING_AI_OFFLINE_UNSUMMARIZED_CHAR_CAP,
@@ -91,7 +99,7 @@ import {
 import { extractTimelineDeltaFromMemoryJsonText, extractTimelineSnapshotTextFromAiTextRaw } from './datingPlotTimelineSnapshot'
 import { formatOfflineUnsummarizedBlockFromPlotSnapshots } from './loadOfflineDatingPlotsForWechatPrompt'
 import { loadDatingNpcNetworkPromptBlock } from './datingNpcNetworkPrompt'
-import { splitDatingAssistantOutput } from './plotCoT'
+import { splitDatingAssistantOutput, resolveDatingPlotDisplayFromItem } from './plotCoT'
 import { extractVnVoiceParamsBlock } from './vnVoiceParamsStrip'
 import { PROSE_FORBIDDEN_LEXICON_PROMPT } from '../proseForbiddenLexiconPrompt'
 import { buildDatingStyleSystemPrompt } from './lumiThinkingChainRules'
@@ -99,6 +107,7 @@ import { getLoreArchiveBuiltinPresetTogglesSnapshot } from '../../../worldbook/w
 import { appendAiRegenerateVersion, initialAiPlotVersions, plotWithVersionIndex } from './plotVersions'
 import { buildDatingStyleSystemAppend } from './datingStylePrompt'
 import { generateDatingBranchesAi } from './datingBranchesAi'
+import { generateDatingPlotDimensionAi } from './datingPlotDimensionAi'
 import { buildVnBackgroundPromptBlock } from './vnBackgroundCatalog'
 import { buildVnAtmospherePromptBlock } from './vnAtmospherePromptBlock'
 import { buildVnBgmPromptBlock } from './vnBgmCatalog'
@@ -174,6 +183,26 @@ const DATING_AI_HISTORY_PER_PLOT_CAP = 12_000
 /** 分支续写上下文（尾部剧情摘录） */
 const DATING_AI_BRANCH_TAIL_MAX = 40_000
 
+async function notifyParallelSummaryTableWritten(
+  displayName: string,
+  protagonistId: string,
+  plot: PlotItem,
+): Promise<void> {
+  const parallel = plot.parallelEvent?.content?.trim()
+  if (!parallel || plot.type !== 'ai') return
+  const npcCount = (await matchNpcIdsInParallelEventText(parallel, protagonistId, [protagonistId])).length
+  const hero = displayName.trim() || '角色'
+  const successMessage =
+    npcCount > 0
+      ? `已为「${hero}」写入屏外平行摘要至剧情摘要表（含 ${npcCount} 条人脉在场行）。`
+      : `已为「${hero}」写入屏外平行摘要至剧情摘要表。`
+  dispatchStoryTimelinePerRoundSyncResult({
+    ok: true,
+    displayName: hero,
+    successMessage,
+  })
+}
+
 /** 约会合并记忆附录：存档主角 id + 可写入 linked 的人脉 NPC / 已绑定主角 */
 type DatingTurnModelExtras = {
   unifiedMemoryAppendix?: string
@@ -236,6 +265,7 @@ async function buildDatingTurnModelExtras(params: {
       sessionPlayerIdentityId: params.sessionPlayerIdentityId,
       storyTimeHintMs,
     })
+    const priorOpenAnchorsBlock = await loadStoryTimelineOpenAnchorsBlockForSummary(params.char.id)
     unifiedMemoryAppendix = buildDatingCombinedMemoryUserAppendix({
       onlineTranscript: gather.onlineTranscript,
       peerLabel: params.char.realName.trim() || '对方',
@@ -245,6 +275,7 @@ async function buildDatingTurnModelExtras(params: {
       eligibleLinkedNpcRoster: roster,
       summaryRoundDue,
       calendarContextBlock,
+      priorOpenAnchorsBlock,
     })
   } catch {
     unifiedMemoryAppendix = ''
@@ -336,6 +367,10 @@ type Ctx = {
   setDirectorMode: (v: boolean) => void
   /** 抢话：允许 AI 代写玩家当轮言行 */
   setAutoUserReaction: (v: boolean) => void
+  /** 发送时同轮生成平行事件 */
+  setGenerateParallelOnSend: (v: boolean) => void
+  /** 发送时同轮生成 IF 线 */
+  setGenerateIfLineOnSend: (v: boolean) => void
   /** 线下普通模式：每轮 AI 后是否拉取弹幕 */
   setOfflineDanmakuEnabled: (enabled: boolean) => void
   /** 持久化当前角色的剧情生成目标字数（与 DatingStoryPage 输入框同步） */
@@ -368,6 +403,8 @@ type Ctx = {
         | 'versionTimelineSnapshots'
         | 'timelineSnapshot'
         | 'currentVersionIndex'
+        | 'parallelEvent'
+        | 'ifLine'
       >
     >,
   ) => void
@@ -380,6 +417,14 @@ type Ctx = {
     perspective?: NarrativePerspective,
     genOptions?: NarrativeGenOptions,
     bias?: string,
+  ) => Promise<void>
+  /** 为某条 AI 剧情生成平行事件 / IF 线（存于该 plot 条目，可反复打开查看） */
+  generatePlotDimension: (
+    plotId: string,
+    kind: PlotDimensionKind,
+    writingGuide: string,
+    lengthTargetChars: number,
+    perspective?: NarrativePerspective,
   ) => Promise<void>
 }
 
@@ -636,6 +681,14 @@ function mergeArchives(chars: CharacterInfo[], parsed: unknown | null): Archives
           if (typeof raw !== 'number' || !Number.isFinite(raw)) return merged[c.id].datingLengthTargetChars
           return clampDatingLengthTargetChars(raw)
         })(),
+        generateParallelOnSend:
+          typeof (saved as { generateParallelOnSend?: unknown }).generateParallelOnSend === 'boolean'
+            ? (saved as { generateParallelOnSend: boolean }).generateParallelOnSend
+            : merged[c.id].generateParallelOnSend,
+        generateIfLineOnSend:
+          typeof (saved as { generateIfLineOnSend?: unknown }).generateIfLineOnSend === 'boolean'
+            ? (saved as { generateIfLineOnSend: boolean }).generateIfLineOnSend
+            : merged[c.id].generateIfLineOnSend,
       }
     }
     return merged
@@ -775,6 +828,8 @@ async function timelinePersistFieldsFromAiTextRaw(
     offlineBlock?: string
     characterId?: string
     characterRealName?: string
+    /** 侧幕叙写：主角色未在场 */
+    mainCharacterOffstage?: boolean
   },
 ) {
   const { memoryJsonText } = splitDatingAiResponseAndUnifiedMemoryJson(aiTextRaw)
@@ -798,6 +853,9 @@ async function timelinePersistFieldsFromAiTextRaw(
       displayName: opts?.characterRealName?.trim() || '角色',
       notifyOnFailure: true,
     })
+  }
+  if (timelineDelta && opts?.mainCharacterOffstage) {
+    timelineDelta = { ...timelineDelta, side_perspective: true }
   }
   return { timelineSnap, timelineDelta }
 }
@@ -863,6 +921,83 @@ async function loadPlayerIdentityForDating(characterId: string): Promise<PlayerI
   const pid = row?.playerIdentityId?.trim()
   if (!pid) return null
   return await personaDb.getPlayerIdentity(pid)
+}
+
+async function enrichAiPlotWithOptionalDimensions(params: {
+  char: CharacterInfo
+  archiveSnap: CharacterArchive
+  aiPlot: PlotItem
+  plotsWithAi: PlotItem[]
+  anchorBody: string
+  mergedGen?: NarrativeGenOptions
+  perspective: NarrativePerspective
+  apiConfig: ApiConfigCore | null
+}): Promise<PlotItem> {
+  const wantParallel =
+    params.mergedGen?.generateParallelOnSend ?? params.archiveSnap.generateParallelOnSend ?? false
+  const wantIf = params.mergedGen?.generateIfLineOnSend ?? params.archiveSnap.generateIfLineOnSend ?? false
+  if (!wantParallel && !wantIf) return params.aiPlot
+
+  const tail = formatRecentPlotsForPrompt(params.plotsWithAi, params.char.realName, 2200)
+  const playerIdentity = await loadPlayerIdentityForDating(params.char.id)
+  const playerName =
+    playerIdentity?.wechatNickname?.trim() || playerIdentity?.name?.trim() || null
+  const lengthTarget = parsePlotDimensionLengthTarget(
+    params.mergedGen?.lengthTargetChars ?? params.archiveSnap.datingLengthTargetChars ?? 500,
+    500,
+  )
+  const apiCfg =
+    params.apiConfig?.apiUrl?.trim() && params.apiConfig?.apiKey?.trim() ? params.apiConfig : null
+
+  let plot = params.aiPlot
+  const genBase = {
+    character: params.char,
+    anchorPlotBody: params.anchorBody,
+    tailContext: tail,
+    writingGuide: '',
+    lengthTargetChars: lengthTarget,
+    godPerspective: params.archiveSnap.godPerspective,
+    mainCharacterOffstage: !!params.archiveSnap.mainCharacterOffstage,
+    perspective: params.perspective,
+    apiConfig: apiCfg,
+    playerIdentityCardName: playerName,
+  }
+
+  if (wantParallel) {
+    const content = await generateDatingPlotDimensionAi({ ...genBase, kind: 'parallel' })
+    const parallelEventBase = {
+      content,
+      writingGuide: '',
+      lengthTargetChars: lengthTarget,
+      updatedAt: Date.now(),
+    }
+    const timelineDelta = await resolveParallelEventSummaryDelta({
+      apiConfig: apiCfg,
+      mainCharacterId: params.char.id,
+      plot: { ...plot, parallelEvent: parallelEventBase },
+      anchorPlotBody: params.anchorBody,
+    })
+    plot = {
+      ...plot,
+      parallelEvent: {
+        ...parallelEventBase,
+        ...(timelineDelta ? { timelineDelta } : {}),
+      },
+    }
+  }
+  if (wantIf) {
+    const content = await generateDatingPlotDimensionAi({ ...genBase, kind: 'if' })
+    plot = {
+      ...plot,
+      ifLine: {
+        content,
+        writingGuide: '',
+        lengthTargetChars: lengthTarget,
+        updatedAt: Date.now(),
+      },
+    }
+  }
+  return plot
 }
 
 /** 与私聊 ChatRoom / 记忆进度页对齐：storage 键只用「马甲 + 会话身份」，不用绑定身份覆盖。 */
@@ -1009,6 +1144,8 @@ async function finalizeDatingMemoryAfterAiReply(params: {
   worldBookInlinePatchApplied?: boolean
   /** 落库后的完整 plot 列表，用于重建剧情时间轴行表（覆盖重新生成，不重复 append） */
   plotsAfterAi?: PlotItem[]
+  /** 本轮刚生成平行事件时传入对应 plot id，rebuild 成功后弹 toast */
+  notifyParallelSummaryForPlotId?: string | null
 }): Promise<string[]> {
   const memSettings = await personaDb.getMemorySettings()
   const rowPerRoundMode = isOfflineDatingRowPerRoundMode(memSettings)
@@ -1149,7 +1286,16 @@ async function finalizeDatingMemoryAfterAiReply(params: {
 
   if (params.plotsAfterAi?.length && (rowPerRoundMode || !shouldSummarize || isRegenerateTurn)) {
     try {
-      await rebuildStoryTimelineFromDatingPlots(params.char.id, params.plotsAfterAi)
+      const rebuild = await rebuildStoryTimelineFromDatingPlots(params.char.id, params.plotsAfterAi, {
+        apiConfig: params.apiConfig,
+      })
+      const notifyPlotId = params.notifyParallelSummaryForPlotId?.trim()
+      if (notifyPlotId && rebuild.parallelSummaryPlotIds.includes(notifyPlotId)) {
+        const plot = params.plotsAfterAi.find((p) => p.id === notifyPlotId)
+        if (plot) {
+          await notifyParallelSummaryTableWritten(params.char.realName, params.char.id, plot)
+        }
+      }
     } catch (rebuildErr) {
       console.warn('[dating] story timeline rebuild failed', rebuildErr)
     }
@@ -1719,14 +1865,14 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
               : '玩家输入'
         }原文（锚点优先来源；**正文禁止复读或分条重述本块**）】\n${userText?.trim() || '（本轮无玩家输入）'}\n\n` +
         `长期记忆（关键词触发 + 向量语义筛选；**已进自动总结的微信内容以本块为准**——属**线上已定事实**，须服从，勿与下方「尚未总结」矛盾）：\n${longMemClipped || '（暂无）'}\n\n` +
-        `【剧情时间轴】（故事内时空状态；由自动总结维护；承接地点/时段/服装/伏笔时优先对照本块；**与下方「系统落库时刻」前缀独立**；**不得**违背上方线上聊天事实）：\n${storyTimelineClipped || '（暂无）'}\n\n` +
+        `【剧情时间轴】（故事内时空状态；由自动总结维护；承接地点/时段/服装时优先对照本块；**未收动机伏笔与未完结待办**才须承接，已完结者勿再引用；**与下方「系统落库时刻」前缀独立**；**不得**违背上方线上聊天事实）：\n${storyTimelineClipped || '（暂无）'}\n\n` +
         `尚未总结·私聊（**线上已发生事实**｜见块尾时间窗说明；每条方括号内为**系统落库时刻**（真实发送钟点，非故事内剧情时间）；须服从，**不是**写作指导）：\n${unsPrivClipped || '（暂无）'}\n\n` +
         `尚未总结·群聊（**线上已发生事实**｜同一时间窗；每条前缀为**系统落库时刻**；须服从，**不是**写作指导）：\n${unsGrpClipped || '（暂无）'}\n\n` +
         `尚未总结·线下剧情（**系统落库时刻见每条条目前缀**——真实生成钟点，非故事内剧情时间；按落库先后理解）：\n${unsOffClipped || '（暂无）'}\n\n` +
         `【历史摘录·文风隔离（最高优先级）】下条「最近剧情」**只**供提取：**事实、关系、与本轮兼容的未收束点、人物在场与空间关系**；**禁止**把旧稿的措辞、节奏、修辞习惯、网文腔或油腻句式当作续写模板；**禁止**因旧稿曾出现某情绪主题就把本轮主客体方向写反。若上文显八股、堆砌感官词、触犯禁词表或与 system 白描要求相悖，本轮仍须按 **system 统一文风与禁词表** 落笔，**不得**「贴着旧稿语感滑下去」。重新生成同段时亦适用本条。\n` +
         `${godHistoryIsolationNote}` +
         `${mainCharacterOffstageHistoryNote}` +
-        `最近剧情（最近 ${DATING_AI_PLOT_HISTORY_MAX} 条，**含本轮玩家输入**；按落库先后排列，**末尾最新**；**每条条目前缀为系统落库时刻**（真实生成钟点，非故事内剧情时间）；超长时保留末尾；正文已去思维链）：\n${historyClipped || '（暂无历史）'}\n\n` +
+        `最近剧情（最近 ${DATING_AI_PLOT_HISTORY_MAX} 条，**含本轮玩家输入**；按落库先后排列，**末尾最新**；**每条条目前缀为系统落库时刻**（真实生成钟点，非故事内剧情时间）；超长时保留末尾；正文已去思维链；**不含**屏外平行事件原文）：\n${historyClipped || '（暂无历史）'}\n\n` +
         (datingExtras?.regeneratingWorldBookBaseline
           ? `【重新生成】本条为对**某一旧 AI 气泡**的重写请求。\n` +
             `1）**上下文边界**：你只拥有「最近剧情」里**在该条之前的**内容与玩家输入；**切勿**假定或复述你已写过的上一版本条正文——上一版已从本轮材料中剔除，**禁止**对其洗稿、同义复述或微调后交差。\n` +
@@ -2306,6 +2452,24 @@ export function DatingProvider({ children }: { children: ReactNode }) {
     [currentCharacter.id, patchArchive],
   )
 
+  const setGenerateParallelOnSend = useCallback(
+    (v: boolean) => {
+      const charId = currentCharacter.id
+      if (!charId) return
+      patchArchive(charId, (p) => ({ ...p, generateParallelOnSend: !!v }))
+    },
+    [currentCharacter.id, patchArchive],
+  )
+
+  const setGenerateIfLineOnSend = useCallback(
+    (v: boolean) => {
+      const charId = currentCharacter.id
+      if (!charId) return
+      patchArchive(charId, (p) => ({ ...p, generateIfLineOnSend: !!v }))
+    },
+    [currentCharacter.id, patchArchive],
+  )
+
   const setOfflineDanmakuEnabled = useCallback(
     (enabled: boolean) => {
       const charId = currentCharacter.id
@@ -2482,9 +2646,10 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             offlineBlock: memoryGather?.offlineBlock,
             characterId: char.id,
             characterRealName: char.realName,
+            mainCharacterOffstage: !!archiveSnap.mainCharacterOffstage,
           })
           const wbRevertNew = sanitizeWorldBookAfterRevertEntries(aiGen.worldBookAfterRevertEntries)
-          const aiPlot: PlotItem = {
+          let aiPlot: PlotItem = {
             id: uid('ai'),
             type: 'ai',
             timestamp: plotTs,
@@ -2493,12 +2658,6 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             worldBookAfterRevertEntries: wbRevertNew.length ? wbRevertNew : undefined,
           }
           const plotsWithAi = [...plotsForModel, aiPlot]
-          const archAfter: CharacterArchive = {
-            ...archiveSnap,
-            plots: plotsWithAi,
-            branchEnabled: archiveSnap.branchEnabled,
-            godPerspective: archiveSnap.godPerspective,
-          }
           await applyArchivePatch(charId, (p) => ({
             ...p,
             plots: [...p.plots, aiPlot],
@@ -2506,23 +2665,57 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             lastDateAt: Date.now(),
             pendingBranches: [],
           }))
+          let plotsWithAiFinal = plotsWithAi
+          let parallelGeneratedPlotId: string | null = null
+          const wantParallelOnSend =
+            mergedGen?.generateParallelOnSend ?? archiveSnap.generateParallelOnSend ?? false
+          const wantDims =
+            wantParallelOnSend ||
+            (mergedGen?.generateIfLineOnSend ?? archiveSnap.generateIfLineOnSend)
+          if (wantDims) {
+            aiPlot = await enrichAiPlotWithOptionalDimensions({
+              char,
+              archiveSnap,
+              aiPlot,
+              plotsWithAi,
+              anchorBody: parsed.content,
+              mergedGen,
+              perspective,
+              apiConfig,
+            })
+            plotsWithAiFinal = plotsWithAi.map((p) => (p.id === aiPlot.id ? aiPlot : p))
+            if (wantParallelOnSend && aiPlot.parallelEvent?.content?.trim()) {
+              parallelGeneratedPlotId = aiPlot.id
+            }
+            await applyArchivePatch(charId, (p) => ({
+              ...p,
+              plots: p.plots.map((x) => (x.id === aiPlot.id ? aiPlot : x)),
+            }))
+          }
           endDatingPlotContentHint(charId)
           aiAppended = true
           if (archiveSnap.branchEnabled) {
-            void runGeneratePendingBranches(charId, char, archAfter)
+            void runGeneratePendingBranches(charId, char, {
+              ...archiveSnap,
+              plots: plotsWithAiFinal,
+            })
           }
-          void runOfflineDanmakuAfterAi(char, archAfter)
+          void runOfflineDanmakuAfterAi(char, {
+            ...archiveSnap,
+            plots: plotsWithAiFinal,
+          })
           let linkedNpcNames: string[] = []
           try {
             linkedNpcNames = await finalizeDatingMemoryAfterAiReply({
               apiConfig,
               aiTextRaw,
               memoryGather,
-              plotsSnapshotAfterAi: plotItemsToSnapshots(plotsWithAi),
-              plotsAfterAi: plotsWithAi,
+              plotsSnapshotAfterAi: plotItemsToSnapshots(plotsWithAiFinal),
+              plotsAfterAi: plotsWithAiFinal,
               char,
               memoryTurnAiPlotId: aiPlot.id,
               worldBookInlinePatchApplied: Boolean(wbRevertNew.length),
+              notifyParallelSummaryForPlotId: parallelGeneratedPlotId,
             })
           } catch (memErr) {
             console.warn('[dating] memory post failed after plot saved', memErr)
@@ -2655,6 +2848,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
               offlineBlock: memoryGather?.offlineBlock,
               characterId: char.id,
               characterRealName: char.realName,
+              mainCharacterOffstage: !!archiveSnap.mainCharacterOffstage,
             })
           const wbRevertInit = sanitizeWorldBookAfterRevertEntries(aiGenInit.worldBookAfterRevertEntries)
           const aiPlot: PlotItem = {
@@ -2832,12 +3026,14 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           | 'planSummary'
           | 'versions'
           | 'versionLogicPasses'
-          | 'versionTimelineSnapshots'
-          | 'timelineSnapshot'
-          | 'currentVersionIndex'
-        >
-      >,
-    ) => {
+        | 'versionTimelineSnapshots'
+        | 'timelineSnapshot'
+        | 'currentVersionIndex'
+        | 'parallelEvent'
+        | 'ifLine'
+      >
+    >,
+  ) => {
       const charId = currentCharacter.id
       if (!charId) return
       patchArchive(charId, (p) => ({
@@ -2859,13 +3055,13 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         }))
         const nextPlots = archivesRef.current[charId]?.plots ?? []
         try {
-          await rebuildStoryTimelineFromDatingPlots(charId, nextPlots)
+          await rebuildStoryTimelineFromDatingPlots(charId, nextPlots, { apiConfig })
         } catch (e) {
           console.warn('[dating] story timeline rebuild on version switch failed', e)
         }
       })()
     },
-    [applyArchivePatch, currentCharacter.id],
+    [apiConfig, applyArchivePatch, currentCharacter.id],
   )
 
   const deletePlotItem = useCallback(
@@ -2888,14 +3084,14 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           nextPlots: plotItemsToSnapshots(nextPlots),
         })
         try {
-          await rebuildStoryTimelineFromDatingPlots(charId, nextPlots)
+          await rebuildStoryTimelineFromDatingPlots(charId, nextPlots, { apiConfig })
         } catch (e) {
           console.warn('[dating] story timeline rebuild on plot delete failed', e)
         }
         enqueueRegenerateBranches(charId)
       })()
     },
-    [applyArchivePatch, currentCharacter.id, enqueueRegenerateBranches],
+    [apiConfig, applyArchivePatch, currentCharacter.id, enqueueRegenerateBranches],
   )
 
   const regenerateAiPlot = useCallback(
@@ -3004,6 +3200,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             offlineBlock: memoryGather?.offlineBlock,
             characterId: char.id,
             characterRealName: char.realName,
+            mainCharacterOffstage: !!archive.mainCharacterOffstage,
           })
         const nextRevert = sanitizeWorldBookAfterRevertEntries(aiGenRegen.worldBookAfterRevertEntries)
         const nextPlot: PlotItem = {
@@ -3076,6 +3273,83 @@ export function DatingProvider({ children }: { children: ReactNode }) {
     ],
   )
 
+  const generatePlotDimension = useCallback(
+    async (
+      plotId: string,
+      kind: PlotDimensionKind,
+      writingGuide: string,
+      lengthTargetChars: number,
+      perspective: NarrativePerspective = 'second',
+    ) => {
+      const charId = currentCharacter.id
+      if (!charId) throw new Error('未选择角色')
+      const char = currentCharacter
+      const archive = currentArchive
+      const plotIdx = archive.plots.findIndex((p) => p.id === plotId)
+      if (plotIdx < 0 || archive.plots[plotIdx]!.type !== 'ai') {
+        throw new Error('仅 AI 剧情卡片可生成平行事件 / IF 线')
+      }
+      const plot = archive.plots[plotIdx]!
+      const anchorBody = resolveDatingPlotDisplayFromItem(plot).displayBody.trim()
+      if (!anchorBody) throw new Error('锚点剧情正文为空')
+      const before = archive.plots.slice(0, plotIdx + 1)
+      const tail = formatRecentPlotsForPrompt(before, char.realName, 2200)
+      const playerIdentity = await loadPlayerIdentityForDating(char.id)
+      const playerName =
+        playerIdentity?.wechatNickname?.trim() || playerIdentity?.name?.trim() || null
+      const content = await generateDatingPlotDimensionAi({
+        kind,
+        character: char,
+        anchorPlotBody: anchorBody,
+        tailContext: tail,
+        writingGuide,
+        lengthTargetChars,
+        godPerspective: archive.godPerspective,
+        mainCharacterOffstage: !!archive.mainCharacterOffstage,
+        perspective,
+        apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
+        playerIdentityCardName: playerName,
+      })
+      const parallelArtifactBase: PlotDimensionArtifact = {
+        content,
+        writingGuide: String(writingGuide ?? '').trim(),
+        lengthTargetChars: parsePlotDimensionLengthTarget(lengthTargetChars, archive.datingLengthTargetChars ?? 500),
+        updatedAt: Date.now(),
+      }
+      let parallelEvent: PlotDimensionArtifact = parallelArtifactBase
+      if (kind === 'parallel') {
+        const timelineDelta = await resolveParallelEventSummaryDelta({
+          apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
+          mainCharacterId: charId,
+          plot: { ...plot, parallelEvent: parallelArtifactBase },
+          anchorPlotBody: anchorBody,
+        })
+        parallelEvent = timelineDelta
+          ? { ...parallelArtifactBase, timelineDelta }
+          : parallelArtifactBase
+      }
+      const patch =
+        kind === 'parallel' ? { parallelEvent } : { ifLine: parallelArtifactBase }
+      const nextStore = await applyArchivePatch(charId, (p) => ({
+        ...p,
+        plots: p.plots.map((x) => (x.id === plotId ? { ...x, ...patch } : x)),
+      }))
+      if (kind === 'parallel') {
+        const nextPlots = nextStore[charId]?.plots ?? []
+        const rebuild = await rebuildStoryTimelineFromDatingPlots(charId, nextPlots, {
+          apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
+        })
+        if (rebuild.parallelSummaryPlotIds.includes(plotId)) {
+          const plotWithParallel = nextPlots.find((p) => p.id === plotId)
+          if (plotWithParallel) {
+            await notifyParallelSummaryTableWritten(char.realName, charId, plotWithParallel)
+          }
+        }
+      }
+    },
+    [apiConfig, applyArchivePatch, currentArchive, currentCharacter],
+  )
+
   const value: Ctx = {
     characters,
     currentCharacterId: currentCharacter.id || '',
@@ -3091,6 +3365,8 @@ export function DatingProvider({ children }: { children: ReactNode }) {
     setVnVoiceDisabled,
     setDirectorMode,
     setAutoUserReaction,
+    setGenerateParallelOnSend,
+    setGenerateIfLineOnSend,
     setOfflineDanmakuEnabled,
     setDatingLengthTargetChars,
     sendPlayerInput,
@@ -3107,6 +3383,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
     setPlotVersionIndex,
     deletePlotItem,
     regenerateAiPlot,
+    generatePlotDimension,
   }
 
   return <DatingContext.Provider value={value}>{children}</DatingContext.Provider>

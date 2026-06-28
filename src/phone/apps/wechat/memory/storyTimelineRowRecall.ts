@@ -6,6 +6,7 @@ import {
   STORY_TIMELINE_ROW_VECTOR_MIN_SIM,
   STORY_TIMELINE_VECTOR_RECALL_TOP_K,
   computeStoryTimelineRowTextHash,
+  resolveStoryTimelineRowVectorEmbedText,
   type StoryTimelinePlotRow,
   type StoryTimelineVectorRecallHit,
 } from './storyTimelineTypes'
@@ -16,9 +17,10 @@ const ROW_EMBED_BATCH = 8
 const ROW_EMBED_CAP_PER_CALL = 16
 
 function rowNeedsReembed(row: StoryTimelinePlotRow, queryDim: number): boolean {
-  if (!row.rowText.trim()) return false
-  const h = computeStoryTimelineRowTextHash(row.rowText)
-  if (row.textHash !== h) return true
+  const embedText = resolveStoryTimelineRowVectorEmbedText(row)
+  if (!embedText.trim()) return false
+  const h = computeStoryTimelineRowTextHash(embedText)
+  if (row.embeddingHash !== h) return true
   const emb = row.embedding
   if (!Array.isArray(emb) || emb.length !== queryDim) return true
   return false
@@ -43,11 +45,13 @@ export async function backfillStoryTimelineRowEmbeddingsBestEffort(params: {
     const chunk = stale.slice(i, i + ROW_EMBED_BATCH)
     for (const row of chunk) {
       try {
-        const hit = await fetchEmbeddingVectorUnified(params.settings, params.chatApiConfig, row.rowText)
+        const embedText = resolveStoryTimelineRowVectorEmbedText(row)
+        const hit = await fetchEmbeddingVectorUnified(params.settings, params.chatApiConfig, embedText)
         if (!hit?.vec.length || hit.vec.length !== params.queryDim) continue
+        const embedHash = computeStoryTimelineRowTextHash(embedText)
         await personaDb.upsertStoryTimelinePlotRow({
           ...row,
-          textHash: computeStoryTimelineRowTextHash(row.rowText),
+          embeddingHash: embedHash,
           embedding: hit.vec,
           embeddingProvider: hit.provider,
           embeddingModelId: hit.modelId,

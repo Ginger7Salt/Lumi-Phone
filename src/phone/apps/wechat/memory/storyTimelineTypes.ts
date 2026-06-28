@@ -17,10 +17,16 @@ export type StoryTimelineItemEntry = {
   tier?: StoryTimelineItemTier
 }
 
-export type StoryTimelineForeshadowEntry = {
+export type StoryTimelineOpenAnchorEntry = {
   text: string
   status: 'open' | 'resolved'
 }
+
+/** 人物动机 / 关系悬念 / 未兑现伏笔（非具体待办） */
+export type StoryTimelineForeshadowEntry = StoryTimelineOpenAnchorEntry
+
+/** 具体可执行待办 / 承诺 / 日程 */
+export type StoryTimelineTodoEntry = StoryTimelineOpenAnchorEntry
 
 export type StoryTimelineEventEntry = {
   id: string
@@ -45,6 +51,7 @@ export type StoryTimelineState = {
   costumes: StoryTimelineCostumeEntry[]
   items: StoryTimelineItemEntry[]
   foreshadows: StoryTimelineForeshadowEntry[]
+  todos: StoryTimelineTodoEntry[]
   recentEvents: StoryTimelineEventEntry[]
   /** 手动编辑的状态锚点全文；有值时覆盖结构化字段的 prompt / 展示格式化 */
   manualAnchorBlock?: string
@@ -63,10 +70,15 @@ export type StoryTimelinePlotRow = {
   /** 本轮可读摘要（与 UI timelineSnapshot 同源） */
   rowText: string
   textHash: string
+  /** 向量索引用摘要标题（与 rowText 分离；embeddingHash 对应此文本） */
   embedding?: number[]
   embeddingProvider?: MemoryEmbeddingProviderKind
   embeddingModelId?: string
   embeddingHash?: string
+  /** 侧幕视角：主角色（{{char}}）未在场；注入给主角色时须非全知 redact */
+  sidePerspective?: boolean
+  /** 本轮在场角色占位符快照（与 summary JSON characters_present 同源） */
+  charactersPresent?: string[]
 }
 
 export type StoryTimelinePromptLoadOpts = {
@@ -78,8 +90,56 @@ export type StoryTimelinePromptLoadOpts = {
 
 /** 每角色持久化的行表上限 */
 export const STORY_TIMELINE_ROWS_CAP = 240
-/** 注入 prompt：始终带上最近 N 轮摘要行 */
+/** 注入 prompt：近端固定带上最近 N 条摘要行（不含游标上下文原文窗内的最近几轮线下 AI） */
 export const STORY_TIMELINE_INJECT_RECENT_ROWS = 5
+
+function storyTimelineRowRecordedAtMs(row: StoryTimelinePlotRow): number {
+  const ts = row.recordedAt
+  return typeof ts === 'number' && Number.isFinite(ts) ? ts : 0
+}
+
+/**
+ * 近端固定摘要行：与「尚未总结·线下剧情」游标上下文原文窗去重。
+ * 最近若干轮未总结线下 AI 由游标块全文注入，此处从更早一轮起再取固定条数。
+ */
+export function selectStoryTimelineRecentInjectRows(
+  allRows: StoryTimelinePlotRow[],
+  params: {
+    datingPlotCursor: number | null
+    /** 与 MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS 对齐 */
+    skipUnsummarizedOfflineAiRounds: number
+    recentRowCount?: number
+  },
+): StoryTimelinePlotRow[] {
+  if (!allRows.length) return []
+  const recentCount = Math.max(
+    0,
+    Math.floor(params.recentRowCount ?? STORY_TIMELINE_INJECT_RECENT_ROWS),
+  )
+  if (recentCount === 0) return []
+
+  const skipRounds = Math.max(0, Math.floor(params.skipUnsummarizedOfflineAiRounds))
+  const cursor = params.datingPlotCursor
+  let excludeIds: Set<string> | null = null
+
+  if (skipRounds > 0 && cursor != null && Number.isFinite(cursor)) {
+    excludeIds = new Set<string>()
+    const unsummarizedOffline = allRows.filter((row) => {
+      const scope = row.sourceScope ?? 'private'
+      if (scope !== 'offline' && scope !== 'linked') return false
+      const ts = storyTimelineRowRecordedAtMs(row)
+      return ts > 0 && ts > cursor
+    })
+    for (const row of unsummarizedOffline.slice(-skipRounds)) {
+      excludeIds.add(row.id)
+    }
+  }
+
+  const eligible = excludeIds?.size
+    ? allRows.filter((row) => !excludeIds!.has(row.id))
+    : allRows
+  return eligible.slice(-recentCount)
+}
 /** 向量召回：除近端外额外注入的历史行数 */
 export const STORY_TIMELINE_VECTOR_RECALL_TOP_K = 3
 /** 剧情行向量最低相似度 */
@@ -87,8 +147,11 @@ export const STORY_TIMELINE_ROW_VECTOR_MIN_SIM = 0.70
 
 /** 注入 prompt / 思维溯源：摘要行来源标签 */
 export const STORY_TIMELINE_INJECT_LABEL_RECENT = '近端固定'
+/** @deprecated 向量召回行头已改用摘要标题；保留兼容旧 trace 解析 */
 export const STORY_TIMELINE_INJECT_LABEL_VECTOR = '向量命中'
 export const STORY_TIMELINE_INJECT_LABEL_STATE = '合并快照'
+export const STORY_TIMELINE_MAIN_CHAR_PLACEHOLDER = '{{char}}'
+export const STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG = '侧幕·{{char}}未在场'
 
 export type StoryTimelineInjectKind = 'state' | 'recent' | 'vector'
 
@@ -114,13 +177,17 @@ export type StoryTimelineSummaryDelta = {
   costumes?: Record<string, string>
   items?: Array<{ name?: string; note?: string; tier?: string }>
   foreshadows?: Array<{ text?: string; status?: string }>
+  todos?: Array<{ text?: string; status?: string }>
   /** 本轮摘要短标题（建议 4～10 字） */
   row_title?: string
   event_summary?: string
+  /** true：主角色（{{char}}）未在场之侧幕摘要；须写 characters_present 且不含 {{char}} */
+  side_perspective?: boolean
 }
 
 export const STORY_TIMELINE_RECENT_EVENTS_CAP = 12
 export const STORY_TIMELINE_OPEN_FORESHADOW_CAP = 16
+export const STORY_TIMELINE_OPEN_TODO_CAP = 16
 export const STORY_TIMELINE_COSTUMES_CAP = 24
 export const STORY_TIMELINE_ITEMS_CAP = 32
 /** 单角色服装描述上限（字）；须容纳上装/下装/外套/鞋履与可见状态 */
@@ -133,8 +200,27 @@ export const STORY_TIMELINE_EVENT_SUMMARY_MAX = 120
 /** 摘要短标题入库上限（字）；模型建议 4～10 字 */
 export const STORY_TIMELINE_ROW_TITLE_MAX = 14
 
+/** 伏笔 / 待办：写法与结尾快照（摘要 JSON 与回收规则共用） */
+export const STORY_TIMELINE_FORESHADOW_TODO_WRITING_RULES = `
+【伏笔 / 待办·写法铁律】
+- 二者均是**本轮剧情全文读毕后的结尾快照**：只记录正文（或材料）**读至末尾时**仍悬而未决的内容；不是段落中途的临时念头，**禁止**与结尾已交代的事实相矛盾。
+- **与结尾对齐（最高优先级）**：以正文**最后一段 / 最后几屏**为准。若结尾已写明作业写完、约定已兑现、人物已动身或问题已解决，则**禁止**再写 open 的「未完成作业」「尚未赴约」等；应**省略** todos，或对【系统已有·未收锚点】中对应项输出 status:"resolved"。
+- **foreshadows（人物动机 / 内心拉扯 / 关系悬念）**：写「为何犹豫、想要什么又怕失去什么、对谁隐瞒什么、关系里还有什么没说破」；**禁止**写成待办清单或「须做某事」句式。
+  - 合格示例：「{{char}} 想今晚把作业写完，但怕拖太晚挤占自己的休息时间，仍在纠结要不要现在开始」
+  - 不合格：「{{char}} 要写作业」（这是待办，不是动机）
+- **todos（结尾仍有效的具体事项）**：仅当**结尾事实**仍为「尚未完成且仍须处理」的可核对事项时，才写 open。
+  - 合格示例（结尾仍未开始）：「{{char}} 数学作业尚未动笔，且仍计划今晚完成」
+  - 不合格：正文末尾已写完作业，却写「{{char}} 未完成作业」
+- 本轮结尾无新动机 / 内心线则**省略** foreshadows；无未完结具体事项则**省略** todos；勿输出空数组。`.trim()
+
+/** 摘要 / 同轮 JSON：未收锚点回收说明（注入「系统已有未收清单」时复用） */
+export const STORY_TIMELINE_OPEN_ANCHORS_RECYCLE_RULES = `
+- **伏笔 foreshadows** 与 **待办 todos** 是两类字段，不可混写；须先遵守上方【伏笔 / 待办·写法铁律】中的**结尾快照**与**与结尾对齐**要求。
+- 用户若提供【系统已有·未收锚点】：对照**正文末尾**是否已兑现；已完结 / 已取消 / 已无后续者，**必须**在对应数组输出 {"text":"与已有条目一致或高度同义","status":"resolved"}，以便系统停止将其作为写作指导；仍悬而未决且无新变化时可不重复输出 open。
+- 仅当**结尾快照**下出现**新的**动机拉扯或未完结具体事项时，才追加 {"text":"…","status":"open"}。`.trim()
+
 export const STORY_TIMELINE_SUMMARY_JSON_FIELDS = `
-- "timeline"（可选对象；材料中有可核对的时空、服装、物品、伏笔/待办时**应尽量填写**）：
+- "timeline"（可选对象；材料中有可核对的时空、服装、物品、动机伏笔、待办或本轮关键事件时**应尽量填写**）：
   - "row_title": string，本轮摘要短标题（建议 4～10 字，可含问号/顿号；如「温柔瞬间」「化解冲突」「没听见？是没看见」；须概括本轮情绪或转折，勿写「第 N 轮」等序号）
   - "story_day": string，**含年份的公历剧情日**，如 "2025年10月1日"、"2025年2月14日（情人节）"；相对进度写 relative_time，勿用「第3天」代替公历
   - "story_time": string，**24 小时制钟点**，如 "19:30"、"08:15"；材料仅有「傍晚/深夜」时须推断合理 HH:mm
@@ -146,8 +232,14 @@ export const STORY_TIMELINE_SUMMARY_JSON_FIELDS = `
     - 须含：主色、材质或版型（如棉质、针织、直筒、修身）、可见状态（敞开/挽袖/沾污/湿发未擦等）
     - 示例：{"{{char}}":"米白棉质圆领T（袖口挽至小臂）+ 深灰针织开衫未扣齐 + 黑色直筒休闲长裤；深棕皮质腕表；室内拖鞋"}
   - "items": array，物品变更 [{ "name": string, "note"?: string, "tier"?: "normal"|"important"|"critical" }]
-  - "foreshadows": array，伏笔或未完结待办 [{ "text": string, "status": "open"|"resolved" }]
-  - "event_summary": string，本轮关键事件摘要（建议 80～100 字：写清谁做了什么、情绪转折或结果；无显著事件可省略）`.trim()
+  - "foreshadows": array（**可选**；仅**结尾快照**下动机/悬念有变化时填写）[{ "text": string, "status": "open"|"resolved" }]
+  - "todos": array（**可选**；仅**结尾快照**下仍有未完结具体事项时填写）[{ "text": string, "status": "open"|"resolved" }]
+  - "event_summary": string，本轮关键事件摘要（建议 80～100 字：写清谁做了什么、情绪转折或结果；无显著事件可省略）
+  - "side_perspective": boolean（可选；**侧幕叙写**轮必填 true：表示约会主角色 {{char}} **未在场**；characters_present **不得**含 {{char}}；仅记录用户与在场 NPC 的时空与事实）
+
+${STORY_TIMELINE_FORESHADOW_TODO_WRITING_RULES}
+
+${STORY_TIMELINE_OPEN_ANCHORS_RECYCLE_RULES}`.trim()
 
 function trimCell(raw: unknown, max = 120): string | undefined {
   const t = String(raw ?? '')
@@ -403,11 +495,28 @@ export function parseStoryTimelineSummaryDelta(raw: unknown): StoryTimelineSumma
     if (foreshadows.length) delta.foreshadows = foreshadows.slice(0, 8)
   }
 
+  const todosRaw = o.todos
+  if (Array.isArray(todosRaw)) {
+    const todos: NonNullable<StoryTimelineSummaryDelta['todos']> = []
+    for (const row of todosRaw) {
+      if (!row || typeof row !== 'object') continue
+      const r = row as Record<string, unknown>
+      const text = trimCell(r.text, 160)
+      if (!text) continue
+      todos.push({ text, status: normalizeForeshadowStatus(r.status) })
+    }
+    if (todos.length) delta.todos = todos.slice(0, 8)
+  }
+
   const eventSummary = trimCell(o.event_summary ?? o.eventSummary, STORY_TIMELINE_EVENT_SUMMARY_MAX)
   if (eventSummary) delta.event_summary = eventSummary
 
   const rowTitle = normalizeStoryTimelineRowTitle(o.row_title ?? o.rowTitle)
   if (rowTitle) delta.row_title = rowTitle
+
+  if (o.side_perspective === true || o.sidePerspective === true) {
+    delta.side_perspective = true
+  }
 
   return Object.keys(delta).length ? delta : undefined
 }
@@ -419,8 +528,36 @@ export function createEmptyStoryTimelineState(characterId: string): StoryTimelin
     costumes: [],
     items: [],
     foreshadows: [],
+    todos: [],
     recentEvents: [],
   }
+}
+
+function openAnchorKey(text: string): string {
+  return text.trim().toLowerCase()
+}
+
+function mergeOpenResolvedAnchorEntries<T extends StoryTimelineOpenAnchorEntry>(
+  prevOpen: T[],
+  deltaEntries: Array<{ text?: string; status?: string }> | undefined,
+  cap: number,
+): T[] {
+  if (!deltaEntries?.length) return prevOpen
+  const map = new Map(
+    prevOpen.filter((f) => f.status === 'open').map((f) => [openAnchorKey(f.text), f]),
+  )
+  for (const f of deltaEntries) {
+    const text = trimCell(f.text, 160)
+    if (!text) continue
+    const status = normalizeForeshadowStatus(f.status)
+    const key = openAnchorKey(text)
+    if (status === 'resolved') {
+      map.delete(key)
+      continue
+    }
+    map.set(key, { text, status: 'open' } as T)
+  }
+  return [...map.values()].slice(-cap)
 }
 
 function costumeKey(c: StoryTimelineCostumeEntry): string {
@@ -429,10 +566,6 @@ function costumeKey(c: StoryTimelineCostumeEntry): string {
 
 function itemKey(name: string): string {
   return name.trim().toLowerCase()
-}
-
-function foreshadowKey(text: string): string {
-  return text.trim().toLowerCase()
 }
 
 export function hasTimelineDeltaContent(delta: StoryTimelineSummaryDelta): boolean {
@@ -446,6 +579,7 @@ export function hasTimelineDeltaContent(delta: StoryTimelineSummaryDelta): boole
     (delta.costumes && Object.keys(delta.costumes).length) ||
     (delta.items?.length ?? 0) ||
     (delta.foreshadows?.length ?? 0) ||
+    (delta.todos?.length ?? 0) ||
     delta.event_summary
   )
 }
@@ -469,6 +603,7 @@ export function mergeStoryTimelineState(
     costumes: [...base.costumes],
     items: [...base.items],
     foreshadows: [...base.foreshadows],
+    todos: [...(base.todos ?? [])],
     recentEvents: [...base.recentEvents],
   }
 
@@ -509,21 +644,19 @@ export function mergeStoryTimelineState(
   }
 
   if (delta.foreshadows?.length) {
-    const map = new Map(
-      next.foreshadows.filter((f) => f.status === 'open').map((f) => [foreshadowKey(f.text), f]),
+    next.foreshadows = mergeOpenResolvedAnchorEntries(
+      next.foreshadows,
+      delta.foreshadows,
+      STORY_TIMELINE_OPEN_FORESHADOW_CAP,
     )
-    for (const f of delta.foreshadows) {
-      const text = trimCell(f.text, 160)
-      if (!text) continue
-      const status = normalizeForeshadowStatus(f.status)
-      const key = foreshadowKey(text)
-      if (status === 'resolved') {
-        map.delete(key)
-        continue
-      }
-      map.set(key, { text, status: 'open' })
-    }
-    next.foreshadows = [...map.values()].slice(-STORY_TIMELINE_OPEN_FORESHADOW_CAP)
+  }
+
+  if (delta.todos?.length) {
+    next.todos = mergeOpenResolvedAnchorEntries(
+      next.todos ?? [],
+      delta.todos,
+      STORY_TIMELINE_OPEN_TODO_CAP,
+    )
   }
 
   if (delta.event_summary) {
@@ -572,7 +705,8 @@ export function resolveStoryTimelineRowTitle(
 ): string {
   const fromField = normalizeStoryTimelineRowTitle(row.rowTitle)
   if (fromField) return fromField
-  return extractStoryTimelineRowTitleFromRowText(displayText ?? row.rowText)
+  const fromText = extractStoryTimelineRowTitleFromRowText(displayText ?? row.rowText)
+  return fromText || '（无标题）'
 }
 
 /** 列表折叠预览：跳过标题与锚点行 */
@@ -640,13 +774,28 @@ export function formatStoryTimelineDeltaForDisplay(
 
   if (delta.foreshadows?.length) {
     lines.push(
-      '【伏笔 / 待办】\n' +
+      '【伏笔·人物动机】\n' +
         delta.foreshadows
           .map((f) => {
             const text = String(f.text ?? '').trim()
             if (!text) return ''
             const st = String(f.status ?? 'open').trim().toLowerCase()
             return `- ${text}${st === 'resolved' ? '（已收）' : ''}`
+          })
+          .filter(Boolean)
+          .join('\n'),
+    )
+  }
+
+  if (delta.todos?.length) {
+    lines.push(
+      '【待办】\n' +
+        delta.todos
+          .map((f) => {
+            const text = String(f.text ?? '').trim()
+            if (!text) return ''
+            const st = String(f.status ?? 'open').trim().toLowerCase()
+            return `- ${text}${st === 'resolved' ? '（已完成）' : ''}`
           })
           .filter(Boolean)
           .join('\n'),
@@ -695,6 +844,8 @@ export function buildStoryTimelinePlotRowFromDelta(
   const textHash = computeStoryTimelineRowTextHash(rowText)
   const rowTitle = normalizeStoryTimelineRowTitle(delta.row_title)
   const plotId = opts?.plotId?.trim()
+  const sidePerspective = inferStoryTimelineSidePerspective(delta)
+  const charactersPresent = delta.characters_present?.length ? [...delta.characters_present] : undefined
   const safePlotKey = plotId
     ? plotId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48)
     : ''
@@ -710,6 +861,8 @@ export function buildStoryTimelinePlotRowFromDelta(
     ...(rowTitle ? { rowTitle } : {}),
     rowText,
     textHash,
+    ...(sidePerspective ? { sidePerspective: true } : {}),
+    ...(charactersPresent?.length ? { charactersPresent } : {}),
   }
 }
 
@@ -771,11 +924,118 @@ export function hasStructuredStoryTimelineState(state: StoryTimelineState | null
     state.costumes.length ||
     state.items.length ||
     state.foreshadows.length ||
+    (state.todos?.length ?? 0) ||
     state.recentEvents.length
   )
 }
 
-/** 当前世界状态快照（地点/服装/物品/伏笔；不含历史事件列表） */
+/** 供摘要 API 注入：列出系统内仍 open 的动机伏笔与待办，并要求模型输出 resolved 回收 */
+export function formatStoryTimelineOpenAnchorsForSummaryPrompt(
+  state: StoryTimelineState | null | undefined,
+): string {
+  if (!state || state.manualAnchorBlock?.trim()) return ''
+  const openFore = state.foreshadows.filter((f) => f.status === 'open')
+  const openTodos = (state.todos ?? []).filter((t) => t.status === 'open')
+  if (!openFore.length && !openTodos.length) return ''
+
+  const parts: string[] = [
+    '【系统已有·未收锚点（须对照正文**末尾**回收；已完结者勿再当作写作指导）】',
+  ]
+  if (openFore.length) {
+    parts.push(
+      '未收伏笔（人物动机 / 悬念；非具体待办）：\n' +
+        openFore.map((f) => `- ${f.text}`).join('\n'),
+    )
+  }
+  if (openTodos.length) {
+    parts.push(
+      '未完结待办（具体可执行事项）：\n' +
+        openTodos.map((t) => `- ${t.text}`).join('\n'),
+    )
+  }
+  parts.push(STORY_TIMELINE_OPEN_ANCHORS_RECYCLE_RULES)
+  return parts.join('\n\n').trim()
+}
+
+export function isMainCharTimelinePlaceholder(token: string): boolean {
+  const t = String(token ?? '').trim()
+  return t === STORY_TIMELINE_MAIN_CHAR_PLACEHOLDER || t === '{{archive_char}}'
+}
+
+/** 从摘要正文【本轮锚点】行解析在场列表（兼容旧行无 charactersPresent 字段） */
+export function parseCharactersPresentFromRowText(rowText: string): string[] {
+  const anchorLine = String(rowText ?? '').match(/【本轮锚点】[^\n]*/)?.[0] ?? ''
+  const presentMatch = anchorLine.match(/在场\s+(.+)$/)
+  if (!presentMatch?.[1]) return []
+  return presentMatch[1]
+    .split(/[、,，]/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+}
+
+export function inferStoryTimelineSidePerspective(delta: StoryTimelineSummaryDelta): boolean {
+  if (delta.side_perspective === true) return true
+  const present = delta.characters_present ?? []
+  if (!present.length) return false
+  return !present.some(isMainCharTimelinePlaceholder)
+}
+
+/** 向量语义召回索引文本：以摘要标题为主（非全文 rowText） */
+export function resolveStoryTimelineRowVectorEmbedText(row: StoryTimelinePlotRow): string {
+  return resolveStoryTimelineRowTitle(row)
+}
+
+export function resolveStoryTimelineRowCharactersPresent(row: StoryTimelinePlotRow): string[] {
+  if (row.charactersPresent?.length) return [...row.charactersPresent]
+  return parseCharactersPresentFromRowText(row.rowText)
+}
+
+export function isMainCharPresentInStoryTimelineRow(row: StoryTimelinePlotRow): boolean {
+  const present = resolveStoryTimelineRowCharactersPresent(row)
+  if (!present.length) return row.sidePerspective !== true
+  return present.some(isMainCharTimelinePlaceholder)
+}
+
+function extractPublicAnchorHintFromRowText(rowText: string): string {
+  const anchorBody = String(rowText ?? '').match(/【本轮锚点】([^\n]+)/)?.[1]?.trim() ?? ''
+  if (!anchorBody) return ''
+  return anchorBody
+    .replace(/在场\s+[^·]+(?=·|$)/, '')
+    .replace(/^·+|·+$/g, '')
+    .trim()
+}
+
+/** 主角色未在场时：注入 redact 版，避免全知复述侧幕细节 */
+export function formatStoryTimelineSidePerspectiveRedactedRow(row: StoryTimelinePlotRow): string {
+  const title = resolveStoryTimelineRowTitle(row)
+  const anchorHint = extractPublicAnchorHintFromRowText(row.rowText)
+  const anchorPart = anchorHint ? ` · ${anchorHint}` : ''
+  return (
+    `【${STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG}】${title}${anchorPart}\n` +
+    `（用户曾与在场角色发生线下互动；**具体对白、协议与细节 {{char}} 不知**；后续若由 {{char}} 提起，只能写寻踪/疑惑类非全知台词，如「你前面去哪了？找半天找不到你」，**禁止**复述侧幕内具体谈话内容。）`
+  )
+}
+
+export type StoryTimelineRowPromptInjectOpts = {
+  /** 对侧幕且 {{char}} 未在场的行 redact（默认 true） */
+  redactSidePerspectiveForMainChar?: boolean
+}
+
+export function formatStoryTimelineRowForPromptInject(
+  row: StoryTimelinePlotRow,
+  opts?: StoryTimelineRowPromptInjectOpts,
+): string {
+  const redact = opts?.redactSidePerspectiveForMainChar !== false
+  if (redact && row.sidePerspective === true && !isMainCharPresentInStoryTimelineRow(row)) {
+    return formatStoryTimelineSidePerspectiveRedactedRow(row)
+  }
+  return row.rowText
+}
+
+export const STORY_TIMELINE_SIDE_PERSPECTIVE_KNOWLEDGE_RULES =
+  `【侧幕摘要·信息边界】标有「${STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG}」的条目：{{char}} **未亲历**该段；不得写成全知旁观或复述用户与他人私下的具体对白/协议；仅可写寻踪、时段错位感或「你去哪了」类合理追问。`.trim()
+
+/** 当前世界状态快照（地点/服装/物品/动机伏笔/待办；不含历史事件列表） */
 export function formatStoryTimelineCurrentStateForPrompt(
   state: StoryTimelineState | null | undefined,
 ): string {
@@ -807,8 +1067,15 @@ export function formatStoryTimelineCurrentStateForPrompt(
 
   if (state.foreshadows.length) {
     lines.push(
-      '【伏笔 / 待办】\n' +
+      '【伏笔·人物动机】\n' +
         state.foreshadows.map((f) => `- ${f.text}`).join('\n'),
+    )
+  }
+
+  if (state.todos?.length) {
+    lines.push(
+      '【待办】\n' +
+        state.todos.map((t) => `- ${t.text}`).join('\n'),
     )
   }
 
@@ -820,22 +1087,27 @@ export function formatStoryTimelineInjectBody(params: {
   state: StoryTimelineState | null | undefined
   recentRows: StoryTimelinePlotRow[]
   vectorRows?: StoryTimelineVectorRecallHit[]
+  rowInjectOpts?: StoryTimelineRowPromptInjectOpts
 }): string {
+  const rowOpts = params.rowInjectOpts
   const parts: string[] = []
   const stateBlock = formatStoryTimelineCurrentStateForPrompt(params.state)
   if (stateBlock) {
     parts.push(`【当前状态·${STORY_TIMELINE_INJECT_LABEL_STATE}】\n${stateBlock}`)
   }
 
+  let hasSidePerspectiveRedact = false
   const recent = params.recentRows
   if (recent.length) {
     parts.push(
       `【近端剧情摘要（最近 ${recent.length} 轮，由旧到新；须与末尾情绪方向一致）】\n` +
         recent
-          .map(
-            (r, i) =>
-              `--- 摘要 ${i + 1} · ${STORY_TIMELINE_INJECT_LABEL_RECENT} ---\n${r.rowText}`,
-          )
+          .map((r, i) => {
+            const title = resolveStoryTimelineRowTitle(r)
+            const body = formatStoryTimelineRowForPromptInject(r, rowOpts)
+            if (body.includes(STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG)) hasSidePerspectiveRedact = true
+            return `--- 摘要 ${i + 1} · ${title} · ${STORY_TIMELINE_INJECT_LABEL_RECENT} ---\n${body}`
+          })
           .join('\n\n'),
     )
   }
@@ -844,25 +1116,29 @@ export function formatStoryTimelineInjectBody(params: {
   const vector = (params.vectorRows ?? []).filter((hit) => !recentIds.has(hit.row.id))
   if (vector.length) {
     parts.push(
-      `【语义召回·历史剧情摘要】\n` +
+      `【语义召回·历史剧情摘要（按摘要标题匹配）】\n` +
         vector
           .map((hit, i) => {
             const simPct = Math.round(hit.sim * 1000) / 10
-            return `--- 召回 ${i + 1} · ${STORY_TIMELINE_INJECT_LABEL_VECTOR} · 相似 ${simPct}% ---\n${hit.row.rowText}`
+            const title = resolveStoryTimelineRowTitle(hit.row)
+            const body = formatStoryTimelineRowForPromptInject(hit.row, rowOpts)
+            if (body.includes(STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG)) hasSidePerspectiveRedact = true
+            return `--- 召回 ${i + 1} · ${title} · 相似 ${simPct}% ---\n${body}`
           })
           .join('\n\n'),
     )
   }
 
   if (!parts.length) return ''
-  return (
-    `${parts.join('\n\n')}\n\n` +
-    `（剧情时间轴：当前状态 + 按轮追加摘要；回复须与锚点、服装、物品、伏笔一致；历史摘要仅补事实勿翻转情绪主客体；**描述故事内时空，与每条前缀「系统落库时刻」及【当前时间】独立，勿混用**。标签「${STORY_TIMELINE_INJECT_LABEL_RECENT}」「${STORY_TIMELINE_INJECT_LABEL_VECTOR}」仅供核对注入来源，勿写入剧情正文。）`
-  )
+  const footer =
+    `（剧情时间轴：当前状态 + 按轮追加摘要；回复须与锚点、服装、物品一致；**未收动机伏笔与未完结待办**才须承接，已完结者勿再引用；历史摘要仅补事实勿翻转情绪主客体；**描述故事内时空，与每条前缀「系统落库时刻」及【当前时间】独立，勿混用**。` +
+    (hasSidePerspectiveRedact ? ` ${STORY_TIMELINE_SIDE_PERSPECTIVE_KNOWLEDGE_RULES}` : '') +
+    `）`
+  return `${parts.join('\n\n')}\n\n${footer}`
 }
 
 const STORY_TIMELINE_INJECT_ROW_HEADER_RE =
-  /---\s*(?:摘要|召回)\s*(\d+)\s*·\s*(近端固定|向量命中)(?:\s*·\s*相似\s*([\d.]+)%)?\s*---\s*\n([\s\S]*?)(?=\n\n---\s*(?:摘要|召回)|\n\n（剧情时间轴|$|\n\n【)/g
+  /---\s*(?:摘要|召回)\s*(\d+)\s*·\s*(.+?)\s*·\s*(?:相似\s*([\d.]+)%|(近端固定|向量命中))\s*---\s*\n([\s\S]*?)(?=\n\n---\s*(?:摘要|召回)|\n\n（剧情时间轴|$|\n\n【)/g
 
 /** 从已格式化的剧情时间轴注入块解析各行（思维溯源 UI） */
 export function parseStoryTimelineInjectBodyForTrace(text: string): StoryTimelineInjectTraceRow[] {
@@ -882,18 +1158,17 @@ export function parseStoryTimelineInjectBodyForTrace(text: string): StoryTimelin
   const rowRe = new RegExp(STORY_TIMELINE_INJECT_ROW_HEADER_RE.source, 'g')
   let m: RegExpExecArray | null
   while ((m = rowRe.exec(raw)) !== null) {
-    const kindLabel = m[2]?.trim()
+    const titleLabel = m[2]?.trim()
     const simRaw = m[3]?.trim()
-    const body = m[4]?.trim()
+    const kindLabel = m[4]?.trim()
+    const body = m[5]?.trim()
     if (!body) continue
     const injectKind: StoryTimelineInjectKind =
-      kindLabel === STORY_TIMELINE_INJECT_LABEL_VECTOR ? 'vector' : 'recent'
+      simRaw || kindLabel === STORY_TIMELINE_INJECT_LABEL_VECTOR ? 'vector' : 'recent'
     const sim = simRaw ? Number(simRaw) / 100 : undefined
     out.push({
       injectKind,
-      label:
-        kindLabel ||
-        (injectKind === 'vector' ? STORY_TIMELINE_INJECT_LABEL_VECTOR : STORY_TIMELINE_INJECT_LABEL_RECENT),
+      label: titleLabel || kindLabel || (injectKind === 'vector' ? STORY_TIMELINE_INJECT_LABEL_VECTOR : STORY_TIMELINE_INJECT_LABEL_RECENT),
       content: body,
       ...(typeof sim === 'number' && Number.isFinite(sim) ? { relevanceScore: sim } : {}),
     })

@@ -1,5 +1,5 @@
 import { fetchModels } from '../../api/apiSim'
-import type { ApiConfig } from '../../api/types'
+import type { ApiConfig, ApiConfigCore } from '../../api/types'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { MemorySettingsRow } from '../newFriendsPersona/types'
 
@@ -27,7 +27,7 @@ export function resolveTimelineSummaryApiCredentials(
  */
 export function resolveTimelineSummaryApiConfigFromSettings(
   settings: MemorySettingsRow,
-  chatFallback: ApiConfig | null | undefined,
+  chatFallback: ApiConfigCore | null | undefined,
 ): ApiConfig | null {
   const cred = resolveTimelineSummaryApiCredentials(settings, chatFallback)
   if (!cred) return null
@@ -41,12 +41,15 @@ export function resolveTimelineSummaryApiConfigFromSettings(
     apiUrl: cred.apiUrl,
     apiKey: cred.apiKey,
     modelId,
-    modelList: chatFallback?.modelList ?? [],
+    modelList:
+      chatFallback && 'modelList' in chatFallback && Array.isArray(chatFallback.modelList)
+        ? chatFallback.modelList
+        : [],
   }
 }
 
 export async function resolveTimelineSummaryApiConfig(
-  chatFallback: ApiConfig | null | undefined,
+  chatFallback: ApiConfigCore | null | undefined,
 ): Promise<ApiConfig | null> {
   const settings = await personaDb.getMemorySettings()
   return resolveTimelineSummaryApiConfigFromSettings(settings, chatFallback)

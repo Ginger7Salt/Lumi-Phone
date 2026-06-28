@@ -24,6 +24,9 @@ export type ApiConfig = {
   lastTest?: { ok: boolean; message: string; at: number }
 }
 
+/** 聊天/摘要 API 最小字段（无 modelList，dating/摘要 fallback 常用） */
+export type ApiConfigCore = Pick<ApiConfig, 'apiUrl' | 'apiKey' | 'modelId'>
+
 export type SubApiConfig = {
   enabled: boolean
   useMainApi: boolean

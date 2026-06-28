@@ -1,5 +1,6 @@
-import type { ApiConfig } from '../../api/types'
+import type { ApiConfigCore } from '../../api/types'
 import { requestStoryTimelineSummaryOnly } from '../wechatChatAi'
+import { loadStoryTimelineOpenAnchorsBlockForSummary } from './storyTimelinePersist'
 import { resolveTimelineSummaryApiConfig } from './memoryTimelineSummaryApi'
 import {
   hasTimelineDeltaContent,
@@ -7,11 +8,13 @@ import {
 } from './storyTimelineTypes'
 
 export type StoryTimelineSummaryFallbackParams = {
-  chatFallback: ApiConfig | null
+  chatFallback: ApiConfigCore | null
   materialBlock: string
   peerCharacterId?: string
   latestRoundBody?: string
   storyTimeHintMs?: number | null
+  /** 屏外平行等：勿注入 peer 未收锚点，避免模型写约会主角动机/待办 */
+  skipPriorOpenAnchors?: boolean
 }
 
 /** 模型未输出 timeline 时，用摘要表接口（或聊天主接口）单独补写增量 */
@@ -24,12 +27,17 @@ export async function fetchStoryTimelineSummaryFallback(
   const latest = String(params.latestRoundBody || '').trim()
   if (!material && !latest) return undefined
   try {
+    const priorOpenAnchorsBlock =
+      params.skipPriorOpenAnchors || !params.peerCharacterId
+        ? ''
+        : await loadStoryTimelineOpenAnchorsBlockForSummary(params.peerCharacterId)
     const delta = await requestStoryTimelineSummaryOnly({
       apiConfig: api,
       materialBlock: material,
       peerCharacterId: params.peerCharacterId,
       latestRoundBody: latest,
       storyTimeHintMs: params.storyTimeHintMs,
+      priorOpenAnchorsBlock,
     })
     return delta && hasTimelineDeltaContent(delta) ? delta : undefined
   } catch (e) {

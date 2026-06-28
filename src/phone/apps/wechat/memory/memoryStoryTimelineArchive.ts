@@ -51,6 +51,7 @@ function hasMeaningfulState(state: StoryTimelineState | null | undefined): boole
     state.costumes.length ||
     state.items.length ||
     state.foreshadows.length ||
+    (state.todos?.length ?? 0) ||
     state.recentEvents.length
   )
 }

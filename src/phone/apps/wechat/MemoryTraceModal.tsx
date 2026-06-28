@@ -23,30 +23,30 @@ function pct(score: number): string {
 }
 
 function contextSourceLabel(kind: 'private_chat' | 'offline_plot' | 'meet_chat'): string {
-  if (kind === 'offline_plot') return '已总结·剧情'
-  if (kind === 'meet_chat') return '已总结·遇见'
-  return '已总结·记忆'
+  if (kind === 'offline_plot') return '线下·剧情原文'
+  if (kind === 'meet_chat') return '遇见·原文'
+  return '私聊·消息原文'
 }
 
-function storyTimelineInjectBadge(kind: 'state' | 'recent' | 'vector') {
-  if (kind === 'vector') {
-    return (
-      <span className="rounded-md bg-emerald-100/70 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-900">
-        向量命中
-      </span>
-    )
-  }
-  if (kind === 'recent') {
-    return (
-      <span className="rounded-md bg-amber-100/70 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
-        近端固定
-      </span>
-    )
-  }
+function storyTimelineInjectBadge(row: { injectKind: 'state' | 'recent' | 'vector'; label?: string }) {
+  const kindLabel =
+    row.injectKind === 'vector' ? '标题召回' : row.injectKind === 'recent' ? '近端固定' : '合并快照'
+  const title = row.label?.trim()
+  const showTitle =
+    !!title && title !== kindLabel && title !== '向量命中' && title !== '近端固定'
+  const kindClass =
+    row.injectKind === 'vector'
+      ? 'bg-emerald-100/70 text-emerald-900'
+      : row.injectKind === 'recent'
+        ? 'bg-amber-100/70 text-amber-900'
+        : 'bg-neutral-200/80 text-neutral-700'
   return (
-    <span className="rounded-md bg-neutral-200/80 px-1.5 py-0.5 text-[10px] font-semibold text-neutral-700">
-      合并快照
-    </span>
+    <div className="flex flex-wrap items-center gap-1.5">
+      {showTitle ? (
+        <span className="text-[12px] font-semibold leading-snug text-neutral-800">{title}</span>
+      ) : null}
+      <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${kindClass}`}>{kindLabel}</span>
+    </div>
   )
 }
 
@@ -85,7 +85,7 @@ function InjectionSummaryBar(props: { summary: NonNullable<MemoryTraceData['inje
         {chip(`关键词 ${s.keywordHitCount}`, s.keywordHitCount > 0, s.keywordHitCount > 0 ? 'gold' : 'muted')}
         {chip(`长期向量 ${s.longTermVectorCount}`, s.longTermVectorCount > 0, s.longTermVectorCount > 0 ? 'gold' : 'muted')}
         {chip(
-          `已总结语义 ${s.contextVectorRecallCount}`,
+          `游标前原文 ${s.contextVectorRecallCount}`,
           s.contextVectorRecallEnabled && s.contextVectorRecallCount > 0,
           !s.contextVectorRecallEnabled ? 'muted' : s.contextVectorRecallCount > 0 ? 'green' : 'muted',
         )}
@@ -358,14 +358,14 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                     badge={
                       matrix.deepMemory.contextVectorRecalls?.length ? (
                         <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
-                          +{matrix.deepMemory.contextVectorRecalls.length} 已总结语义
+                          +{matrix.deepMemory.contextVectorRecalls.length} 游标前原文
                         </span>
                       ) : null
                     }
                   >
                     <div className="space-y-5 px-1">
                       <p className="text-[11px] leading-relaxed text-neutral-500">
-                        长期记忆（关键词 + 向量）与「已总结片段」语义召回分开展示；顺序与 prompt 一致，先于剧情时间轴与游标摘录。
+                        长期记忆（关键词 + 向量）与「游标前原文」语义召回分开展示；顺序与 prompt 一致，先于剧情时间轴与游标摘录。
                       </p>
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">Keyword Hits · 关键词命中</p>
@@ -431,13 +431,13 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                         </ul>
                       </div>
                       <div>
-                        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">Context Vector · 已总结片段语义召回</p>
-                        <p className="mt-1 text-[11px] text-neutral-500">【语义召回·已总结片段】块：对已入库长期记忆与剧情时间轴摘要建索引后按本轮语境召回；游标后未总结原文见下方「尚未总结」块。</p>
+                        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">Context Vector · 游标前原文语义召回</p>
+                        <p className="mt-1 text-[11px] text-neutral-500">【语义召回·游标前原文】：对游标已覆盖的私聊消息与线下剧情正文建索引后按本轮语境召回；不含线下摘要表；游标后未总结原文见下方「尚未总结」块。</p>
                         {!matrix.deepMemory.contextVectorRecalls?.length ? (
                           <p className="mt-2 text-[12px] text-neutral-400">
                             {data.injectionSummary?.contextVectorRecallEnabled === false
-                              ? '已在设置中关闭已总结语义召回'
-                              : '本轮未召回已总结片段（或无索引 / 相似度不足）'}
+                              ? '已在设置中关闭游标前原文语义召回'
+                              : '本轮未召回游标前原文（或无索引 / 相似度不足）'}
                           </p>
                         ) : (
                           <ul className="mt-2 space-y-3">
@@ -479,7 +479,7 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                     <div className="px-1">
                       <p className="text-[12px] leading-relaxed text-neutral-600">
                         由自动总结维护的结构化时空 / 在场人物 / 未收伏笔；承接剧情时优先对照本块。
-                        每条摘要标注「近端固定」（最近 5 轮必带）或「向量命中」（语义召回）。
+                        每条摘要行头为「摘要标题 · 近端固定」或「摘要标题 · 相似 xx%」（向量按标题召回，非全文）。侧幕叙写且 {'{{char}}'} 未在场的摘要注入时会 redact，模型不得全知复述。
                       </p>
                       {storyTimelineInjected ? (
                         matrix.storyTimeline!.rows?.length ? (
@@ -497,7 +497,7 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                               >
                                 <div className="flex items-start gap-3">
                                   <div className="min-w-0 flex-1">
-                                    {storyTimelineInjectBadge(row.injectKind)}
+                                    {storyTimelineInjectBadge(row)}
                                     <pre className="mt-2 max-h-[min(32vh,280px)] overflow-y-auto whitespace-pre-wrap break-words font-sans text-[12px] leading-relaxed text-neutral-800 [scrollbar-width:thin]">
                                       {row.content}
                                     </pre>
@@ -538,7 +538,7 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">本轮注入 · 线下剧情（最近 {MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS} 轮 AI）</p>
                         <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
-                          与 prompt 一致：游标后仅注入最近 {MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS} 轮 AI 剧情及其间玩家输入；此处逐条展示 AI 回复。更早未总结段由剧情时间轴 / 长期记忆 / 语义召回承接。
+                          与 prompt 一致：游标后最近 {MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS} 轮 AI 剧情及其间玩家输入以原文注入（优先于上方近端摘要）；此处逐条展示 AI 回复。更早未总结段由剧情时间轴近端摘要 / 长期记忆 / 语义召回承接。
                         </p>
                         <ul className="mt-2 space-y-3">
                           {injectedOfflinePlotRows.map((row, i) => (

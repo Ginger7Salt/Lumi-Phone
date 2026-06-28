@@ -55,6 +55,40 @@ export function replaceBareTokenOutsidePlaceholders(
     .join('')
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** 展示层兜底：逐 id 强制替换仍未展开的 `{{id:…}}` */
+export function forceExpandRemainingMemoryIdPlaceholders(
+  text: string,
+  idToDisplayName: Readonly<Record<string, string>>,
+): string {
+  let s = normalizeMemoryIdPlaceholderSyntax(String(text ?? ''))
+  if (!s.includes('{{id:')) return s
+  for (const id of collectMemoryIdPlaceholderIds([s])) {
+    const name = String(idToDisplayName[id] ?? '').trim() || '其他角色'
+    const re = new RegExp(`\\{\\{id:\\s*${escapeRegExp(id)}\\s*\\}\\}`, 'g')
+    s = s.replace(re, name)
+  }
+  return s
+}
+
+/** 编辑面板保存：将展示用真实姓名还原为 `{{id:…}}`（长名优先，避免短名误替） */
+export function collapseDisplayNamesToMemoryIdPlaceholders(
+  text: string,
+  idToDisplayName: Readonly<Record<string, string>>,
+): string {
+  let s = String(text ?? '')
+  const entries = Object.entries(idToDisplayName)
+    .filter(([, name]) => String(name).trim())
+    .sort((a, b) => String(b[1]).length - String(a[1]).length)
+  for (const [id, name] of entries) {
+    s = replaceBareTokenOutsidePlaceholders(s, String(name).trim(), `{{id:${id}}}`)
+  }
+  return s
+}
+
 /** 将 `{{id:错误id}}` 纠正为 `{{id:canonicalId}}`（含嵌套解开后再替换）。 */
 export function applyMemoryIdPlaceholderCorrections(
   text: string,

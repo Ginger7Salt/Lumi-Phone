@@ -269,8 +269,8 @@ export function MemoryVectorRecallConfig({
             ) : null}
 
             <ConfigBlock
-              title="已总结片段召回"
-              description="对已入库长期记忆与剧情时间轴摘要建索引并语义检索（不含游标后未总结原文）"
+              title="游标前原文召回"
+              description="对游标已覆盖的私聊消息与线下剧情正文建索引并语义检索（不含线下摘要表与游标后未总结原文）"
               action={
                 <MemoryEngineSoftSwitch
                   on={contextVectorRecallEnabled}

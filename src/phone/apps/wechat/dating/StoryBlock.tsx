@@ -2,10 +2,13 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { useExpandedStoryTimelineSnapshot } from '../memory/useExpandedStoryTimelineSnapshot'
+import { useDating } from './DatingContext'
+import { PlotDimensionPanel } from './PlotDimensionPanel'
 import { getAiPlotVersionSlices, getAiVersionArrays } from './plotVersions'
 import { resolveDatingPlotDisplayFromItem } from './plotCoT'
 import { PlotRichParagraph } from './plotRichText'
-import type { BranchOption, PlotItem } from './types'
+import type { BranchOption, NarrativePerspective, PlotDimensionKind, PlotItem } from './types'
 
 export type BranchChoicesSlot = {
   loading: boolean
@@ -63,6 +66,8 @@ function TypewriterShimmer() {
 
 type Props = {
   plot: PlotItem
+  /** 展开剧情时间轴占位符时使用的角色 id（与 loadStoryTimelinePromptBlock 同源） */
+  timelineExpandCharacterId?: string | null
   isRegenerating: boolean
   interactionLocked?: boolean
   /** 是否允许「重新回复」（由父级根据是否为列表最后一条 AI 决定） */
@@ -73,10 +78,37 @@ type Props = {
   onVersionChange?: (nextIndex: number) => void
   /** 末条 AI 卡内折叠：剧情分支选项 */
   branchChoices?: BranchChoicesSlot
+  narrativePerspective?: NarrativePerspective
+}
+
+function PlotDimensionChip({
+  label,
+  filled,
+  onClick,
+}: {
+  label: string
+  filled: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-lg border px-2 py-1 text-[11px] font-medium leading-none transition-colors ${
+        filled
+          ? 'border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100/80'
+          : 'border-stone-200 bg-white/90 text-stone-600 hover:border-stone-300 hover:bg-stone-50'
+      }`}
+    >
+      {label}
+      {filled ? <span className="ml-1 inline-block size-1.5 rounded-full bg-violet-500 align-middle" aria-hidden /> : null}
+    </button>
+  )
 }
 
 export function StoryBlock({
   plot,
+  timelineExpandCharacterId = null,
   isRegenerating,
   interactionLocked,
   canRegenerate,
@@ -85,7 +117,9 @@ export function StoryBlock({
   onDelete,
   onVersionChange,
   branchChoices,
+  narrativePerspective = 'second',
 }: Props) {
+  const { generatePlotDimension, currentArchive } = useDating()
   const aiSplit = useMemo(() => {
     if (plot.type !== 'ai') return { thinkingText: '', displayBody: plot.content }
     return resolveDatingPlotDisplayFromItem(plot)
@@ -101,16 +135,23 @@ export function StoryBlock({
     }
   }, [plot])
 
-  const timelineSnapshotText = useMemo(() => {
+  const timelineSnapshotRaw = useMemo(() => {
     if (plot.type !== 'ai') return ''
     return getAiPlotVersionSlices(plot).timelineSnapshot?.trim() ?? ''
   }, [plot])
+  const timelineSnapshotText = useExpandedStoryTimelineSnapshot(
+    timelineExpandCharacterId,
+    timelineSnapshotRaw,
+  )
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [ctxOpen, setCtxOpen] = useState(false)
   const [ctxPos, setCtxPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const [pressing, setPressing] = useState(false)
+  const [dimensionPanel, setDimensionPanel] = useState<PlotDimensionKind | null>(null)
+  const [dimensionLoading, setDimensionLoading] = useState(false)
+  const [dimensionError, setDimensionError] = useState<string | null>(null)
   const pressTimer = useRef<number | null>(null)
   const startRef = useRef<{ x: number; y: number } | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -190,6 +231,39 @@ export function StoryBlock({
   }
 
   const bodyChars = countPlotCharsExcludePunctuation(plot.type === 'ai' ? aiSplit.displayBody : plot.content)
+
+  const defaultDimensionLength =
+    typeof currentArchive.datingLengthTargetChars === 'number' &&
+    Number.isFinite(currentArchive.datingLengthTargetChars)
+      ? currentArchive.datingLengthTargetChars
+      : 500
+
+  const openDimensionPanel = useCallback((kind: PlotDimensionKind) => {
+    setDimensionError(null)
+    setDimensionPanel(kind)
+  }, [])
+
+  const handleDimensionGenerate = useCallback(
+    async (writingGuide: string, lengthTargetChars: number) => {
+      if (!dimensionPanel) return
+      setDimensionLoading(true)
+      setDimensionError(null)
+      try {
+        await generatePlotDimension(
+          plot.id,
+          dimensionPanel,
+          writingGuide,
+          lengthTargetChars,
+          narrativePerspective,
+        )
+      } catch (e) {
+        setDimensionError(e instanceof Error ? e.message : '生成失败，请稍后重试')
+      } finally {
+        setDimensionLoading(false)
+      }
+    },
+    [dimensionPanel, generatePlotDimension, narrativePerspective, plot.id],
+  )
 
   const versionPager =
     plot.type === 'ai' && versionInfo.hasPager && onVersionChange && !editing && !isRegenerating ? (
@@ -388,8 +462,10 @@ export function StoryBlock({
   return (
     <>
     <motion.div layout className="group relative mb-5" transition={{ type: 'spring', stiffness: 380, damping: 32 }}>
+      <div className="mb-2 flex items-start gap-2">
+        <div className="min-w-0 flex-1 flex flex-col gap-2">
       {thinkingText ? (
-        <details className="mb-2 rounded-lg border border-stone-200 bg-stone-50/80 px-2.5 py-1.5">
+        <details className="rounded-lg border border-stone-200 bg-stone-50/80 px-2.5 py-1.5">
           <summary
             onContextMenu={suppressSystemTextUi.onContextMenu}
             className="cursor-pointer select-none touch-manipulation list-none text-[12px] text-[#6b7280] [-webkit-touch-callout:none] [-webkit-user-select:none] [&::-webkit-details-marker]:hidden"
@@ -408,7 +484,7 @@ export function StoryBlock({
       ) : null}
 
       {timelineSnapshotText ? (
-        <details className="listen-together-cn-text mb-2 rounded-lg border border-emerald-200/80 bg-emerald-50/50 px-2.5 py-1.5">
+        <details className="listen-together-cn-text rounded-lg border border-emerald-200/80 bg-emerald-50/50 px-2.5 py-1.5">
           <summary
             onContextMenu={suppressSystemTextUi.onContextMenu}
             className="cursor-pointer select-none touch-manipulation list-none text-[12px] text-emerald-800/90 [-webkit-touch-callout:none] [-webkit-user-select:none] [&::-webkit-details-marker]:hidden"
@@ -425,6 +501,47 @@ export function StoryBlock({
           </pre>
         </details>
       ) : null}
+        </div>
+        <div className="flex shrink-0 flex-col gap-1 pt-0.5">
+          <PlotDimensionChip
+            label="平行事件"
+            filled={!!plot.parallelEvent?.content?.trim()}
+            onClick={() => openDimensionPanel('parallel')}
+          />
+          <PlotDimensionChip
+            label="IF线"
+            filled={!!plot.ifLine?.content?.trim()}
+            onClick={() => openDimensionPanel('if')}
+          />
+        </div>
+      </div>
+
+      <PlotDimensionPanel
+        open={dimensionPanel === 'parallel'}
+        kind="parallel"
+        artifact={plot.parallelEvent}
+        defaultLengthTarget={defaultDimensionLength}
+        loading={dimensionLoading}
+        error={dimensionError}
+        onClose={() => {
+          setDimensionPanel(null)
+          setDimensionError(null)
+        }}
+        onGenerate={handleDimensionGenerate}
+      />
+      <PlotDimensionPanel
+        open={dimensionPanel === 'if'}
+        kind="if"
+        artifact={plot.ifLine}
+        defaultLengthTarget={defaultDimensionLength}
+        loading={dimensionLoading}
+        error={dimensionError}
+        onClose={() => {
+          setDimensionPanel(null)
+          setDimensionError(null)
+        }}
+        onGenerate={handleDimensionGenerate}
+      />
 
       <motion.div
         ref={cardRef}

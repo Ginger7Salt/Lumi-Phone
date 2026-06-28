@@ -616,7 +616,10 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
     })
   }
 
-  const storyTimeline = buildStoryTimelineTraceBlock(params.storyTimelineNotes ?? '', expand)
+  const storyTimelineNotesExpanded = params.storyTimelineNotes?.trim()
+    ? await personaDb.expandStoryTimelineTextForDisplay(cid, params.storyTimelineNotes)
+    : ''
+  const storyTimeline = buildStoryTimelineTraceBlock(storyTimelineNotesExpanded, expand)
 
   const recentRoundRefs = buildRecentRoundRefsForTrace({
     recentPrivate: params.recentPrivateAiRoundsNotes ?? '',
@@ -930,7 +933,11 @@ export async function publishDatingOfflineMemoryTrace(params: {
   const { displayBody } = resolveDatingAssistantDisplayText(params.rawAssistantOutput)
   const lastReply = stripDatingVnVoiceParamsForMemoryTrace(displayBody).trim()
 
-  const storyTimeline = buildStoryTimelineTraceBlock(params.storyTimelineNotes ?? '', expand)
+  const datingCid = params.characterId.trim()
+  const storyTimelineNotesExpanded = params.storyTimelineNotes?.trim()
+    ? await personaDb.expandStoryTimelineTextForDisplay(datingCid, params.storyTimelineNotes)
+    : ''
+  const storyTimeline = buildStoryTimelineTraceBlock(storyTimelineNotesExpanded, expand)
 
   const recentRoundRefs = buildRecentRoundRefsForTrace({
     recentPrivate: params.recentPrivateAiRoundsNotes ?? '',

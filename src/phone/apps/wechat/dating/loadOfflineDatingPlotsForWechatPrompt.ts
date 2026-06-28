@@ -108,6 +108,50 @@ export function buildOfflinePlotsFullText(opts: OfflinePlotBuildOpts): string {
   return clipReferenceTail(lines.join('\n'), opts.maxChars, '尚未总结·线下剧情')
 }
 
+/** 游标已覆盖的线下剧情正文（供语义召回索引；非线下摘要表 rowText） */
+export async function listSummarizedOfflinePlotContextLines(
+  characterId: string | null | undefined,
+  opts?: { peerDisplayName?: string | null; maxPlots?: number },
+): Promise<Array<{ line: string; timestamp: number; plotId: string }>> {
+  const cid = characterId?.trim()
+  if (!cid) return []
+  try {
+    const ctx = await resolveOfflineDatingArchiveContext(cid)
+    if (!ctx) return []
+    const plotCursor = await personaDb.getDatingPlotSummaryCursor(ctx.archiveCharacterId)
+    if (plotCursor == null || !Number.isFinite(plotCursor)) return []
+    const plots = await loadDatingPlotsFromKv(ctx.archiveCharacterId)
+    const maxPlots = Math.max(1, Math.min(80, Math.floor(opts?.maxPlots ?? 48)))
+    const borrowed = ctx.perspectiveCharacterId !== ctx.archiveCharacterId
+    const peerLabel = opts?.peerDisplayName?.trim() || (ctx.perspective?.name ?? '').trim() || '对方'
+    const rootName = (ctx.archiveOwner?.name ?? '').trim() || '主角'
+    const summarized = plots
+      .filter((p) => {
+        const ts = typeof p.timestamp === 'number' && Number.isFinite(p.timestamp) ? p.timestamp : 0
+        return ts > 0 && ts <= plotCursor
+      })
+      .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
+      .slice(-maxPlots)
+
+    const out: Array<{ line: string; timestamp: number; plotId: string }> = []
+    for (const p of summarized) {
+      const body = plotBodyForPrompt(p)
+      if (!body || body.length < 16) continue
+      const ts = resolvePlotSystemRecordedAtMs(p)
+      const timePrefix = formatPlotTraceDate(ts)
+      let line: string
+      if (p.type === 'player') line = `- [${timePrefix}] [线下·原文·我] ${body}`
+      else if (borrowed) line = `- [${timePrefix}] [线下·原文·「${rootName}」] ${body}`
+      else line = `- [${timePrefix}] [线下·原文·${peerLabel}] ${body}`
+      const plotId = p.id?.trim() || `plot-${ts}`
+      out.push({ line, timestamp: ts, plotId })
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
 function filterPlotsForNpcBorrowedArchive(
   tail: DatingPlotSnapshotItem[],
   perspective: Character | null,

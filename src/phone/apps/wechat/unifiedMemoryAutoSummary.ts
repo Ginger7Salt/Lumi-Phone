@@ -70,7 +70,7 @@ import {
 import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtils'
 import { writePerRoundStoryTimelineWithSeparateAttempt } from './memory/storyTimelinePerRoundSync'
 import { dispatchStoryTimelinePerRoundSyncResult } from './memory/storyTimelinePerRoundResultEvents'
-import { persistStoryTimelineFromSummaryDelta } from './memory/storyTimelinePersist'
+import { persistStoryTimelineFromSummaryDelta, loadStoryTimelineOpenAnchorsBlockForSummary } from './memory/storyTimelinePersist'
 import {
   buildDatingStoryTimelineFallbackMaterial,
   buildUnifiedStoryTimelineFallbackMaterial,
@@ -81,6 +81,7 @@ import {
   deleteStoryTimelineLinkedRowsForDatingRound,
   fanOutStoryTimelineLinkedRows,
   resolveNpcDisplayLabel,
+  type StoryTimelineLinkedFanOutEntry,
 } from './memory/storyTimelineLinkedFanOut'
 import { hasTimelineDeltaContent, type StoryTimelineEventScope } from './memory/storyTimelineTypes'
 import { resolveStoryTimeHintMsFromPlots, buildStoryTimelineCalendarContextBlock } from './memory/storyTimelineCalendarContext'
@@ -876,7 +877,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
   }
 
   const linkedNpcNamesWritten: string[] = []
-  const fanOutEntries: { characterId: string; content: string }[] = []
+  const fanOutEntries: StoryTimelineLinkedFanOutEntry[] = []
   for (const entry of linkedWritesToPersist) {
     let lb = applyMemoryIdPlaceholderCorrections(
       entry.content.trim(),
@@ -899,7 +900,11 @@ export async function applyUnifiedMemoryFromParsedSummary(
       } catch {
         /* keep lb */
       }
-      fanOutEntries.push({ characterId: entry.characterId.trim(), content: lb })
+      fanOutEntries.push({
+        characterId: entry.characterId.trim(),
+        content: lb,
+        timelineDelta: entry.timeline,
+      })
       continue
     }
     let linkedBindings: import('./newFriendsPersona/types').WorldBookUserPlaceholderBinding[] = []
@@ -979,6 +984,9 @@ export async function applyUnifiedMemoryFromParsedSummary(
         plotId: datingRound,
         recordedAtMs: now,
         resolveNpcLabel: resolveNpcDisplayLabel,
+        apiConfig: opts.timelineFallback?.chatFallback ?? null,
+        sharedPrimaryDelta: timelineDelta ?? undefined,
+        latestPlotBody: latestAiPlotBody,
       })),
     )
   }
@@ -1257,6 +1265,7 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
       peerCharacterId: gather.characterId,
       extraCharacterIds: collectSharedRecordOriginCharacterIds(gather.chunkMessages),
     }),
+    priorOpenAnchorsBlock: await loadStoryTimelineOpenAnchorsBlockForSummary(gather.characterId),
   })
 
   const applied = await applyUnifiedMemoryFromParsedSummary(summary, gather, {

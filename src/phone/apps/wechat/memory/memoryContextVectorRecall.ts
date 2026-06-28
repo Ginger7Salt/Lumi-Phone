@@ -1,6 +1,8 @@
 import type { ApiConfig } from '../../api/types'
 import type { MemorySettingsRow } from '../newFriendsPersona/types'
 import { personaDb } from '../newFriendsPersona/idb'
+import { listSummarizedOfflinePlotContextLines } from '../dating/loadOfflineDatingPlotsForWechatPrompt'
+import { listSummarizedPrivateChatContextLines } from '../wechatMemoryPromptBlocks'
 import { fetchEmbeddingVectorUnified, fetchEmbeddingVectorsUnified } from './memoryEmbeddingProvider'
 import {
   buildMemoryContextVectorId,
@@ -13,8 +15,6 @@ import {
   type MemoryContextVectorEntry,
   type MemoryContextVectorSourceKind,
 } from './memoryContextVectorTypes'
-import type { StoryTimelineEventScope } from './storyTimelineTypes'
-import { filterSummarizedStoryTimelineRows } from './summarizedStoryTimelineRowFilter'
 import { cosineSimilarity, isMemoryVectorRecallEnabled, type MemoryVectorRecallOpts } from './memoryVectorRecall'
 
 type ContextCandidate = {
@@ -83,84 +83,43 @@ function chunkLinesToCandidates(params: {
   return out
 }
 
-function summarizedMemoryScopeLabel(scope: string | undefined): string {
-  switch (scope) {
-    case 'group':
-      return '已总结·群聊'
-    case 'meet':
-      return '已总结·遇见'
-    case 'linked':
-      return '已总结·关联'
-    case 'moment':
-      return '已总结·朋友圈'
-    default:
-      return '已总结·私聊'
-  }
-}
-
-/** 长期记忆档案馆：已自动/手动总结入库的条目（不含游标后未总结原文） */
-async function gatherSummarizedMemoryCandidates(characterId: string): Promise<ContextCandidate[]> {
-  const cid = characterId.trim()
-  if (!cid) return []
-  const memories = await personaDb.listCharacterMemoriesForCharacter(cid)
-  const lines: Array<{ line: string; timestamp?: number; messageId?: string }> = []
-  for (const m of memories) {
-    const content = String(m.content || '').trim()
-    if (!content || content.length < 16) continue
-    lines.push({
-      line: `- [${summarizedMemoryScopeLabel(m.memoryScope)}] ${content.slice(0, 900)}`,
-      timestamp: m.updatedAt,
-      messageId: m.id,
-    })
-  }
-  return chunkLinesToCandidates({
-    characterId: cid,
-    sourceKind: 'private_chat',
-    sourceKey: cid,
-    lines,
-  })
-}
-
-function summarizedTimelineScopeLabel(scope: StoryTimelineEventScope | undefined): string {
-  switch (scope) {
-    case 'offline':
-      return '线下'
-    case 'meet':
-      return '遇见'
-    case 'group':
-      return '群聊'
-    case 'linked':
-      return '关联'
-    default:
-      return '线上'
-  }
-}
-
-/** 剧情时间轴行表：仅游标已覆盖的摘要行（不含游标后未总结 plot / 聊天原文） */
-async function gatherSummarizedTimelineCandidates(
+/** 游标已覆盖的私聊消息原文（非长期记忆 prose 摘要） */
+async function gatherSummarizedOnlineChatCandidates(
   characterId: string,
   conversationKey?: string | null,
 ): Promise<ContextCandidate[]> {
   const cid = characterId.trim()
+  const ck = conversationKey?.trim()
+  if (!cid || !ck) return []
+  const lines = await listSummarizedPrivateChatContextLines(ck)
+  if (!lines.length) return []
+  return chunkLinesToCandidates({
+    characterId: cid,
+    sourceKind: 'private_chat',
+    sourceKey: ck,
+    lines: lines.map((r) => ({
+      line: r.line,
+      timestamp: r.timestamp,
+      messageId: r.messageId,
+    })),
+  })
+}
+
+/** 游标已覆盖的线下剧情正文（非线下摘要表 rowText） */
+async function gatherSummarizedOfflinePlotBodyCandidates(characterId: string): Promise<ContextCandidate[]> {
+  const cid = characterId.trim()
   if (!cid) return []
-  const allRows = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
-  const rows = await filterSummarizedStoryTimelineRows(cid, allRows, { conversationKey })
-  const lines: Array<{ line: string; timestamp?: number; messageId?: string }> = []
-  for (const row of rows) {
-    const text = String(row.rowText || '').trim()
-    if (!text || text.length < 16) continue
-    const scope = summarizedTimelineScopeLabel(row.sourceScope)
-    lines.push({
-      line: `- [已总结·${scope}剧情] ${text.slice(0, 900)}`,
-      timestamp: row.recordedAt,
-      messageId: row.id,
-    })
-  }
+  const lines = await listSummarizedOfflinePlotContextLines(cid)
+  if (!lines.length) return []
   return chunkLinesToCandidates({
     characterId: cid,
     sourceKind: 'offline_plot',
     sourceKey: cid,
-    lines,
+    lines: lines.map((r) => ({
+      line: r.line,
+      timestamp: r.timestamp,
+      messageId: r.plotId,
+    })),
   })
 }
 
@@ -222,14 +181,20 @@ function formatContextRecallBlock(snippets: string[]): string {
   if (!snippets.length) return ''
   const body = snippets.map((s, i) => `${i + 1}. ${s}`).join('\n')
   return (
-    `【语义召回·已总结片段】\n` +
+    `【语义召回·游标前原文】\n` +
     `${body}\n` +
-    `（↑ 来自已入库的长期记忆与剧情时间轴摘要；游标后未总结原文见下方「尚未总结」块；勿机械复读。）`
+    `（↑ 来自游标已覆盖的私聊消息与线下剧情正文；**非**线下摘要表 / 非 prose 总结；游标后未总结原文见下方「尚未总结」块；勿机械复读。）`
   )
 }
 
+function contextRecallSnippetTag(sourceKind: MemoryContextVectorSourceKind): string {
+  if (sourceKind === 'offline_plot') return '线下·剧情原文'
+  if (sourceKind === 'meet_chat') return '遇见·原文'
+  return '私聊·消息原文'
+}
+
 /**
- * 对已总结长期记忆 / 剧情时间轴行建索引并语义召回，追加到长期记忆 prompt 尾部。
+ * 对游标已覆盖的私聊 / 线下剧情**原文**建索引并语义召回，追加到长期记忆 prompt 尾部。
  */
 export async function appendContextVectorRecallToMemoryText(params: {
   characterId: string
@@ -256,11 +221,11 @@ export async function appendContextVectorRecallToMemoryText(params: {
     const query = await fetchEmbeddingVectorUnified(params.settings, params.chatApiConfig, rawHay)
     if (!query?.vec.length) return { text: params.existingText, recalledCount: 0 }
 
-    const [memCandidates, timelineCandidates] = await Promise.all([
-      gatherSummarizedMemoryCandidates(cid),
-      gatherSummarizedTimelineCandidates(cid, params.conversationKey),
+    const [chatCandidates, plotCandidates] = await Promise.all([
+      gatherSummarizedOnlineChatCandidates(cid, params.conversationKey),
+      gatherSummarizedOfflinePlotBodyCandidates(cid),
     ])
-    const candidates = [...memCandidates, ...timelineCandidates]
+    const candidates = [...chatCandidates, ...plotCandidates]
     if (!candidates.length) return { text: params.existingText, recalledCount: 0 }
 
     const candidateIds = new Set(candidates.map((c) => c.id))
@@ -290,12 +255,7 @@ export async function appendContextVectorRecallToMemoryText(params: {
     if (!top.length) return { text: params.existingText, recalledCount: 0 }
 
     const snippets = top.map(({ entry, sim }) => {
-      const tag =
-        entry.sourceKind === 'offline_plot'
-          ? '已总结·剧情'
-          : entry.sourceKind === 'meet_chat'
-            ? '已总结·遇见'
-            : '已总结·记忆'
+      const tag = contextRecallSnippetTag(entry.sourceKind)
       return `（${tag}·sim ${sim.toFixed(2)}）${entry.text}`
     })
     const block = formatContextRecallBlock(snippets)
@@ -333,11 +293,11 @@ export async function getContextVectorRecallTraceForPromptInjection(params: {
     const query = await fetchEmbeddingVectorUnified(params.settings, params.chatApiConfig, rawHay)
     if (!query?.vec.length) return []
 
-    const [memCandidates, timelineCandidates] = await Promise.all([
-      gatherSummarizedMemoryCandidates(cid),
-      gatherSummarizedTimelineCandidates(cid, params.conversationKey),
+    const [chatCandidates, plotCandidates] = await Promise.all([
+      gatherSummarizedOnlineChatCandidates(cid, params.conversationKey),
+      gatherSummarizedOfflinePlotBodyCandidates(cid),
     ])
-    const candidates = [...memCandidates, ...timelineCandidates]
+    const candidates = [...chatCandidates, ...plotCandidates]
     if (!candidates.length) return []
 
     const candidateIds = new Set(candidates.map((c) => c.id))
@@ -373,16 +333,16 @@ export async function getContextVectorRecallTraceForPromptInjection(params: {
   }
 }
 
-/** 供思维溯源：列出本轮候选已总结片段（不写入 prompt） */
+/** 供思维溯源：列出本轮候选游标前原文（不写入 prompt） */
 export async function listContextVectorCandidatesForTrace(params: {
   characterId: string
   conversationKey?: string | null
 }): Promise<ContextCandidate[]> {
   const cid = params.characterId.trim()
   if (!cid) return []
-  const [mem, timeline] = await Promise.all([
-    gatherSummarizedMemoryCandidates(cid),
-    gatherSummarizedTimelineCandidates(cid, params.conversationKey),
+  const [chat, plot] = await Promise.all([
+    gatherSummarizedOnlineChatCandidates(cid, params.conversationKey),
+    gatherSummarizedOfflinePlotBodyCandidates(cid),
   ])
-  return [...mem, ...timeline]
+  return [...chat, ...plot]
 }

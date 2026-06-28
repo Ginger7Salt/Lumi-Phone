@@ -3,7 +3,7 @@ import { ChevronUp } from 'lucide-react'
 import { useMemo } from 'react'
 import { StoryBlock } from './StoryBlock'
 import { plotWithEditedCurrentVersion } from './plotVersions'
-import type { BranchOption, PlotItem } from './types'
+import type { BranchOption, NarrativePerspective, PlotItem } from './types'
 
 const MIN_VISIBLE = 3
 const MAX_VISIBLE = 80
@@ -14,11 +14,14 @@ function clampVisible(n: number) {
 
 type Props = {
   plots: PlotItem[]
+  /** 展开各轮剧情时间轴占位符（与剧情摘要表 / prompt 注入同源） */
+  timelineExpandCharacterId?: string | null
   /** 从尾部起最多展示多少条（其余视为「已隐藏」前缀，不删数据） */
   tailVisibleCount: number
   onTailVisibleCountChange: (n: number) => void
   regeneratingPlotId: string | null
   interactionLocked?: boolean
+  narrativePerspective?: NarrativePerspective
   onUpdatePlot: (
     plotId: string,
     patch: Partial<
@@ -47,10 +50,12 @@ type Props = {
 
 export function StoryFeed({
   plots,
+  timelineExpandCharacterId = null,
   tailVisibleCount,
   onTailVisibleCountChange,
   regeneratingPlotId,
   interactionLocked,
+  narrativePerspective,
   onUpdatePlot,
   onRegeneratePlot,
   onSetPlotVersionIndex,
@@ -110,10 +115,12 @@ export function StoryFeed({
           <StoryBlock
             key={p.id}
             plot={p}
+            timelineExpandCharacterId={timelineExpandCharacterId}
             isRegenerating={regeneratingPlotId === p.id}
             interactionLocked={interactionLocked}
             canRegenerate={canRegenerate}
             branchChoices={branchChoices}
+            narrativePerspective={narrativePerspective}
             onSaveBodyEdit={(body) => {
               const next = plotWithEditedCurrentVersion(p, body)
               onUpdatePlot(p.id, {

@@ -15,6 +15,13 @@ export function clampDatingLengthTargetChars(raw: number): number {
     Math.min(DATING_AI_LENGTH_TARGET_MAX, Math.round(n)),
   )
 }
+
+/** 平行事件 / IF 线面板：允许 1～上限任意整数，编辑时不强制 60 下限 */
+export function parsePlotDimensionLengthTarget(raw: number | string, fallback = 500): number {
+  const n = typeof raw === 'number' ? raw : Number(String(raw ?? '').trim())
+  if (!Number.isFinite(n)) return fallback
+  return Math.max(1, Math.min(DATING_AI_LENGTH_TARGET_MAX, Math.round(n)))
+}
 /** 送入约会剧情模型的上下文预算（词符/token；仍受 API/模型实际上限） */
 export const DATING_AI_MAX_CONTEXT_TOKENS = 200_000
 
@@ -54,6 +61,10 @@ export type NarrativeGenOptions = {
   directorMode?: boolean
   /** 本轮玩家指定出场的人脉角色 id（输入框展示姓名，模型侧按 id 注入） */
   presentNetworkCharacterIds?: string[]
+  /** 本轮发送时同轮生成平行事件（覆盖 archive 默认时可传） */
+  generateParallelOnSend?: boolean
+  /** 本轮发送时同轮生成 IF 线 */
+  generateIfLineOnSend?: boolean
 }
 
 export type PlotItemType = 'player' | 'ai'
@@ -156,6 +167,22 @@ export type PlotItem = {
    * 若最近一次完成本条时模型未提交补丁，则为 undefined。
    */
   worldBookAfterRevertEntries?: WorldBookAfterRevertEntry[]
+  /** 平行事件：与锚点同刻、异场景的切片（不影响主线 canon） */
+  parallelEvent?: PlotDimensionArtifact
+  /** IF 线：从锚点分歧的假设分支（不影响主线 canon） */
+  ifLine?: PlotDimensionArtifact
+}
+
+/** 剧情卡片「平行事件 / IF 线」生成结果 */
+export type PlotDimensionKind = 'parallel' | 'if'
+
+export type PlotDimensionArtifact = {
+  content: string
+  writingGuide: string
+  lengthTargetChars: number
+  updatedAt: number
+  /** 平行事件写入剧情摘要表时的结构化 delta（非原文） */
+  timelineDelta?: import('../memory/storyTimelineTypes').StoryTimelineSummaryDelta
 }
 
 export type BranchOption = {
@@ -187,6 +214,10 @@ export type CharacterArchive = {
   directorMode?: boolean
   /** 抢话：允许 AI 代写玩家当轮言行；关闭则不抢话。普通模式与 VN 共用 */
   autoUserReaction?: boolean
+  /** 发送剧情时同轮一并生成平行事件（写入卡片 + 时间轴摘要） */
+  generateParallelOnSend?: boolean
+  /** 发送剧情时同轮一并生成 IF 线（仅卡片阅读，不进 prompt） */
+  generateIfLineOnSend?: boolean
   lastDateAt: number | null
   pendingBranches: BranchOption[]
   branchNodeHistory: number[]
