@@ -83,8 +83,11 @@ import {
   resolveNpcDisplayLabel,
   type StoryTimelineLinkedFanOutEntry,
 } from './memory/storyTimelineLinkedFanOut'
-import { hasTimelineDeltaContent, type StoryTimelineEventScope } from './memory/storyTimelineTypes'
-import { resolveStoryTimeHintMsFromPlots, buildStoryTimelineCalendarContextBlock } from './memory/storyTimelineCalendarContext'
+import { hasTimelineDeltaContent, parseStoryTimelineSummaryDelta, type StoryTimelineEventScope } from './memory/storyTimelineTypes'
+import {
+  resolveStoryCalendarAnchorFromPlots,
+  buildStoryTimelineCalendarContextBlock,
+} from './memory/storyTimelineCalendarContext'
 import {
   applyEpiloguePatchesFromAutoSummary,
   finalizeWorldBookAfterAutoSummaryPhase,
@@ -123,6 +126,9 @@ export type DatingPlotSnapshotItem = {
   /** 剧情气泡 id；约会关联记忆按轮覆盖时需要 */
   id?: string
   planSummary?: string
+  /** 故事内时间轴 JSON（供承接锚点，非落库时刻） */
+  timelineDelta?: import('./memory/storyTimelineTypes').StoryTimelineSummaryDelta
+  timelineSnapshot?: string
 }
 
 /** 从快照末尾向前找最近一条 AI 剧情 id（用于约会关联记忆按气泡覆盖） */
@@ -150,6 +156,14 @@ function extractPlotsFromArchives(raw: unknown, characterId: string): DatingPlot
       typeof o.timestamp === 'number' && Number.isFinite(o.timestamp) ? o.timestamp : 1
     const id = typeof o.id === 'string' && o.id.trim() ? o.id.trim() : undefined
     const planSummary = typeof o.planSummary === 'string' ? o.planSummary : undefined
+    const timelineSnapshot =
+      typeof o.timelineSnapshot === 'string' && o.timelineSnapshot.trim()
+        ? o.timelineSnapshot.trim()
+        : undefined
+    const timelineDelta =
+      o.timelineDelta && typeof o.timelineDelta === 'object'
+        ? parseStoryTimelineSummaryDelta(o.timelineDelta)
+        : undefined
     if (!content.trim()) continue
     if (type !== 'player' && type !== 'ai') continue
     out.push({
@@ -158,6 +172,8 @@ function extractPlotsFromArchives(raw: unknown, characterId: string): DatingPlot
       timestamp,
       ...(id ? { id } : {}),
       ...(planSummary ? { planSummary } : {}),
+      ...(timelineDelta ? { timelineDelta } : {}),
+      ...(timelineSnapshot ? { timelineSnapshot } : {}),
     })
   }
   return out
@@ -618,7 +634,7 @@ export function buildTimelineFallbackParamsFromGather(
     }),
     peerCharacterId: gather.characterId,
     latestRoundBody,
-    storyTimeHintMs: resolveStoryTimeHintMsFromPlots(plots),
+    storyCalendarAnchor: resolveStoryCalendarAnchorFromPlots(plots),
   }
 }
 
@@ -1688,7 +1704,7 @@ export async function buildPrivateChatPerRoundMemoryAppendixForTurn(params: {
   const calendarContextBlock = await buildStoryTimelineCalendarContextBlock({
     peerCharacterId: params.characterId,
     sessionPlayerIdentityId: params.sessionPlayerIdentityId,
-    storyTimeHintMs: resolveStoryTimeHintMsFromPlots(gather.offlinePlotsPrior),
+    storyCalendarAnchor: resolveStoryCalendarAnchorFromPlots(gather.offlinePlotsPrior),
   })
 
   return buildDatingCombinedMemoryUserAppendix({

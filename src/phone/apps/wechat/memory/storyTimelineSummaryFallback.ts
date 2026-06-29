@@ -12,6 +12,9 @@ export type StoryTimelineSummaryFallbackParams = {
   materialBlock: string
   peerCharacterId?: string
   latestRoundBody?: string
+  /** 上一回合故事内公历锚点 */
+  storyCalendarAnchor?: string | null
+  /** @deprecated 勿作为剧情时刻注入 */
   storyTimeHintMs?: number | null
   /** 屏外平行等：勿注入 peer 未收锚点，避免模型写约会主角动机/待办 */
   skipPriorOpenAnchors?: boolean
@@ -36,7 +39,7 @@ export async function fetchStoryTimelineSummaryFallback(
       materialBlock: material,
       peerCharacterId: params.peerCharacterId,
       latestRoundBody: latest,
-      storyTimeHintMs: params.storyTimeHintMs,
+      storyCalendarAnchor: params.storyCalendarAnchor,
       priorOpenAnchorsBlock,
     })
     return delta && hasTimelineDeltaContent(delta) ? delta : undefined

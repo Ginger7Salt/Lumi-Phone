@@ -178,7 +178,6 @@ export async function resolveParallelEventSummaryDelta(params: {
     }),
     peerCharacterId: cid,
     latestRoundBody: parallel,
-    storyTimeHintMs: params.plot.timestamp,
     skipPriorOpenAnchors: true,
   })
 }

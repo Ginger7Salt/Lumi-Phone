@@ -173,6 +173,10 @@ export type StoryTimelineVectorRecallHit = {
 export type StoryTimelineSummaryDelta = {
   story_day?: string
   story_time?: string
+  /** 本轮剧情跨越时间段时的结束公历日（须含年份；可与 story_day 不同日） */
+  story_day_end?: string
+  /** 本轮剧情结束钟点（24h HH:mm；同日跨度或跨日结束时刻） */
+  story_time_end?: string
   relative_time?: string
   location?: string
   characters_present?: string[]
@@ -232,8 +236,10 @@ export const STORY_TIMELINE_SUMMARY_JSON_FIELDS = `
 - "timeline"（可选对象；材料中有可核对的时空、服装、物品、动机伏笔、待办或本轮关键事件时**应尽量填写**）：
   - "row_title": string，本轮摘要短标题（建议 4～10 字，可含问号/顿号；如「温柔瞬间」「化解冲突」「没听见？是没看见」；须概括本轮情绪或转折，勿写「第 N 轮」等序号）
   - "row_keywords": string[]，**必填 3～5 个**摘要检索词（每条 **≤5 个汉字**；写场景/人物/情绪/物品/关系等**可检索名词或短语**，如「晚自习」「误会」「牵手」「道歉」；禁止整句、禁止标点堆叠、禁止与 row_title 完全重复）
-  - "story_day": string，**含年份的公历剧情日**，如 "2025年10月1日"、"2025年2月14日（情人节）"；相对进度写 relative_time，勿用「第3天」代替公历
-  - "story_time": string，**24 小时制钟点**，如 "19:30"、"08:15"；材料仅有「傍晚/深夜」时须推断合理 HH:mm
+  - "story_day": string，**含年份的公历剧情日**（本轮开始或单点时刻之日），如 "2025年10月1日"；相对进度写 relative_time，勿用「第3天」代替公历；**禁止**写生成当日/落库时刻
+  - "story_time": string，**24 小时制钟点**（本轮开始或单点时刻），如 "19:30"；材料仅有「傍晚/深夜」时须推断合理 HH:mm
+  - "story_day_end": string（可选），本轮正文**结束**时的公历日（须含年份）；仅当剧情明确跨越时段时填写
+  - "story_time_end": string（可选），本轮正文**结束**钟点（HH:mm）；与 story_day_end 或 story_day 组成时间段；单点时刻可省略 end 字段
   - "relative_time": string，相对时间，如 "昨天"、"三天前"、"约会第 3 天"
   - "location": string，**须写可区分的具体地点**（建议 12～80 字）：含店名/路名/楼层或区域/包厢号等可核对锚点；**禁止**仅写「饭馆、餐厅、酒店、咖啡厅、学校、公司、家里」等空泛类名；可写「城东·云隐居日式料理·二楼靠窗席」「蓝海酒店 1208 套房客厅」
   - "characters_present": string[]，在场角色（用 {{user}} / {{char}} / {{id:UUID}}，勿写真名）
@@ -317,23 +323,16 @@ export function formatZhDateWithWeekday(
   return out
 }
 
-/** 展示层：把正文里旧的「仅日期」锚点升级为含时分（兼容已入库 rowText） */
-export function enrichStoryTimelineTextWithRecordedTime(
-  text: string,
-  recordedAtMs?: number | null,
-): string {
-  const raw = String(text ?? '').trim()
-  if (!raw) return raw
-  if (typeof recordedAtMs !== 'number' || !Number.isFinite(recordedAtMs)) return raw
-  const dateOnly = formatZhDateWithWeekday(recordedAtMs, { includeTime: false })
-  const withTime = formatZhDateWithWeekday(recordedAtMs, { includeTime: true })
-  if (dateOnly === withTime || raw.includes(withTime) || !raw.includes(dateOnly)) return raw
-  return raw.split(dateOnly).join(withTime)
+/** @deprecated 剧情锚点仅来自 story_day/story_time，不再用落库时刻补全 */
+export function enrichStoryTimelineTextWithRecordedTime(text: string, _recordedAtMs?: number | null): string {
+  return String(text ?? '').trim()
 }
 
 const GREGORIAN_ANCHOR_PART_RE = /^\d{4}年\d{1,2}月\d{1,2}日/
-const GREGORIAN_CALENDAR_LABEL_RE =
-  /(\d{4}年\d{1,2}月\d{1,2}日(?:\s+星期[日一二三四五六])?(?:\s+\d{1,2}:\d{2})?)/
+/** 剧情公历锚点（单点或「开始 - 结束」区间） */
+export const STORY_TIMELINE_GREGORIAN_ANCHOR_RE =
+  /\d{4}年\d{1,2}月\d{1,2}日(?:\s+星期[日一二三四五六])?(?:\s+\d{1,2}:\d{2})?(?:\s*-\s*\d{4}年\d{1,2}月\d{1,2}日(?:\s+星期[日一二三四五六])?(?:\s+\d{1,2}:\d{2})?)?/
+const GREGORIAN_CALENDAR_LABEL_RE = new RegExp(`(${STORY_TIMELINE_GREGORIAN_ANCHOR_RE.source})`)
 
 function hasGregorianYearInStoryDay(storyDay?: string): boolean {
   return GREGORIAN_ANCHOR_PART_RE.test(String(storyDay ?? '').trim())
@@ -364,53 +363,59 @@ export function stripSystemTimeFromStoryTimelineAnchorLabel(label: string): stri
   return kept.join(' · ')
 }
 
-/** 由 timeline 增量 + 落库时刻拼公历锚点（与线下剧情 trace 同风格） */
-export function composeStoryTimelineCalendarAnchorLabel(
-  delta: Pick<StoryTimelineSummaryDelta, 'story_day' | 'story_time'>,
-  recordedAtMs?: number | null,
-): string {
-  const storyDay = delta.story_day?.trim()
-  const storyTime = delta.story_time?.trim()
+function formatGregorianStoryEndpointLabel(storyDay?: string, storyTime?: string): string {
+  const dayRaw = String(storyDay ?? '').trim()
+  if (!dayRaw) return ''
   const clock = extractClockTimeFromStoryTime(storyTime)
-
-  if (storyDay && hasGregorianYearInStoryDay(storyDay)) {
-    let label = storyDay.trim()
+  if (hasGregorianYearInStoryDay(dayRaw)) {
+    let label = dayRaw
     if (!label.includes('星期')) {
-      const parsed = parseGregorianStoryDayDate(storyDay)
+      const parsed = parseGregorianStoryDayDate(dayRaw)
       if (parsed) {
         const wd = WEEKDAY_ZH[parsed.getDay()] ?? '日'
         label = `${label} 星期${wd}`
-      } else if (typeof recordedAtMs === 'number' && Number.isFinite(recordedAtMs)) {
-        label = formatZhDateWithWeekday(recordedAtMs, { includeTime: false })
       }
     }
     if (clock && !label.includes(clock)) label = `${label} ${clock}`
     return label.trim()
   }
-
-  if (typeof recordedAtMs === 'number' && Number.isFinite(recordedAtMs)) {
-    return formatZhDateWithWeekday(recordedAtMs, { includeTime: true })
+  const parts: string[] = [dayRaw]
+  if (storyTime?.trim()) {
+    if (clock && !dayRaw.includes(clock)) parts.push(clock)
+    else if (!clock) parts.push(storyTime.trim())
   }
-
-  const parts: string[] = []
-  if (storyDay) parts.push(storyDay)
-  if (storyTime) parts.push(storyTime)
   return parts.join(' ').trim()
 }
 
-/** 列表卡片副标题：年月日 + 时分（优先锚点公历，否则 recordedAt） */
+/** 由 timeline 增量拼**剧情内**公历锚点（禁止落库/生成时刻） */
+export function composeStoryTimelineCalendarAnchorLabel(
+  delta: Pick<
+    StoryTimelineSummaryDelta,
+    'story_day' | 'story_time' | 'story_day_end' | 'story_time_end'
+  >,
+): string {
+  const start = formatGregorianStoryEndpointLabel(delta.story_day, delta.story_time)
+  const hasEnd = Boolean(delta.story_day_end?.trim() || delta.story_time_end?.trim())
+  const endDay = delta.story_day_end?.trim() || delta.story_day?.trim()
+  const end = hasEnd ? formatGregorianStoryEndpointLabel(endDay, delta.story_time_end) : ''
+  if (start && end) return `${start} - ${end}`
+  if (start) return start
+  if (end) return end
+  return ''
+}
+
+/** 列表卡片副标题：剧情内公历锚点（单点或区间）；无锚点则空，不用落库时刻 */
 export function formatStoryTimelineListTimeLabel(
   text: string,
-  recordedAtMs?: number | null,
+  _recordedAtMs?: number | null,
 ): string {
   const raw = String(text ?? '').trim()
   const anchorMatch = raw.match(/【本轮锚点】([^\n]+)/)
   const anchorText = anchorMatch?.[1]?.trim() ?? ''
   const calMatch = anchorText.match(GREGORIAN_CALENDAR_LABEL_RE)
   if (calMatch?.[1]) return calMatch[1].trim()
-  if (typeof recordedAtMs === 'number' && Number.isFinite(recordedAtMs)) {
-    return formatZhDateWithWeekday(recordedAtMs, { includeTime: true })
-  }
+  const rangeMatch = anchorText.match(STORY_TIMELINE_GREGORIAN_ANCHOR_RE)
+  if (rangeMatch?.[0]) return rangeMatch[0].trim()
   return anchorText.split(' · ')[0]?.trim() ?? ''
 }
 
@@ -422,26 +427,12 @@ export function extractStoryTimelineAnchorLabelFromRowText(
   return formatStoryTimelineListTimeLabel(text, recordedAtMs)
 }
 
-/** 档案馆展示：补全锚点公历时分（兼容旧行仅「剧情日/时段」格式） */
+/** 档案馆展示：不再注入落库时刻；仅展示已入库的剧情锚点正文 */
 export function prepareStoryTimelineArchiveDisplayText(
   text: string,
-  recordedAtMs?: number | null,
+  _recordedAtMs?: number | null,
 ): string {
-  const raw = String(text ?? '').trim()
-  if (!raw) return raw
-  const enriched = enrichStoryTimelineTextWithRecordedTime(raw, recordedAtMs)
-  const anchorRe = /【本轮锚点】([^\n]+)/
-  const m = enriched.match(anchorRe)
-  if (!m) return enriched
-  const anchorBody = m[1] ?? ''
-  if (GREGORIAN_ANCHOR_PART_RE.test(anchorBody.split(' · ')[0]?.trim() ?? '')) {
-    return enriched
-  }
-  if (typeof recordedAtMs !== 'number' || !Number.isFinite(recordedAtMs)) return enriched
-  const calendar = formatZhDateWithWeekday(recordedAtMs, { includeTime: true })
-  const plotParts = stripSystemTimeFromStoryTimelineAnchorLabel(anchorBody)
-  const newAnchor = plotParts ? `${calendar} · ${plotParts}` : calendar
-  return enriched.replace(anchorRe, `【本轮锚点】${newAnchor}`)
+  return String(text ?? '').trim()
 }
 
 /** @deprecated 请用 prepareStoryTimelineArchiveDisplayText */
@@ -478,10 +469,14 @@ export function parseStoryTimelineSummaryDelta(raw: unknown): StoryTimelineSumma
 
   const storyDay = trimCell(o.story_day ?? o.storyDay, 48)
   const storyTime = trimCell(o.story_time ?? o.storyTime, 48)
+  const storyDayEnd = trimCell(o.story_day_end ?? o.storyDayEnd, 48)
+  const storyTimeEnd = trimCell(o.story_time_end ?? o.storyTimeEnd, 48)
   const relativeTime = trimCell(o.relative_time ?? o.relativeTime, 48)
   const location = trimCell(o.location, STORY_TIMELINE_LOCATION_MAX)
   if (storyDay) delta.story_day = storyDay
   if (storyTime) delta.story_time = storyTime
+  if (storyDayEnd) delta.story_day_end = storyDayEnd
+  if (storyTimeEnd) delta.story_time_end = storyTimeEnd
   if (relativeTime) delta.relative_time = relativeTime
   if (location) delta.location = location
 
@@ -618,6 +613,8 @@ export function hasTimelineDeltaContent(delta: StoryTimelineSummaryDelta): boole
     delta.row_title ||
     delta.story_day ||
     delta.story_time ||
+    delta.story_day_end ||
+    delta.story_time_end ||
     delta.relative_time ||
     delta.location ||
     (delta.characters_present?.length ?? 0) ||
@@ -652,8 +649,10 @@ export function mergeStoryTimelineState(
     recentEvents: [...base.recentEvents],
   }
 
-  if (delta.story_day) next.currentStoryDay = delta.story_day
-  if (delta.story_time) next.currentStoryTime = delta.story_time
+  if (delta.story_day_end) next.currentStoryDay = delta.story_day_end
+  else if (delta.story_day) next.currentStoryDay = delta.story_day
+  if (delta.story_time_end) next.currentStoryTime = delta.story_time_end
+  else if (delta.story_time) next.currentStoryTime = delta.story_time
   if (delta.location) next.currentLocation = delta.location
   if (delta.characters_present?.length) next.charactersPresent = [...delta.characters_present]
 
@@ -788,7 +787,7 @@ export function storyTimelineRowPreviewLine(displayText: string): string {
 /** 单轮 JSON timeline 增量 → 可读表格文本（plot 折叠面板用） */
 export function formatStoryTimelineDeltaForDisplay(
   delta: StoryTimelineSummaryDelta,
-  opts?: { recordedAtMs?: number | null },
+  _opts?: { recordedAtMs?: number | null },
 ): string {
   if (!hasTimelineDeltaContent(delta)) return ''
   const lines: string[] = []
@@ -797,13 +796,14 @@ export function formatStoryTimelineDeltaForDisplay(
   const rowKeywords = normalizeStoryTimelineRowKeywords(delta.row_keywords)
   if (rowKeywords.length) lines.push(`【摘要关键词】${rowKeywords.join('、')}`)
   const anchor: string[] = []
-  const calendarLabel = composeStoryTimelineCalendarAnchorLabel(delta, opts?.recordedAtMs)
+  const calendarLabel = composeStoryTimelineCalendarAnchorLabel(delta)
   if (calendarLabel) anchor.push(calendarLabel)
-  if (delta.story_day && !hasGregorianYearInStoryDay(delta.story_day)) {
+  else if (delta.story_day && !hasGregorianYearInStoryDay(delta.story_day)) {
     anchor.push(`剧情日 ${delta.story_day}`)
+    const clock = extractClockTimeFromStoryTime(delta.story_time)
+    if (delta.story_time && !clock) anchor.push(`时段 ${delta.story_time}`)
+    else if (clock) anchor.push(clock)
   }
-  const clock = extractClockTimeFromStoryTime(delta.story_time)
-  if (delta.story_time && !clock) anchor.push(`时段 ${delta.story_time}`)
   if (delta.relative_time) anchor.push(`相对 ${delta.relative_time}`)
   if (delta.location) anchor.push(`地点 ${delta.location}`)
   if (delta.characters_present?.length) anchor.push(`在场 ${delta.characters_present.join('、')}`)
@@ -903,7 +903,7 @@ export function buildStoryTimelinePlotRowFromDelta(
     typeof opts?.recordedAtMs === 'number' && Number.isFinite(opts.recordedAtMs)
       ? opts.recordedAtMs
       : Date.now()
-  const rowText = formatStoryTimelineDeltaForDisplay(delta, { recordedAtMs: recordedAt })
+  const rowText = formatStoryTimelineDeltaForDisplay(delta)
   if (!rowText.trim()) return null
   const textHash = computeStoryTimelineRowTextHash(rowText)
   const rowTitle = normalizeStoryTimelineRowTitle(delta.row_title)

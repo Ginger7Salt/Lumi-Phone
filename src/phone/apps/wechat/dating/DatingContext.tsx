@@ -50,7 +50,7 @@ import {
 } from './datingOnlineInjectScope'
 import { formatSystemRecordTime, resolveOnlineMessageTimeBoundsForConversation } from '../wechatCrossChannelTimeline'
 import { loadStoryTimelinePromptBlock, loadStoryTimelineOpenAnchorsBlockForSummary, rebuildStoryTimelineFromDatingPlots } from '../memory/storyTimelinePersist'
-import { buildStoryTimelineCalendarContextBlock, resolveStoryTimeHintMsFromPlots } from '../memory/storyTimelineCalendarContext'
+import { buildStoryTimelineCalendarContextBlock, resolveStoryCalendarAnchorFromPlots } from '../memory/storyTimelineCalendarContext'
 import {
   buildDatingStoryTimelineFallbackMaterial,
 } from '../memory/storyTimelineSummaryFallback'
@@ -259,11 +259,11 @@ async function buildDatingTurnModelExtras(params: {
       gather.plotsArchiveId,
       params.char.id,
     )
-    const storyTimeHintMs = resolveStoryTimeHintMsFromPlots(params.plotsSnapshotForGather)
+    const storyCalendarAnchor = resolveStoryCalendarAnchorFromPlots(params.plotsSnapshotForGather)
     const calendarContextBlock = await buildStoryTimelineCalendarContextBlock({
       peerCharacterId: params.char.id,
       sessionPlayerIdentityId: params.sessionPlayerIdentityId,
-      storyTimeHintMs,
+      storyCalendarAnchor,
     })
     const priorOpenAnchorsBlock = await loadStoryTimelineOpenAnchorsBlockForSummary(params.char.id)
     unifiedMemoryAppendix = buildDatingCombinedMemoryUserAppendix({
@@ -913,13 +913,28 @@ function createDefaultArchive(character: CharacterInfo): CharacterArchive {
   }
 }
 
-async function loadPlayerIdentityForDating(characterId: string): Promise<PlayerIdentity | null> {
-  const id = characterId.trim()
-  if (!id) return null
-  const row = await personaDb.getCharacter(id)
-  const pid = row?.playerIdentityId?.trim()
-  if (!pid) return null
-  return await personaDb.getPlayerIdentity(pid)
+async function loadPlayerIdentityForDating(
+  characterId: string,
+  sessionPlayerIdentityId?: string | null,
+): Promise<PlayerIdentity | null> {
+  const sid = String(sessionPlayerIdentityId ?? '').trim()
+  if (sid && sid !== '__none__') {
+    const sessionRow = await personaDb.getPlayerIdentity(sid).catch(() => null)
+    if (sessionRow) return sessionRow
+  }
+  const cid = characterId.trim()
+  if (!cid) return null
+  const row = await personaDb.getCharacter(cid).catch(() => null)
+  const bound = row?.playerIdentityId?.trim()
+  if (bound && bound !== '__none__') {
+    const boundRow = await personaDb.getPlayerIdentity(bound).catch(() => null)
+    if (boundRow) return boundRow
+  }
+  const appId = (await personaDb.getCurrentIdentityId()).trim()
+  if (appId && appId !== '__none__') {
+    return (await personaDb.getPlayerIdentity(appId).catch(() => null)) ?? null
+  }
+  return null
 }
 
 async function enrichAiPlotWithOptionalDimensions(params: {
@@ -938,7 +953,11 @@ async function enrichAiPlotWithOptionalDimensions(params: {
   if (!wantParallel && !wantIf) return params.aiPlot
 
   const tail = formatRecentPlotsForPrompt(params.plotsWithAi, params.char.realName, 2200)
-  const playerIdentity = await loadPlayerIdentityForDating(params.char.id)
+  const memCtx = await resolveDatingMemorySessionContext(params.char.id)
+  const playerIdentity = await loadPlayerIdentityForDating(
+    params.char.id,
+    memCtx.sessionPlayerIdentityId,
+  )
   const playerName =
     playerIdentity?.wechatNickname?.trim() || playerIdentity?.name?.trim() || null
   const lengthTarget = parsePlotDimensionLengthTarget(
@@ -1069,6 +1088,8 @@ function plotItemsToSnapshots(plots: PlotItem[]): DatingPlotSnapshotItem[] {
     content: p.content,
     timestamp: p.timestamp,
     ...(p.planSummary ? { planSummary: p.planSummary } : {}),
+    ...(p.type === 'ai' && p.timelineDelta ? { timelineDelta: p.timelineDelta } : {}),
+    ...(p.type === 'ai' && p.timelineSnapshot ? { timelineSnapshot: p.timelineSnapshot } : {}),
   }))
 }
 
@@ -1342,9 +1363,14 @@ function buildPlayerIdentityPromptBlock(
     const t = buildWorldBookText(identity, Math.max(400, cap), { voice: 'player_identity' }).trim()
     return t ? `\n【用户身份·世界书】\n${t}` : ''
   })()
+  const occupationIronRule = role
+    ? `【玩家身份铁律·最高优先级】凡描写**玩家本人（{{user}}）**的社会身份、职业、称谓、与 ${datingCharacterName}/NPC 的关系（如同事/员工/练习生/学生），**必须以本卡「职业/身份：${role}」及下方【用户身份·世界书】为准**。**禁止**擅自改写成公司员工、正式职员、打工人、办公室同事等与本卡矛盾的设定；**禁止**因 ${datingCharacterName} 的世界书、人脉网或长期记忆里出现模糊「上班/工作」字样，就把 {{user}} 默认当成 ${datingCharacterName} 的同事或下属——除非玩家身份卡或玩家世界书**明确**如此。\n`
+    : `【玩家身份铁律】凡涉及**玩家本人（{{user}}）**的身份与职业，须以本卡与【用户身份·世界书】为准；无写明的职务**禁止**臆造（尤其禁止默认写成 ${datingCharacterName} 的公司员工）。\n`
   return (
-    `【用户身份卡】身份与**玩家侧**世界书条目均描述**玩家本人**；与约会对象「${datingCharacterName}」的人设、世界书勿混写。${head}${occ}\n` +
-    `若当轮 user 里的「约会对象·世界书」或 system 档案室条目中，写明**玩家本人**的在校社团职务、职级等，且与本卡已知信息无矛盾，**一律以该条文为准**；**禁止**因本卡「职业/身份」栏未写而忽略，也**禁止**把条文里归玩家一方的职务改写到约会对象「${datingCharacterName}」头上。\n` +
+    `【用户身份卡 · 须完整参考（高于约会对象档案中对玩家的模糊猜测）】` +
+    `身份与**玩家侧**世界书条目均描述**玩家本人**；与约会对象「${datingCharacterName}」的人设、世界书勿混写。${head}${occ}\n` +
+    `${occupationIronRule}` +
+    `若当轮 user 里的「约会对象·世界书」或 system 档案室条目中，写明**玩家本人**的在校社团职务、职级等，且与本卡已知信息无矛盾，**一律以该条文为准**；**禁止**因本卡「职业/身份」栏未写而忽略，也**禁止**把条文里归玩家一方的职务改写到约会对象「${datingCharacterName}」头上；**若约会对象侧条文与本卡冲突，以本【用户身份卡】为准**。\n` +
     `${deixisRule}` +
     detailCard +
     wbBlock
@@ -1805,15 +1831,15 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
     character: (mainCharRow?.schedule as ScheduleTable | undefined) ?? null,
   })
   const userPromptRaw =
+        `${identityBlock}\n` +
+        `${playerGenderPronounReminder}` +
         datingCharProfileBlock +
         datingPhysiqueBlock +
         (datingCharWorldBg ? `【约会对象·世界背景】\n${datingCharWorldBg}\n\n` : '') +
         (datingCharWb
           ? `【约会对象·世界书】\n${datingCharWb}\n\n${worldBookRoleLockReminder}\n`
           : '') +
-        `${identityBlock}\n` +
         `${datingScheduleBlock}` +
-        `${playerGenderPronounReminder}` +
         (npcNetworkBlock.trim() ? `${npcNetworkBlock.trim()}\n\n` : '') +
         `${progressHint}\n` +
         `本轮模式：${roleMode}\n` +
@@ -2175,7 +2201,11 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       const tail = formatRecentPlotsForPrompt(arch.plots, char.realName, DATING_AI_BRANCH_TAIL_MAX)
       setBranchesLoading(true)
       try {
-        const playerIdentity = await loadPlayerIdentityForDating(characterId)
+        const memCtx = await resolveDatingMemorySessionContext(characterId)
+        const playerIdentity = await loadPlayerIdentityForDating(
+          characterId,
+          memCtx.sessionPlayerIdentityId,
+        )
         const list = await generateDatingBranchesAi({
           character: char,
           latestAiPlotBody: lastAi.content,
@@ -2500,7 +2530,11 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         const eff = resolveEffectiveDanmakuVisuals(g, pid, dmRow)
         if (eff.skipCharacter) return
         const chRow = await personaDb.getCharacter(pid)
-        const playerIdentity = await loadPlayerIdentityForDating(pid)
+        const memCtx = await resolveDatingMemorySessionContext(pid)
+        const playerIdentity = await loadPlayerIdentityForDating(
+          pid,
+          memCtx.sessionPlayerIdentityId,
+        )
         const playerDisplayName = playerIdentity?.name?.trim() || '用户'
         let worldBackgroundPrompt = ''
         if (chRow?.worldBackgroundEnabled !== false && chRow?.worldBackgroundId?.trim()) {
@@ -2516,7 +2550,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         const onlineCtx = await getOnlineMemoryContext(pid, {
           userText: lastPlayer?.content,
           plotTail,
-          sessionPlayerIdentityId: playerIdentity?.id ?? null,
+          sessionPlayerIdentityId: memCtx.sessionPlayerIdentityId,
           offlineUnsummarizedPlotSnapshot: plotItemsToSnapshots(arch.plots),
         })
         const { loadOfflineDatingPlotsPromptBlock } = await import('./loadOfflineDatingPlotsForWechatPrompt')
@@ -2604,10 +2638,11 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         let aiAppended = false
         try {
           const plotTail = formatRecentPlotsForPrompt(plotsForModel, char.realName, 1600)
-          const [playerIdentity, memCtx] = await Promise.all([
-            loadPlayerIdentityForDating(char.id),
-            resolveDatingMemorySessionContext(char.id),
-          ])
+          const memCtx = await resolveDatingMemorySessionContext(char.id)
+          const playerIdentity = await loadPlayerIdentityForDating(
+            char.id,
+            memCtx.sessionPlayerIdentityId,
+          )
           const [onlineCtx, { datingExtras: turnExtras, memoryGather }] = await Promise.all([
             getOnlineMemoryContext(char.id, {
               userText: msg,
@@ -2971,10 +3006,11 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           ? char.prompt
           : `${char.realName}的线下剧情开场（请重写本段 AI：勿复读旧稿，保持人设与硬性输出格式含 <thinking>）`
         const plotTail = formatRecentPlotsForPrompt(before, char.realName, 1600)
-        const [playerIdentity, memCtx] = await Promise.all([
-          loadPlayerIdentityForDating(char.id),
-          resolveDatingMemorySessionContext(char.id),
-        ])
+        const memCtx = await resolveDatingMemorySessionContext(char.id)
+        const playerIdentity = await loadPlayerIdentityForDating(
+          char.id,
+          memCtx.sessionPlayerIdentityId,
+        )
         if (typeof genOptions?.lengthTargetChars === 'number' && Number.isFinite(genOptions.lengthTargetChars)) {
           const n = clampDatingLengthTargetChars(genOptions.lengthTargetChars)
           patchArchive(charId, (p) => ({ ...p, datingLengthTargetChars: n }))
@@ -3145,7 +3181,11 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       if (!anchorBody) throw new Error('锚点剧情正文为空')
       const before = archive.plots.slice(0, plotIdx + 1)
       const tail = formatRecentPlotsForPrompt(before, char.realName, 2200)
-      const playerIdentity = await loadPlayerIdentityForDating(char.id)
+      const memCtx = await resolveDatingMemorySessionContext(char.id)
+      const playerIdentity = await loadPlayerIdentityForDating(
+        char.id,
+        memCtx.sessionPlayerIdentityId,
+      )
       const playerName =
         playerIdentity?.wechatNickname?.trim() || playerIdentity?.name?.trim() || null
       const content = await generateDatingPlotDimensionAi({

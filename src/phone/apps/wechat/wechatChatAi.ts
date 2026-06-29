@@ -3037,7 +3037,7 @@ ${roundModeBlock}
 
 【本轮合并长期记忆的语义要求】
 - 你是嵌入在本轮剧情模型里的「长期记忆 / 剧情时间轴」子任务：须综合下列「线上 / 已有线下 / 人脉 NPC 摘录」以及**分隔符上方你刚输出的全部剧情正文**（去掉 \`<thinking>…</thinking>\`；VN 标签可保留）提炼事实。
-- **timeline（每轮必填）**：primary.timeline 须反映分隔符上方正文**读至末尾时**的时空、服装、物品、动机伏笔、待办与本轮关键事件；仅写相对上一状态的**增量**。**foreshadows / todos 必须是结尾快照**（规则见上方 JSON 字段说明），不得与正文最后交代矛盾；无则省略对应数组。**story_day 须含年份公历**（如 2025年10月1日），**story_time 须 HH:mm**；对照生日/节日节点（见下方日历说明）。**location**：须写可区分的具体地点（店名/楼层/区域/包厢等），禁止仅写「饭馆、酒店、咖啡厅」等类名。**服装**：正文可核对时须写具体单品与可见状态（色/材质/版型/敞开挽袖/鞋履），禁止「便装、休闲、日常穿搭」等空泛词糊弄。
+- **timeline（每轮必填）**：primary.timeline 须反映分隔符上方正文**读至末尾时**的时空、服装、物品、动机伏笔、待办与本轮关键事件；仅写相对上一状态的**增量**。**foreshadows / todos 必须是结尾快照**（规则见上方 JSON 字段说明），不得与正文最后交代矛盾；无则省略对应数组。**story_day / story_time 为故事内时刻（禁止生成/落库时刻）**；跨时段须写 story_day_end、story_time_end，锚点展示为「开始 - 结束」区间。**location**：须写可区分的具体地点（店名/楼层/区域/包厢等），禁止仅写「饭馆、酒店、咖啡厅」等类名。**服装**：正文可核对时须写具体单品与可见状态（色/材质/版型/敞开挽袖/鞋履），禁止「便装、休闲、日常穿搭」等空泛词糊弄。
 - primary：**第三人称**；${summaryRoundDue ? '合成线上（若有）+ 游标后已有线下（若有）+ **本轮新正文**' : '本轮非总结间隔，content 留 ""，勿写长期记忆正文'}；玩家 **{{user}}**、对方 **{{char}}**；**禁止「我」**；不要在 JSON 里写 [私聊][线下] 前缀。
 - linked：除上表摘录外，**必须**结合你刚写的**本轮剧情正文**判断可关联角色（人脉 NPC 或已绑定主角）是否有可记事实（见「约会特则」）；勿因摘录为（无）就整段 linked 留空——若正文里确有下表 id 之事实，须写 linked。每条 linked 的 content **须为第三人称**，且凡涉玩家、存档主角、本条角色、其它可关联角色**一律**写 **{{user}} / {{archive_char}} / {{char}} / {{id:UUID}}**，**禁止**「用户」「玩家」「主角」「主要角色」及材料真名（规则同上方 JSON 与【记忆正文·指称铁律】）。**每条 linked 须同时写 timeline**（含 **row_title** 短标题 + **row_keywords** 检索词 + event_summary 摘要句，规则同 primary.timeline；勿把 content 全文贴进 timeline）。
 - 若汇总后确实无任何可核对的新事实，primary.content 可为 "" 且 linked=[]。
@@ -3159,8 +3159,10 @@ export async function requestStoryTimelineSummaryOnly(params: {
   materialBlock: string
   peerCharacterId?: string
   latestRoundBody?: string
-  storyTimeHintMs?: number | null
+  storyCalendarAnchor?: string | null
   sessionPlayerIdentityId?: string | null
+  /** @deprecated */
+  storyTimeHintMs?: number | null
   /** 系统内仍 open 的动机伏笔 / 待办清单（须对照材料输出 resolved） */
   priorOpenAnchorsBlock?: string
 }): Promise<StoryTimelineSummaryDelta | undefined> {
@@ -3184,7 +3186,7 @@ export async function requestStoryTimelineSummaryOnly(params: {
   const calendarAppendix = await buildStoryTimelineCalendarContextBlock({
     peerCharacterId: params.peerCharacterId,
     sessionPlayerIdentityId: params.sessionPlayerIdentityId,
-    storyTimeHintMs: params.storyTimeHintMs,
+    storyCalendarAnchor: params.storyCalendarAnchor,
   })
   const messages: OpenAiCompatibleMessage[] = [
     { role: 'system', content: STORY_TIMELINE_SUMMARY_ONLY_SYSTEM },

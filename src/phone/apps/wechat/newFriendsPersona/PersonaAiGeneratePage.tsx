@@ -3,12 +3,14 @@ import {
   ArrowLeft,
   BookOpen,
   Dices,
+  Download,
   ImagePlus,
   ChevronDown,
   Flame,
   Heart,
   Save,
   Sparkles,
+  Upload,
   User,
   UserRound,
   X,
@@ -50,6 +52,10 @@ import {
   savePersonaAiGenerateFormDraft,
   shouldPersistPersonaAiGenerateForm,
 } from './personaAiGenerateFormPersist'
+import {
+  exportPersonaAiGeneratePresetToFile,
+  parsePersonaAiGeneratePresetImport,
+} from './personaAiGeneratePresetIo'
 import { PlatinumSwitch } from './PlatinumSwitch'
 import { WeChatThemePageBackdrop } from './WeChatThemePageBackdrop'
 
@@ -299,10 +305,12 @@ export function PersonaAiGeneratePage({
   } | null>(null)
   const [recoveryBusy, setRecoveryBusy] = useState<'complete' | 'fix' | null>(null)
   const [saveBusy, setSaveBusy] = useState(false)
+  const [presetExportBusy, setPresetExportBusy] = useState(false)
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [draftDirty, setDraftDirty] = useState(false)
   const [formHydrated, setFormHydrated] = useState(false)
   const avatarInputRef = useRef<HTMLInputElement>(null)
+  const presetImportRef = useRef<HTMLInputElement>(null)
   const formRef = useRef(form)
   formRef.current = form
   const wechatAccountIdRef = useRef(wechatAccountId)
@@ -377,6 +385,38 @@ export function PersonaAiGeneratePage({
       window.alert('保存失败，请稍后重试')
     } finally {
       setSaveBusy(false)
+    }
+  }
+
+  const runExportPreset = async () => {
+    if (generating || presetExportBusy || saveBusy) return
+    setPresetExportBusy(true)
+    try {
+      await exportPersonaAiGeneratePresetToFile(form)
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : '导出预设失败')
+    } finally {
+      setPresetExportBusy(false)
+    }
+  }
+
+  const onImportPresetFile = async (file: File | null) => {
+    if (!file || generating) return
+    try {
+      const text = await file.text()
+      const imported = parsePersonaAiGeneratePresetImport(text)
+      if (!imported) {
+        window.alert('无法识别预设文件：请导入本页导出的 JSON，或含 form 字段的填写草稿。')
+        return
+      }
+      if (draftDirty && !window.confirm('导入将覆盖当前填写内容，是否继续？')) return
+      setForm(imported)
+      setDraftDirty(true)
+      setSavedAt(null)
+      setError(null)
+      setRecoveryOffer(null)
+    } catch {
+      window.alert('读取预设文件失败，请检查文件是否损坏。')
     }
   }
 
@@ -521,7 +561,39 @@ export function PersonaAiGeneratePage({
                 按需求填写即可，可留空，AI 会自动补全
               </p>
             </div>
+            <div className="flex shrink-0 items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => presetImportRef.current?.click()}
+                disabled={generating || presetExportBusy}
+                className="rounded-xl p-2.5 text-neutral-700 transition-colors hover:bg-neutral-200/50 disabled:opacity-40"
+                aria-label="导入预设"
+                title="导入预设"
+              >
+                <Upload className="size-5" strokeWidth={1.75} />
+              </button>
+              <button
+                type="button"
+                onClick={() => void runExportPreset()}
+                disabled={generating || presetExportBusy || saveBusy}
+                className="rounded-xl p-2.5 text-neutral-700 transition-colors hover:bg-neutral-200/50 disabled:opacity-40"
+                aria-label="导出预设"
+                title="导出预设"
+              >
+                <Download className="size-5" strokeWidth={1.75} />
+              </button>
+            </div>
           </div>
+          <input
+            ref={presetImportRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(e) => {
+              void onImportPresetFile(e.target.files?.[0] ?? null)
+              e.target.value = ''
+            }}
+          />
           <div className="flex items-center gap-2.5 px-4 pb-3">
             <div className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-neutral-200/80">
               <motion.div

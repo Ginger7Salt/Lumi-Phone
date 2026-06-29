@@ -4,6 +4,7 @@ import type { Character } from '../newFriendsPersona/types'
 import { fetchStoryTimelineSummaryFallback } from './storyTimelineSummaryFallback'
 import {
   buildStoryTimelinePlotRowFromDelta,
+  composeStoryTimelineCalendarAnchorLabel,
   hasTimelineDeltaContent,
   normalizeStoryTimelineRowTitle,
   STORY_TIMELINE_ROW_TITLE_MAX,
@@ -63,7 +64,7 @@ async function resolveLinkedStoryTimelineDelta(params: {
   cachedDelta?: StoryTimelineSummaryDelta | null
   sharedPrimaryDelta?: StoryTimelineSummaryDelta | null
   latestPlotBody?: string
-  storyTimeHintMs?: number
+  storyCalendarAnchor?: string | null
 }): Promise<StoryTimelineSummaryDelta> {
   const linkedContent = stripLinkedProsePrefix(params.linkedContent)
   const cached = params.cachedDelta
@@ -85,7 +86,7 @@ async function resolveLinkedStoryTimelineDelta(params: {
     }),
     peerCharacterId: params.npcCharacterId,
     latestRoundBody: linkedContent,
-    storyTimeHintMs: params.storyTimeHintMs,
+    storyCalendarAnchor: params.storyCalendarAnchor,
   })
   if (apiDelta && hasTimelineDeltaContent(apiDelta)) {
     return {
@@ -126,6 +127,9 @@ export async function fanOutStoryTimelineLinkedRows(params: {
       ? params.recordedAtMs
       : Date.now()
   const labels: string[] = []
+  const storyCalendarAnchor = params.sharedPrimaryDelta
+    ? composeStoryTimelineCalendarAnchorLabel(params.sharedPrimaryDelta)
+    : ''
 
   for (const entry of params.entries) {
     const npcId = entry.characterId.trim()
@@ -139,7 +143,7 @@ export async function fanOutStoryTimelineLinkedRows(params: {
       cachedDelta: entry.timelineDelta,
       sharedPrimaryDelta: params.sharedPrimaryDelta,
       latestPlotBody: params.latestPlotBody,
-      storyTimeHintMs: recordedAt,
+      storyCalendarAnchor,
     })
     const row = buildStoryTimelinePlotRowFromDelta(npcId, delta, scope, {
       plotId,
