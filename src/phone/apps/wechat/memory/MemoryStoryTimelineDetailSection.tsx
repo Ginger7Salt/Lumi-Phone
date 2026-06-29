@@ -20,6 +20,7 @@ import {
 } from './memoryArchiveTheme'
 import {
   formatStoryTimelineListTimeLabel,
+  resolveStoryTimelineRowKeywords,
   resolveStoryTimelineRowTitle,
   storyTimelineRowPreviewLine,
   stripStoryTimelineTitleLine,
@@ -47,6 +48,7 @@ export function StoryTimelineRowCard({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const storyTimeLabel = formatStoryTimelineListTimeLabel(displayText, row.recordedAt)
   const titleLabel = resolveStoryTimelineRowTitle(row, displayText)
+  const keywordLabels = resolveStoryTimelineRowKeywords(row, displayText)
 
   const handleDelete = () => {
     if (!confirmDelete) {
@@ -79,6 +81,11 @@ export function StoryTimelineRowCard({
               <h4 className="text-[17px] font-semibold leading-snug tracking-tight text-gray-900">
                 {titleLabel || `摘要 ${index}`}
               </h4>
+              {keywordLabels.length ? (
+                <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
+                  {keywordLabels.join(' · ')}
+                </p>
+              ) : null}
               {storyTimeLabel ? (
                 <p className="mt-1 text-[11px] font-medium text-gray-400">
                   <ListenNumericText text={storyTimeLabel} />

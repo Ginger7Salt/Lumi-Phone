@@ -65,8 +65,8 @@ import { hasTimelineDeltaContent } from '../memory/storyTimelineTypes'
 import { peekWillSummarizeOnNextAiRound } from '../memory/memoryAutoSummaryInterval'
 import { isOfflineDatingRowPerRoundMode, isLinkedMemoryAutoSummaryEnabled } from '../memory/memoryRowPerRoundMode'
 import {
-  cleanupDatingPlotListMutation,
   clearOfflinePlotContextVectorsForCharacter,
+  finalizeDatingPlotListMutationSideEffects,
   resolveDatingPlotLinkedOwnerIds,
 } from './datingPlotContextSync'
 import { isOpenAiEmptyAssistantParseError, openAiCompatibleChatLenient } from '../newFriendsPersona/ai'
@@ -381,7 +381,6 @@ type Ctx = {
   stageBranchChoice: (option: BranchOption) => void
   /** 模型正在生成 4 条分支（仅分支开关开启时） */
   branchesLoading: boolean
-  generateInitialPlot: (params: { bias: string; perspective?: NarrativePerspective; genOptions?: NarrativeGenOptions }) => Promise<void>
   resetCurrentArchive: () => void
   rollbackBranchNode: () => void
   /** VN：删除本轮「玩家输入 + AI 回复」，回到上一轮并将气泡置于该轮末句（由界面同步进度） */
@@ -2775,154 +2774,6 @@ export function DatingProvider({ children }: { children: ReactNode }) {
     [currentCharacter.id, patchArchive],
   )
 
-  const generateInitialPlot = useCallback(
-    async ({ bias, perspective = 'second', genOptions }: { bias: string; perspective?: NarrativePerspective; genOptions?: NarrativeGenOptions }) => {
-      const charId = currentCharacter.id
-      if (!charId || isDatingPlotGenerating(charId)) return
-      if (currentArchive.plots.length > 0) return
-      const char = currentCharacter
-      const archiveSnap = currentArchive
-      if (typeof genOptions?.lengthTargetChars === 'number' && Number.isFinite(genOptions.lengthTargetChars)) {
-        const n = clampDatingLengthTargetChars(genOptions.lengthTargetChars)
-        patchArchive(charId, (p) => ({ ...p, datingLengthTargetChars: n }))
-      }
-      const mergedInitOpts: NarrativeGenOptions | undefined = (() => {
-        const o: NarrativeGenOptions = { ...(genOptions ?? {}) }
-        if (
-          o.lengthTargetChars == null &&
-          typeof archiveSnap.datingLengthTargetChars === 'number' &&
-          Number.isFinite(archiveSnap.datingLengthTargetChars)
-        ) {
-          o.lengthTargetChars = archiveSnap.datingLengthTargetChars
-        }
-        return Object.keys(o).length ? o : undefined
-      })()
-
-      beginDatingPlotGeneration(charId)
-      beginDatingPlotContentHint(charId)
-      void (async () => {
-        try {
-          const [playerIdentity, memCtx] = await Promise.all([
-            loadPlayerIdentityForDating(char.id),
-            resolveDatingMemorySessionContext(char.id),
-          ])
-          const [onlineCtx, { datingExtras: turnExtras, memoryGather }] = await Promise.all([
-            getOnlineMemoryContext(char.id, {
-              userText: String(bias || '').trim(),
-              sessionPlayerIdentityId: memCtx.sessionPlayerIdentityId,
-            }),
-            buildDatingTurnModelExtras({
-              char,
-              plotsSnapshotForGather: [],
-              sessionPlayerIdentityId: memCtx.sessionPlayerIdentityId,
-              wechatAccountId: memCtx.wechatAccountId,
-              conversationKey: memCtx.conversationKey,
-            }),
-          ])
-          const aiGenInit = await generateDatingAi(
-            char,
-            apiConfig,
-            [],
-            `${char.realName}的线下剧情开场`,
-            undefined,
-            {
-              godPerspective: archiveSnap.godPerspective,
-              mainCharacterOffstage: !!archiveSnap.mainCharacterOffstage,
-              perspective,
-              isVnMode: archiveSnap.modePreference === 'vn',
-              vnVoiceDisabled: !!archiveSnap.vnVoiceDisabled,
-            },
-            { ...onlineCtx, initialBias: bias },
-            playerIdentity,
-            mergedInitOpts,
-            turnExtras,
-          )
-          const aiTextRaw = aiGenInit.text
-          const plotRawInit = splitDatingAiResponseAndUnifiedMemoryJson(aiTextRaw).plotRaw
-          const parsed = extractAiPlotSections(plotRawInit)
-          const plotTsInit = Date.now()
-          const { timelineSnap: timelineSnapInit, timelineDelta: timelineDeltaInit } =
-            await timelinePersistFieldsFromAiTextRaw(aiTextRaw, plotTsInit, {
-              apiConfig,
-              plotBody: parsed.content,
-              offlineBlock: memoryGather?.offlineBlock,
-              characterId: char.id,
-              characterRealName: char.realName,
-              mainCharacterOffstage: !!archiveSnap.mainCharacterOffstage,
-            })
-          const wbRevertInit = sanitizeWorldBookAfterRevertEntries(aiGenInit.worldBookAfterRevertEntries)
-          const aiPlot: PlotItem = {
-            id: uid('init'),
-            type: 'ai',
-            timestamp: plotTsInit,
-            highlightText: char.realName,
-            ...aiPlotPersistFields(parsed, timelineSnapInit, timelineDeltaInit),
-            worldBookAfterRevertEntries: wbRevertInit.length ? wbRevertInit : undefined,
-          }
-          await applyArchivePatch(charId, (p) => ({
-            ...p,
-            plots: [aiPlot],
-            currentProgress: 1,
-            lastDateAt: Date.now(),
-            pendingBranches: [],
-          }))
-          endDatingPlotContentHint(charId)
-          const archAfter: CharacterArchive = {
-            ...archiveSnap,
-            plots: [aiPlot],
-            branchEnabled: archiveSnap.branchEnabled,
-            godPerspective: archiveSnap.godPerspective,
-          }
-          if (archiveSnap.branchEnabled) {
-            void runGeneratePendingBranches(charId, char, archAfter)
-          }
-          void runOfflineDanmakuAfterAi(char, archAfter)
-          let linkedNpcNames: string[] = []
-          try {
-            linkedNpcNames = await finalizeDatingMemoryAfterAiReply({
-              apiConfig,
-              aiTextRaw,
-              memoryGather,
-              plotsSnapshotAfterAi: plotItemsToSnapshots([aiPlot]),
-              plotsAfterAi: [aiPlot],
-              char,
-              memoryTurnAiPlotId: aiPlot.id,
-              worldBookInlinePatchApplied: Boolean(wbRevertInit.length),
-            })
-          } catch (memErr) {
-            console.warn('[dating] memory post failed after plot saved', memErr)
-          }
-          dispatchDatingPlotGenerationComplete({
-            characterId: charId,
-            characterName: char.realName,
-            linkedNpcNames,
-          })
-        } catch (e) {
-          dispatchDatingPlotGenerationError({
-            characterId: charId,
-            characterName: char.realName,
-            message: formatApiClientError(e, '剧情生成失败，请稍后重试。'),
-          })
-        } finally {
-          endDatingPlotContentHint(charId)
-          endDatingPlotGeneration(charId)
-        }
-      })()
-    },
-    [
-      apiConfig,
-      applyArchivePatch,
-      currentArchive,
-      currentArchive.godPerspective,
-      currentArchive.plots.length,
-      currentCharacter,
-      getOnlineMemoryContext,
-      patchArchive,
-      runGeneratePendingBranches,
-      runOfflineDanmakuAfterAi,
-    ],
-  )
-
   const resetCurrentArchive = useCallback(() => {
     const c = currentCharacter
     if (!c.id) return
@@ -2946,17 +2797,18 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           pendingBranches: [],
         }
       })
-      const nextPlots = archivesRef.current[charId]?.plots ?? []
+      const plotsAfterRollback = archivesRef.current[charId]?.plots ?? []
       const owners = await resolveDatingPlotLinkedOwnerIds(charId)
-      await cleanupDatingPlotListMutation({
+      await finalizeDatingPlotListMutationSideEffects({
         perspectiveCharacterId: charId,
         linkedFromCharacterIds: owners,
         prevPlots,
-        nextPlots: plotItemsToSnapshots(nextPlots),
+        nextPlots: plotsAfterRollback,
+        apiConfig,
       })
       enqueueRegenerateBranches(charId)
     })()
-  }, [applyArchivePatch, currentCharacter.id, enqueueRegenerateBranches])
+  }, [apiConfig, applyArchivePatch, currentCharacter.id, enqueueRegenerateBranches])
 
   const vnRollbackLastRound = useCallback(() => {
     const charId = String(currentCharacter.id || '').trim()
@@ -2988,17 +2840,20 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         branchContinuationHint: undefined,
         currentProgress: Math.max(0, p.currentProgress - 1),
       }))
+      const plotsAfterRollback = archivesRef.current[charId]?.plots ?? []
       const owners = await resolveDatingPlotLinkedOwnerIds(charId)
-      await cleanupDatingPlotListMutation({
+      await finalizeDatingPlotListMutationSideEffects({
         perspectiveCharacterId: charId,
         linkedFromCharacterIds: owners,
         prevPlots,
-        nextPlots: plotItemsToSnapshots(nextPlots),
+        nextPlots: plotsAfterRollback,
+        apiConfig,
       })
       enqueueRegenerateBranches(charId)
     })()
     return true
   }, [
+    apiConfig,
     applyArchivePatch,
     currentArchive.modePreference,
     currentArchive.plots,
@@ -3077,17 +2932,13 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         }))
         const nextPlots = archivesRef.current[charId]?.plots ?? []
         const owners = await resolveDatingPlotLinkedOwnerIds(charId)
-        await cleanupDatingPlotListMutation({
+        await finalizeDatingPlotListMutationSideEffects({
           perspectiveCharacterId: charId,
           linkedFromCharacterIds: owners,
           prevPlots,
-          nextPlots: plotItemsToSnapshots(nextPlots),
+          nextPlots,
+          apiConfig,
         })
-        try {
-          await rebuildStoryTimelineFromDatingPlots(charId, nextPlots, { apiConfig })
-        } catch (e) {
-          console.warn('[dating] story timeline rebuild on plot delete failed', e)
-        }
         enqueueRegenerateBranches(charId)
       })()
     },
@@ -3372,7 +3223,6 @@ export function DatingProvider({ children }: { children: ReactNode }) {
     sendPlayerInput,
     stageBranchChoice,
     branchesLoading,
-    generateInitialPlot,
     resetCurrentArchive,
     rollbackBranchNode,
     vnRollbackLastRound,

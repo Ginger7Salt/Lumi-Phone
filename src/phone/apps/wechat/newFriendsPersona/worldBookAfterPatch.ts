@@ -1,4 +1,4 @@
-import type { WorldBookAfterRevertEntry } from '../dating/types'
+import type { PlotItem, WorldBookAfterRevertEntry } from '../dating/types'
 import type { Character, WorldBook, WorldBookItem } from './types'
 
 /** 与 wechatChatAi 中约会合并记忆分隔符一致，用于从混合输出中切出 JSON 段 */
@@ -300,6 +300,114 @@ export function applyWorldBookAfterPatchesToCharacter(
     worldBooks,
     updatedAt: Math.max(character.updatedAt ?? 0, Date.now()),
   }
+}
+
+function worldBookAfterEntryKey(worldBookId: string, itemId: string): string {
+  return `${worldBookId}\0${itemId}`
+}
+
+function setWorldBookAfterItemContentOnCharacter(
+  character: Character,
+  worldBookId: string,
+  itemId: string,
+  nextContent: string,
+): Character | null {
+  let worldBooks: WorldBook[] = (character.worldBooks ?? []).map((w) => ({
+    ...w,
+    items: [...(w.items ?? [])],
+  }))
+  const wb = worldBooks.find((w) => w.id === worldBookId)
+  const it = wb?.items?.find((i) => i.id === itemId)
+  if (!wb || !it || it.priority !== 'after') return null
+  if (String(it.content ?? '') === nextContent) return null
+  const nextItems = patchItemContent(wb.items, itemId, nextContent, { recordPrevious: false })
+  worldBooks = worldBooks.map((w) => (w.id === wb.id ? { ...w, items: nextItems } : w))
+  return {
+    ...character,
+    worldBooks,
+    updatedAt: Math.max(character.updatedAt ?? 0, Date.now()),
+  }
+}
+
+/**
+ * 约会剧情删改后：按剩余轮次重建「尾声延展」快照。
+ * - 各条目先回到「下一条剩余 AI 剧情」补丁前的 contentBefore；
+ * - 若无剩余轮次，则回到被删轮次的 contentBefore；
+ * - 再按时间顺序重放剩余轮次的 contentAfterPatch。
+ */
+export function rebuildWorldBookAfterFromDatingPlotList(
+  character: Character,
+  remainingPlots: ReadonlyArray<Pick<PlotItem, 'type' | 'worldBookAfterRevertEntries'>>,
+  deletedPlots: ReadonlyArray<Pick<PlotItem, 'type' | 'worldBookAfterRevertEntries'>>,
+): Character | null {
+  const remainingAi = remainingPlots.filter((p) => p.type === 'ai')
+  const deletedAi = deletedPlots.filter((p) => p.type === 'ai')
+
+  const allKeys = new Set<string>()
+  for (const plot of [...remainingAi, ...deletedAi]) {
+    for (const e of sanitizeWorldBookAfterRevertEntries(plot.worldBookAfterRevertEntries)) {
+      allKeys.add(worldBookAfterEntryKey(e.worldBookId, e.itemId))
+    }
+  }
+  if (!allKeys.size) return null
+
+  let nextCharacter: Character = character
+  let changed = false
+
+  for (const key of allKeys) {
+    const sep = key.indexOf('\0')
+    if (sep <= 0) continue
+    const worldBookId = key.slice(0, sep)
+    const itemId = key.slice(sep + 1)
+
+    let baseline: string | undefined
+    for (const plot of remainingAi) {
+      const hit = sanitizeWorldBookAfterRevertEntries(plot.worldBookAfterRevertEntries).find(
+        (e) => worldBookAfterEntryKey(e.worldBookId, e.itemId) === key,
+      )
+      if (hit) {
+        baseline = hit.contentBefore
+        break
+      }
+    }
+    if (baseline === undefined) {
+      for (const plot of deletedAi) {
+        const hit = sanitizeWorldBookAfterRevertEntries(plot.worldBookAfterRevertEntries).find(
+          (e) => worldBookAfterEntryKey(e.worldBookId, e.itemId) === key,
+        )
+        if (hit) {
+          baseline = hit.contentBefore
+          break
+        }
+      }
+    }
+    if (baseline === undefined) continue
+
+    const patched = setWorldBookAfterItemContentOnCharacter(nextCharacter, worldBookId, itemId, baseline)
+    if (patched) {
+      nextCharacter = patched
+      changed = true
+    }
+  }
+
+  for (const plot of remainingAi) {
+    for (const e of sanitizeWorldBookAfterRevertEntries(plot.worldBookAfterRevertEntries)) {
+      const after = e.contentAfterPatch
+      if (after === undefined) continue
+      const patched = setWorldBookAfterItemContentOnCharacter(
+        nextCharacter,
+        e.worldBookId,
+        e.itemId,
+        after,
+      )
+      if (patched) {
+        nextCharacter = patched
+        changed = true
+      }
+    }
+  }
+
+  return changed ? nextCharacter : null
 }
 
 /** 将「尾声延展」条目恢复为快照中的 contentBefore（约会「重新生成」请求模型前写回人设） */

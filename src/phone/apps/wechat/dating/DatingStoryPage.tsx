@@ -610,7 +610,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     sendPlayerInput,
     stageBranchChoice,
     branchesLoading,
-    generateInitialPlot,
     resetCurrentArchive,
     regeneratingPlotId,
     updatePlotItem,
@@ -655,9 +654,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [autoUserOpen, setAutoUserOpen] = useState(false)
   const godLocksNoInterrupt = currentArchive.godPerspective
   const autoUserReaction = !!currentArchive.autoUserReaction
-  const [initialBiasOpen, setInitialBiasOpen] = useState(false)
-  const [initialBiasText, setInitialBiasText] = useState('')
-  const [initialBiasDismissedFor, setInitialBiasDismissedFor] = useState<string | null>(null)
   const [retryBiasOpen, setRetryBiasOpen] = useState(false)
   const [retryBiasText, setRetryBiasText] = useState('')
   const [retryTargetPlotId, setRetryTargetPlotId] = useState<string | null>(null)
@@ -2939,21 +2935,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   }, [currentArchive.godPerspective])
 
   useEffect(() => {
-    if (currentArchive.plots.length > 0) {
-      if (initialBiasDismissedFor) setInitialBiasDismissedFor(null)
-      if (initialBiasOpen) setInitialBiasOpen(false)
-      return
-    }
-    if (isVn) {
-      if (initialBiasOpen) setInitialBiasOpen(false)
-      return
-    }
-    if (loading) return
-    if (initialBiasDismissedFor === currentCharacter.id) return
-    if (currentArchive.plots.length === 0) setInitialBiasOpen(true)
-  }, [currentArchive.plots.length, loading, initialBiasDismissedFor, currentCharacter.id, isVn, initialBiasOpen])
-
-  useEffect(() => {
     if (vnAutoTimerRef.current) {
       window.clearTimeout(vnAutoTimerRef.current)
       vnAutoTimerRef.current = null
@@ -3242,8 +3223,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   : undefined
               }
             >
-            <div className="rounded-2xl border border-stone-100 bg-white p-8 shadow-sm">
-              {currentArchive.plots.length ? (
+            {currentArchive.plots.length ? (
+              <div className="rounded-2xl border border-stone-100 bg-white p-8 shadow-sm">
                 <StoryFeed
                   plots={currentArchive.plots}
                   timelineExpandCharacterId={currentCharacter.id}
@@ -3261,22 +3242,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   branchesLoading={branchesLoading}
                   onBranchPick={handleBranchPick}
                 />
-              ) : (
-                <div className="flex min-h-[120px] flex-col justify-between">
-                  <p className="text-[14px] leading-relaxed text-[#8e8e8e]">暂无线下剧情内容，填写偏向后可生成首段剧情。</p>
-                  <div className="mt-4 flex justify-end">
-                    <button
-                      type="button"
-                      disabled={loading}
-                      onClick={() => setInitialBiasOpen(true)}
-                      className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-[12px] font-medium text-[#262626] transition-all duration-200 hover:bg-stone-50 disabled:opacity-60"
-                    >
-                      AI生成内容
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+              </div>
+            ) : null}
 
             <div
               ref={composerRef}
@@ -4639,52 +4606,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 onClick={() => setBgmConfigOpen(false)}
               >
                 关闭
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {initialBiasOpen ? (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
-          <div className="w-full max-w-[520px] rounded-2xl border border-stone-200 bg-white p-4 shadow-lg">
-            <p className="text-center text-[16px] font-semibold text-[#262626]">首段剧情生成偏向</p>
-            <p className="mt-2 text-center text-[12px] leading-relaxed text-[#8e8e8e]">
-              请输入你希望的开场方向（语气、节奏、关系状态、场景等），用于生成第一段线下剧情。
-            </p>
-            <textarea
-              value={initialBiasText}
-              onChange={(e) => setInitialBiasText(e.target.value)}
-              rows={5}
-              maxLength={320}
-              placeholder="例：校园晚自习后，克制慢热，不要暧昧过头，先从细节互动开始。"
-              className="mt-3 w-full rounded-xl border border-stone-200 bg-white px-3 py-3 text-[13px] leading-relaxed text-[#262626] outline-none transition-all duration-200 focus:border-stone-400"
-            />
-            <p className="mt-1 text-right text-[11px] text-[#8e8e8e]">{initialBiasText.length}/320</p>
-            <div className="mt-3 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-[13px] text-[#262626] hover:bg-stone-50"
-                onClick={() => {
-                  setInitialBiasOpen(false)
-                  setInitialBiasDismissedFor(currentCharacter.id)
-                }}
-              >
-                稍后再说
-              </button>
-              <button
-                type="button"
-                className="rounded-xl bg-neutral-900 px-4 py-2 text-[13px] font-medium text-white hover:bg-neutral-800"
-                onClick={() => {
-                  setInitialBiasOpen(false)
-                  void generateInitialPlot({
-                    bias: initialBiasText,
-                    perspective,
-                    genOptions: narrativeGenOptions,
-                  })
-                }}
-              >
-                生成首段剧情
               </button>
             </div>
           </div>

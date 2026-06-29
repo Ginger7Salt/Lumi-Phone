@@ -5,6 +5,7 @@ import {
   MEET_ENCOUNTER_AI_MOTTO_STYLE_TAIL,
   NPC_AI_HEIGHT_WEIGHT_MOTTO_RULES_CORE,
 } from './npcBasicProfileAiRules'
+import { buildWechatSignatureAiRulesBlock } from './wechatSignatureStyleRules'
 import { MEET_MBTI_SIXTEEN } from '../../lumiMeet/meetPersonaPrompt'
 import { LUMI_SYSTEM_OVERRIDE_APPENDIX } from '../wechatReplyOutputPrompt'
 import {
@@ -422,7 +423,7 @@ ${internalCot}
 - occupation：6–28 字职业/身份（写入微信「身份」字段）
 - motto：8–40 字座右铭（人生态度，勿与 wechatSignature 雷同）
 - wechatId：6–20 位小写 a-z、数字、下划线；禁止纯数字与烂大街示爱梗
-- wechatSignature：12–40 字微信个性签名
+- wechatSignature：见下文「微信个性签名」专节；与 comprehensive.base.wechatSignature **同句**
 - bio：80–220 字第三人称**人设概括**（只写 {{char}} 是谁、气质与故事感；至少 2 次 **{{char}}**；**禁止**写对 {{user}} 的态度/关系/称呼；bio **不得出现** {{user}}）
 - openingLines：2–4 行微信开场白（每行一条气泡；口语自然；符合与 {{user}} 的关系进度）
 - interests：字符串数组，恰好 3 个兴趣标签
@@ -473,6 +474,8 @@ ${buildPersonaAiHealthyToneRules()}
 ${MEET_ENCOUNTER_AI_AGE_AND_BIRTHDAY_RULES}
 
 ${NPC_AI_HEIGHT_WEIGHT_MOTTO_RULES_CORE}
+
+${buildWechatSignatureAiRulesBlock()}
 
 ${MEET_ENCOUNTER_AI_MOTTO_STYLE_TAIL}
 `.trim()

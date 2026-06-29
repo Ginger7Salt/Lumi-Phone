@@ -102,6 +102,8 @@ import {
 } from '../memory/memoryVectorRecall'
 import {
   computeStoryTimelineRowTextHash,
+  extractStoryTimelineRowKeywordsFromRowText,
+  normalizeStoryTimelineRowKeywords,
   normalizeStoryTimelineRowTitle,
   parseCharactersPresentFromRowText,
   isMainCharTimelinePlaceholder,
@@ -2003,6 +2005,11 @@ function normalizeStoryTimelinePlotRow(input: unknown): StoryTimelinePlotRow | n
   ) {
     sidePerspective = true
   }
+  const rowKeywordsFromField = normalizeStoryTimelineRowKeywords(r.rowKeywords)
+  const rowKeywords =
+    rowKeywordsFromField.length > 0
+      ? rowKeywordsFromField
+      : extractStoryTimelineRowKeywordsFromRowText(rowText)
   return {
     id,
     characterId,
@@ -2014,6 +2021,7 @@ function normalizeStoryTimelinePlotRow(input: unknown): StoryTimelinePlotRow | n
     ...(typeof r.rowTitle === 'string' && r.rowTitle.trim()
       ? { rowTitle: normalizeStoryTimelineRowTitle(r.rowTitle) }
       : {}),
+    ...(rowKeywords.length ? { rowKeywords } : {}),
     ...(embedding.length >= 8 ? { embedding } : {}),
     ...(r.embeddingProvider === 'api' || r.embeddingProvider === 'local'
       ? { embeddingProvider: r.embeddingProvider }
@@ -6293,7 +6301,11 @@ export class PersonaDb {
     const pid = plotId.trim()
     if (!cid || !pid) return
     const rows = await this.listStoryTimelinePlotRowsByCharacterId(cid)
-    const toDrop = rows.filter((r) => r.plotId?.trim() === pid)
+    const toDrop = rows.filter((r) => {
+      const rp = r.plotId?.trim()
+      if (!rp) return false
+      return rp === pid || rp.startsWith(`${pid}-`)
+    })
     if (!toDrop.length) return
     const db = await openDb()
     if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
@@ -6306,6 +6318,31 @@ export class PersonaDb {
     await txDone(tx)
     db.close()
     emitWeChatStorageChanged()
+  }
+
+  /** 删除所有角色下绑定某约会 plotId（含平行事件 `-parallel-*` 后缀）的摘要行 */
+  async deleteStoryTimelinePlotRowsForPlotIdGlobally(plotId: string): Promise<number> {
+    const pid = plotId.trim()
+    if (!pid) return 0
+    const all = await this.listAllStoryTimelinePlotRows()
+    const toDrop = all.filter((r) => {
+      const rp = r.plotId?.trim()
+      if (!rp) return false
+      return rp === pid || rp.startsWith(`${pid}-`)
+    })
+    if (!toDrop.length) return 0
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
+      db.close()
+      return 0
+    }
+    const tx = db.transaction(STORY_TIMELINE_ROWS_STORE, 'readwrite')
+    const store = tx.objectStore(STORY_TIMELINE_ROWS_STORE)
+    for (const d of toDrop) store.delete(d.id)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+    return toDrop.length
   }
 
   /** 删除角色时同步清剧情时间轴 state / 行表 / 未总结片段向量 */

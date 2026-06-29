@@ -67,6 +67,8 @@ export type StoryTimelinePlotRow = {
   plotId?: string
   /** 短标题（约 10 字内），列表展示用；正文亦写入【摘要标题】行 */
   rowTitle?: string
+  /** 摘要检索关键词（3～5 个，每条 ≤5 字）；向量索引与标题一并使用 */
+  rowKeywords?: string[]
   /** 本轮可读摘要（与 UI timelineSnapshot 同源） */
   rowText: string
   textHash: string
@@ -180,6 +182,8 @@ export type StoryTimelineSummaryDelta = {
   todos?: Array<{ text?: string; status?: string }>
   /** 本轮摘要短标题（建议 4～10 字） */
   row_title?: string
+  /** 摘要检索关键词（必填 3～5 个；每条 ≤5 个汉字，勿写整句） */
+  row_keywords?: string[]
   event_summary?: string
   /** true：主角色（{{char}}）未在场之侧幕摘要；须写 characters_present 且不含 {{char}} */
   side_perspective?: boolean
@@ -199,6 +203,11 @@ export const STORY_TIMELINE_LOCATION_MAX = 200
 export const STORY_TIMELINE_EVENT_SUMMARY_MAX = 120
 /** 摘要短标题入库上限（字）；模型建议 4～10 字 */
 export const STORY_TIMELINE_ROW_TITLE_MAX = 14
+/** 单条摘要关键词字数上限 */
+export const STORY_TIMELINE_ROW_KEYWORD_CHAR_MAX = 5
+/** 每条摘要关键词数量范围 */
+export const STORY_TIMELINE_ROW_KEYWORDS_MIN = 3
+export const STORY_TIMELINE_ROW_KEYWORDS_MAX = 5
 
 /** 伏笔 / 待办：写法与结尾快照（摘要 JSON 与回收规则共用） */
 export const STORY_TIMELINE_FORESHADOW_TODO_WRITING_RULES = `
@@ -222,6 +231,7 @@ export const STORY_TIMELINE_OPEN_ANCHORS_RECYCLE_RULES = `
 export const STORY_TIMELINE_SUMMARY_JSON_FIELDS = `
 - "timeline"（可选对象；材料中有可核对的时空、服装、物品、动机伏笔、待办或本轮关键事件时**应尽量填写**）：
   - "row_title": string，本轮摘要短标题（建议 4～10 字，可含问号/顿号；如「温柔瞬间」「化解冲突」「没听见？是没看见」；须概括本轮情绪或转折，勿写「第 N 轮」等序号）
+  - "row_keywords": string[]，**必填 3～5 个**摘要检索词（每条 **≤5 个汉字**；写场景/人物/情绪/物品/关系等**可检索名词或短语**，如「晚自习」「误会」「牵手」「道歉」；禁止整句、禁止标点堆叠、禁止与 row_title 完全重复）
   - "story_day": string，**含年份的公历剧情日**，如 "2025年10月1日"、"2025年2月14日（情人节）"；相对进度写 relative_time，勿用「第3天」代替公历
   - "story_time": string，**24 小时制钟点**，如 "19:30"、"08:15"；材料仅有「傍晚/深夜」时须推断合理 HH:mm
   - "relative_time": string，相对时间，如 "昨天"、"三天前"、"约会第 3 天"
@@ -256,6 +266,36 @@ export function normalizeStoryTimelineRowTitle(raw: unknown): string | undefined
     .trim()
     .slice(0, STORY_TIMELINE_ROW_TITLE_MAX)
   return t || undefined
+}
+
+/** 单条摘要关键词：去空白并截断至 5 字 */
+export function normalizeStoryTimelineRowKeyword(raw: unknown): string | undefined {
+  const t = String(raw ?? '')
+    .replace(/\s+/g, '')
+    .trim()
+    .slice(0, STORY_TIMELINE_ROW_KEYWORD_CHAR_MAX)
+  return t || undefined
+}
+
+/** 摘要关键词列表：去重、3～5 条、每条 ≤5 字 */
+export function normalizeStoryTimelineRowKeywords(raw: unknown): string[] {
+  const source = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(/[、,，/\s]+/)
+      : []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of source) {
+    const kw = normalizeStoryTimelineRowKeyword(item)
+    if (!kw) continue
+    const key = kw.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(kw)
+    if (out.length >= STORY_TIMELINE_ROW_KEYWORDS_MAX) break
+  }
+  return out
 }
 
 const WEEKDAY_ZH = ['日', '一', '二', '三', '四', '五', '六'] as const
@@ -514,6 +554,11 @@ export function parseStoryTimelineSummaryDelta(raw: unknown): StoryTimelineSumma
   const rowTitle = normalizeStoryTimelineRowTitle(o.row_title ?? o.rowTitle)
   if (rowTitle) delta.row_title = rowTitle
 
+  const rowKeywords = normalizeStoryTimelineRowKeywords(
+    o.row_keywords ?? o.rowKeywords ?? o.keywords,
+  )
+  if (rowKeywords.length) delta.row_keywords = rowKeywords
+
   if (o.side_perspective === true || o.sidePerspective === true) {
     delta.side_perspective = true
   }
@@ -686,9 +731,17 @@ export function extractStoryTimelineRowTitleFromRowText(text: string): string {
   return normalizeStoryTimelineRowTitle(m?.[1]) ?? ''
 }
 
+export function extractStoryTimelineRowKeywordsFromRowText(text: string): string[] {
+  const m = String(text ?? '').match(/【摘要关键词】([^\n]+)/)
+  if (!m?.[1]) return []
+  return normalizeStoryTimelineRowKeywords(m[1].split(/[、,，/\s]+/))
+}
+
 export function stripStoryTimelineTitleLine(rowText: string): string {
   return String(rowText ?? '')
     .replace(/^【摘要标题】[^\n]*\n?/, '')
+    .replace(/^【摘要关键词】[^\n]*\n?/, '')
+    .replace(/^\n+/, '')
     .trim()
 }
 
@@ -709,6 +762,15 @@ export function resolveStoryTimelineRowTitle(
   return fromText || '（无标题）'
 }
 
+export function resolveStoryTimelineRowKeywords(
+  row: StoryTimelinePlotRow,
+  displayText?: string,
+): string[] {
+  const fromField = normalizeStoryTimelineRowKeywords(row.rowKeywords)
+  if (fromField.length) return fromField
+  return extractStoryTimelineRowKeywordsFromRowText(displayText ?? row.rowText)
+}
+
 /** 列表折叠预览：跳过标题与锚点行 */
 export function storyTimelineRowPreviewLine(displayText: string): string {
   const lines = String(displayText ?? '')
@@ -716,7 +778,7 @@ export function storyTimelineRowPreviewLine(displayText: string): string {
     .map((l) => l.trim())
     .filter(Boolean)
   for (const line of lines) {
-    if (line.startsWith('【摘要标题】') || line.startsWith('【本轮锚点】')) continue
+    if (line.startsWith('【摘要标题】') || line.startsWith('【摘要关键词】') || line.startsWith('【本轮锚点】')) continue
     if (line.startsWith('【本轮事件】')) return line.replace(/^【本轮事件】/, '').trim().slice(0, 80)
     return line.slice(0, 80)
   }
@@ -732,6 +794,8 @@ export function formatStoryTimelineDeltaForDisplay(
   const lines: string[] = []
   const rowTitle = normalizeStoryTimelineRowTitle(delta.row_title)
   if (rowTitle) lines.push(`【摘要标题】${rowTitle}`)
+  const rowKeywords = normalizeStoryTimelineRowKeywords(delta.row_keywords)
+  if (rowKeywords.length) lines.push(`【摘要关键词】${rowKeywords.join('、')}`)
   const anchor: string[] = []
   const calendarLabel = composeStoryTimelineCalendarAnchorLabel(delta, opts?.recordedAtMs)
   if (calendarLabel) anchor.push(calendarLabel)
@@ -843,6 +907,7 @@ export function buildStoryTimelinePlotRowFromDelta(
   if (!rowText.trim()) return null
   const textHash = computeStoryTimelineRowTextHash(rowText)
   const rowTitle = normalizeStoryTimelineRowTitle(delta.row_title)
+  const rowKeywords = normalizeStoryTimelineRowKeywords(delta.row_keywords)
   const plotId = opts?.plotId?.trim()
   const sidePerspective = inferStoryTimelineSidePerspective(delta)
   const charactersPresent = delta.characters_present?.length ? [...delta.characters_present] : undefined
@@ -859,6 +924,7 @@ export function buildStoryTimelinePlotRowFromDelta(
     sourceScope: scope,
     ...(plotId ? { plotId } : {}),
     ...(rowTitle ? { rowTitle } : {}),
+    ...(rowKeywords.length ? { rowKeywords } : {}),
     rowText,
     textHash,
     ...(sidePerspective ? { sidePerspective: true } : {}),
@@ -980,9 +1046,12 @@ export function inferStoryTimelineSidePerspective(delta: StoryTimelineSummaryDel
   return !present.some(isMainCharTimelinePlaceholder)
 }
 
-/** 向量语义召回索引文本：以摘要标题为主（非全文 rowText） */
+/** 向量语义召回索引文本：摘要标题 + 关键词（非全文 rowText） */
 export function resolveStoryTimelineRowVectorEmbedText(row: StoryTimelinePlotRow): string {
-  return resolveStoryTimelineRowTitle(row)
+  const title = resolveStoryTimelineRowTitle(row)
+  const keywords = resolveStoryTimelineRowKeywords(row)
+  if (!keywords.length) return title
+  return `${title}\n关键词：${keywords.join('、')}`
 }
 
 export function resolveStoryTimelineRowCharactersPresent(row: StoryTimelinePlotRow): string[] {

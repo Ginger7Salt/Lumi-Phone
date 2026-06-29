@@ -7,6 +7,7 @@ import {
   MEET_ENCOUNTER_AI_MOTTO_STYLE_TAIL,
   NPC_AI_HEIGHT_WEIGHT_MOTTO_RULES_CORE,
 } from '../wechat/newFriendsPersona/npcBasicProfileAiRules'
+import { buildWechatSignatureAiRulesBlock } from '../wechat/newFriendsPersona/wechatSignatureStyleRules'
 
 const MEET_NINE_DIMENSION_JSON_SCHEMA_BODY = `
 你必须输出**单个 JSON 对象**（不要 Markdown 代码围栏以外的文字），顶层字段：
@@ -46,7 +47,7 @@ const MEET_NINE_DIMENSION_JSON_SCHEMA_BODY = `
 **命名刚性（须全局遵守）**：顶层 **nickname** 是对外网名（卡片/列表标题用）；**realName** 是生活用真实姓名（须与 comprehensive.base.realName 一致）。除 **daily.speech** 可作第一人称口语（可顺带提网名）外，**comprehensive 内凡第三人称档案叙述**（含 **base.info**、**base.physiology**、psyche、abilities 叙事、relations、contrast、arc、fetish 等）在指「本角色本人」时**一律使用真实姓名汉字**，**禁止**用 nickname 当叙事主语或当档案里的正式称呼（错误示例：「叙白在市局……」；正确：用 realName 写「戚某某在市局……」）。**persona** 为列表短摘，须单独遵守下节「占位符」中对 **persona** 的 {{char}} 字面量规则，不得与 comprehensive 事实矛盾。同事喊「小某」、患者喊「某医生」等可保留，但旁白主语仍为实名。
 
 维度说明（生成时须落实，禁止空壳）：
-一 base：**info** 写外貌体征、穿搭气质、小动作、癖好（开头用一句年龄自述 "×× 岁。"，数字须与顶层 age 完全一致；**不要**在这里用 MBTI 解释职业）。**info 与 physiology 须遵守上文「命名刚性」：第三人称指本人只用真实姓名。** **realName** 与顶层 realName 一致（真实姓名）。**birthdayMD** 为公历月日 \`MM-DD\`（须与 age、学生/职场身份常识一致）。**heightCm** 为厘米纯数字字符串（如 "172"），须与 info 里身高/身形描写一致、忌夸张；**禁止**留空。**weightKg** 为千克数字字符串（如 "52"），与身形描写匹配、忌夸张；**禁止**留空或写占位。**wechatSignature** 为 12–40 字的微信「个性签名」式短句：态度、轻微自嘲或生活切片均可，须与人设语气一致；**禁止**网址、引流、无意义符号堆叠。**zodiac** 写中文星座名（可与生日一致）。**physiology** 写体态动作习惯。
+一 base：**info** 写外貌体征、穿搭气质、小动作、癖好（开头用一句年龄自述 "×× 岁。"，数字须与顶层 age 完全一致；**不要**在这里用 MBTI 解释职业）。**info 与 physiology 须遵守上文「命名刚性」：第三人称指本人只用真实姓名。** **realName** 与顶层 realName 一致（真实姓名）。**birthdayMD** 为公历月日 \`MM-DD\`（须与 age、学生/职场身份常识一致）。**heightCm** 为厘米纯数字字符串（如 "172"），须与 info 里身高/身形描写一致、忌夸张；**禁止**留空。**weightKg** 为千克数字字符串（如 "52"），与身形描写匹配、忌夸张；**禁止**留空或写占位。**wechatSignature** 遵守下文「微信个性签名」专节（与 motto 区分）。**zodiac** 写中文星座名（可与生日一致）。**physiology** 写体态动作习惯。
 二 core：**仅**人格侧写：表里反差、三观底线、缺陷与雷点；**core.mbti 禁止写职业、禁止写行业**。MBTI 硬性（16 型全覆盖，禁止偷懒扎堆）：字段 core.mbti 须且仅能体现**下列四字母之一**作为类型标签——ISTJ、ISFJ、INFJ、INTJ、ISTP、ISFP、INFP、INTP、ESTJ、ESFJ、ENFJ、ENTJ、ESTP、ESFP、ENFP、ENTP；写法示例："ENFP，话多爱联想但会看场合" 或 "ISTP 倾向（仅供参考）—手比嘴快"。**禁止**无依据地把 INTJ、ISTJ、INFJ、INTP 当成 "安全默认" 反复使用；**禁止**一连多轮只生成 I 人、只生成 xSTJ/xNTJ、或几乎不出现 F/P 维（须让 T/F、J/P、E/I、S/N 在长期多轮里都能出现）。若用户消息里指定了本轮必选四字母，则 core.mbti 必须以该四字母为类型标签（不可偷换成其它型）。
 三 psyche：成长经历与常见心结、压力下的反应；开心与难过时的不同表现（禁止创伤猎奇、禁止为惨而惨）。**orientationOrigin（性取向由来）**：单独一段叙事，写清当前取向自我认同如何在时间里成形——可以是自幼稳定、也曾有过试探或错位后的澄清、环境与人际变迁带来的重新认识等；**必须与顶层 orientation 字段一致**，尊重多元与边界；禁止猎奇、禁止污名化任一群体；篇幅建议约 120–420 字，口语具体，忌标语口号。
 四 abilities：**skills** 写清 "做什么工作 / 岗位" 以及**在这份工里的具体干法**（和同事怎么配合、忙季怎么扛、出错怎么补救等）；**hobbies / socialMode** 写爱好与社交。**MBTI 只允许影响 "工作场合下的习惯与表现" 的描写**（例如压力大时更爱闷头自己查还是爱拉人讨论），**绝对禁止**用 MBTI 反推或 "搭配" 职业：禁止 INTJ=建筑师、ENTP=销售、INFP=心理咨询师等一切刻板配对；**职业与 MBTI 无因果关系**，现实中任何类型的人都可能从事任何常见职业。
@@ -96,6 +97,8 @@ const MEET_NPC_BASIC_ALIGNED_WITH_NETWORK = `
 ${MEET_ENCOUNTER_AI_AGE_AND_BIRTHDAY_RULES}
 
 ${NPC_AI_HEIGHT_WEIGHT_MOTTO_RULES_CORE}
+
+${buildWechatSignatureAiRulesBlock()}
 
 ${MEET_ENCOUNTER_AI_MOTTO_STYLE_TAIL}
 `.trim()

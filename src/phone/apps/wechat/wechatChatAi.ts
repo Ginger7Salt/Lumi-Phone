@@ -2943,7 +2943,7 @@ export const UNIFIED_MEMORY_LINKED_JSON_RULE = `
       "precise": string,
       "emotion_need": string[],
       "extra_keywords": string[],
-      "timeline": { ...见下方 timeline 字段说明；线下每轮摘要表模式须填 row_title + event_summary }
+      "timeline": { ...见下方 timeline 字段说明；线下每轮摘要表模式须填 row_title + row_keywords + event_summary }
     }
   ],
   "epilogue_patches": [
@@ -2959,7 +2959,7 @@ export const UNIFIED_MEMORY_LINKED_JSON_RULE = `
 - linked：写给「人脉子角色」或「已绑定主角」的零或多条；character_id **只能**来自用户消息「可关联角色 id 表」反引号内的 id（勿选当前约会对象 id，应写在 primary）。若「线下关联摘录」未含某 id，但分隔符上方剧情正文或摘录中有该角色可核对事实，**仍须**写 linked（约会特则）；仅当确实无事实时不写；每名角色至多一条；无则 linked 为 []。
 ${buildEpiloguePatchesSummaryJsonRule()}
 - linked[].content：**第三人称旁白**；凡写到人**必须**用表达式（入库不替换，注入时由程序替换），**禁止**用汉字直呼玩家、存档主角、本条角色或其他人脉的真名/昵称/「用户」「玩家」「主角」「主要角色」等代称：须 **{{user}}**=玩家；**{{char}}**=本条 linked 的 character_id 对应角色（人脉 NPC 或另一存档主角）；**{{archive_char}}**=线下剧情存档根人设；**{{id:人设UUID}}**=其他可关联角色，id 须与 id 表一致。**禁止**把摘录「显示名：」或台词里的称呼原样抄入本条 content。
-- linked[].timeline（线下每轮摘要表）：与 primary.timeline 同规则；**row_title 必填**（4～10 字概括该 NPC 本切片）；event_summary 为摘要句，勿粘贴 content 全文。
+- linked[].timeline（线下每轮摘要表）：与 primary.timeline 同规则；**row_title 必填**（4～10 字概括该 NPC 本切片）；**row_keywords 必填**（3～5 个、每条 ≤5 字）；event_summary 为摘要句，勿粘贴 content 全文。
 - 不要在任何 content 字段内添加「[线上]」「[线下]」等标签（程序会加前缀）。
 ${STORY_TIMELINE_SUMMARY_JSON_FIELDS}
 ${MEMORY_BODY_PLACEHOLDER_INSTRUCTION}
@@ -3039,7 +3039,7 @@ ${roundModeBlock}
 - 你是嵌入在本轮剧情模型里的「长期记忆 / 剧情时间轴」子任务：须综合下列「线上 / 已有线下 / 人脉 NPC 摘录」以及**分隔符上方你刚输出的全部剧情正文**（去掉 \`<thinking>…</thinking>\`；VN 标签可保留）提炼事实。
 - **timeline（每轮必填）**：primary.timeline 须反映分隔符上方正文**读至末尾时**的时空、服装、物品、动机伏笔、待办与本轮关键事件；仅写相对上一状态的**增量**。**foreshadows / todos 必须是结尾快照**（规则见上方 JSON 字段说明），不得与正文最后交代矛盾；无则省略对应数组。**story_day 须含年份公历**（如 2025年10月1日），**story_time 须 HH:mm**；对照生日/节日节点（见下方日历说明）。**location**：须写可区分的具体地点（店名/楼层/区域/包厢等），禁止仅写「饭馆、酒店、咖啡厅」等类名。**服装**：正文可核对时须写具体单品与可见状态（色/材质/版型/敞开挽袖/鞋履），禁止「便装、休闲、日常穿搭」等空泛词糊弄。
 - primary：**第三人称**；${summaryRoundDue ? '合成线上（若有）+ 游标后已有线下（若有）+ **本轮新正文**' : '本轮非总结间隔，content 留 ""，勿写长期记忆正文'}；玩家 **{{user}}**、对方 **{{char}}**；**禁止「我」**；不要在 JSON 里写 [私聊][线下] 前缀。
-- linked：除上表摘录外，**必须**结合你刚写的**本轮剧情正文**判断可关联角色（人脉 NPC 或已绑定主角）是否有可记事实（见「约会特则」）；勿因摘录为（无）就整段 linked 留空——若正文里确有下表 id 之事实，须写 linked。每条 linked 的 content **须为第三人称**，且凡涉玩家、存档主角、本条角色、其它可关联角色**一律**写 **{{user}} / {{archive_char}} / {{char}} / {{id:UUID}}**，**禁止**「用户」「玩家」「主角」「主要角色」及材料真名（规则同上方 JSON 与【记忆正文·指称铁律】）。**每条 linked 须同时写 timeline**（含 **row_title** 短标题 + event_summary 摘要句，规则同 primary.timeline；勿把 content 全文贴进 timeline）。
+- linked：除上表摘录外，**必须**结合你刚写的**本轮剧情正文**判断可关联角色（人脉 NPC 或已绑定主角）是否有可记事实（见「约会特则」）；勿因摘录为（无）就整段 linked 留空——若正文里确有下表 id 之事实，须写 linked。每条 linked 的 content **须为第三人称**，且凡涉玩家、存档主角、本条角色、其它可关联角色**一律**写 **{{user}} / {{archive_char}} / {{char}} / {{id:UUID}}**，**禁止**「用户」「玩家」「主角」「主要角色」及材料真名（规则同上方 JSON 与【记忆正文·指称铁律】）。**每条 linked 须同时写 timeline**（含 **row_title** 短标题 + **row_keywords** 检索词 + event_summary 摘要句，规则同 primary.timeline；勿把 content 全文贴进 timeline）。
 - 若汇总后确实无任何可核对的新事实，primary.content 可为 "" 且 linked=[]。
 
 【可关联角色 id 表】（linked.character_id 仅可从中择一或多；勿选 \`${peerId}\`）
@@ -3143,7 +3143,7 @@ const STORY_TIMELINE_SUMMARY_ONLY_SYSTEM = `
 - **foreshadows / todos 必须是用户读完本轮剧情后的结尾快照**：以材料**末尾**为准，禁止与结尾已交代事实矛盾（例如结尾已写完作业，则不得再写 open 的「未完成作业」）。
 - **location**：须写可区分的具体地点（店名/楼层/区域/包厢等），禁止仅写「饭馆、酒店、咖啡厅」等类名。
 - **服装**：正文可核对时须写具体单品与可见状态，禁止「便装、休闲、日常穿搭」等空泛词。
-- 仅写相对上一状态的**增量**；无变化也须至少写 event_summary（约 80～100 字）；**row_title** 短标题必填（4～10 字）。
+- 仅写相对上一状态的**增量**；无变化也须至少写 event_summary（约 80～100 字）；**row_title** 短标题必填（4～10 字）；**row_keywords** 必填（3～5 个、每条 ≤5 字）。
 - 若用户提供【系统已有·未收锚点】：须对照**正文末尾**是否已兑现；已完结者**必须**输出 status:"resolved"，勿让已完结事项继续悬挂。
 - 输出**恰好一个** JSON 对象：primary.content 必须为 ""；primary.timeline 为增量对象（字段见下方说明）。
 - 禁止 markdown 围栏；禁止 JSON 前后解释。

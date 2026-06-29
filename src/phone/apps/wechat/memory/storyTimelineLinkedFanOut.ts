@@ -24,7 +24,7 @@ function buildLinkedSummaryMaterial(params: {
 }): string {
   const parts = [
     '【任务·人脉关联记忆 → 剧情摘要表】',
-    '须输出 timeline JSON（row_title 4～10 字必填；event_summary 为摘要句；禁止整段粘贴下方正文）。',
+    '须输出 timeline JSON（row_title 4～10 字必填；row_keywords 3～5 个、每条 ≤5 字；event_summary 为摘要句；禁止整段粘贴下方正文）。',
     '视角：本条 linked 角色的 {{char}}=该 NPC 本人；{{archive_char}}=线下存档主角；{{user}}=玩家。',
   ]
   const plot = String(params.latestPlotBody ?? '').trim()

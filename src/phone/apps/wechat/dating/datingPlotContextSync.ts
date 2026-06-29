@@ -1,5 +1,9 @@
+import type { ApiConfigCore } from '../../api/types'
 import type { DatingPlotSnapshotItem } from '../unifiedMemoryAutoSummary'
+import { rebuildStoryTimelineFromDatingPlots } from '../memory/storyTimelinePersist'
 import { personaDb } from '../newFriendsPersona/idb'
+import { rebuildWorldBookAfterFromDatingPlotList } from '../newFriendsPersona/worldBookAfterPatch'
+import type { PlotItem } from './types'
 import { resolveOfflineDatingArchiveContext } from './offlineDatingArchiveResolve'
 
 /** 删除/回滚 plot 时用于清理关联记忆的 owner id 集合。 */
@@ -50,6 +54,17 @@ export function collectDeletedAiPlotIds(
   return out
 }
 
+export function collectDeletedPlotItems(prevPlots: ReadonlyArray<PlotItem>, nextPlots: ReadonlyArray<PlotItem>): PlotItem[] {
+  const nextIds = new Set(nextPlots.map((p) => p.id?.trim()).filter(Boolean))
+  const out: PlotItem[] = []
+  for (const p of prevPlots) {
+    const id = p.id?.trim()
+    if (!id) continue
+    if (!nextIds.has(id)) out.push(p)
+  }
+  return out
+}
+
 export type DatingPlotListMutationCleanupParams = {
   perspectiveCharacterId: string
   linkedFromCharacterIds: readonly string[]
@@ -66,5 +81,63 @@ export async function cleanupDatingPlotListMutation(params: DatingPlotListMutati
       linkedFromCharacterIds: params.linkedFromCharacterIds,
       deletedAiPlotIds: deletedAiIds,
     })
+  }
+}
+
+export type DatingPlotListMutationSideEffectsParams = {
+  perspectiveCharacterId: string
+  linkedFromCharacterIds: readonly string[]
+  prevPlots: PlotItem[]
+  nextPlots: PlotItem[]
+  apiConfig?: ApiConfigCore | null
+}
+
+/**
+ * 约会剧情列表缩短后：清关联记忆、删被删轮的线下摘要、重建剩余摘要表，并将尾声延展回退到剩余轮次对应快照。
+ */
+export async function finalizeDatingPlotListMutationSideEffects(
+  params: DatingPlotListMutationSideEffectsParams,
+): Promise<void> {
+  await cleanupDatingPlotListMutation({
+    perspectiveCharacterId: params.perspectiveCharacterId,
+    linkedFromCharacterIds: params.linkedFromCharacterIds,
+    prevPlots: params.prevPlots,
+    nextPlots: params.nextPlots,
+  })
+
+  const deletedPlots = collectDeletedPlotItems(params.prevPlots, params.nextPlots)
+  const deletedAiPlotIds = deletedPlots.filter((p) => p.type === 'ai').map((p) => p.id.trim()).filter(Boolean)
+
+  for (const plotId of deletedAiPlotIds) {
+    try {
+      await personaDb.deleteStoryTimelinePlotRowsForPlotIdGlobally(plotId)
+    } catch (e) {
+      console.warn('[dating] delete story timeline rows for removed plot failed', plotId, e)
+    }
+  }
+
+  const charId = params.perspectiveCharacterId.trim()
+  if (charId) {
+    try {
+      await rebuildStoryTimelineFromDatingPlots(charId, params.nextPlots, {
+        apiConfig: params.apiConfig ?? null,
+      })
+    } catch (e) {
+      console.warn('[dating] story timeline rebuild after plot mutation failed', e)
+    }
+
+    try {
+      const charRow = await personaDb.getCharacter(charId)
+      if (charRow) {
+        const restored = rebuildWorldBookAfterFromDatingPlotList(
+          charRow,
+          params.nextPlots,
+          deletedPlots,
+        )
+        if (restored) await personaDb.upsertCharacter(restored)
+      }
+    } catch (e) {
+      console.warn('[dating] epilogue sync after plot mutation failed', e)
+    }
   }
 }

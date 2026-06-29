@@ -1,6 +1,7 @@
 import type { ApiConfig } from '../../api/types'
 import type { Character, Gender, PlayerIdentity } from './types'
 import { openAiCompatibleChat, normalizeWechatId } from './ai'
+import { WECHAT_SIGNATURE_GENERATE_MAX } from './wechatSignatureStyleRules'
 import type { PersonaAiGenerateForm } from './personaAiGenerateTypes'
 import {
   buildPersonaAiGenerateSystemPrompt,
@@ -170,7 +171,8 @@ function assemblePersonaCharacter(parsed: Record<string, unknown>, params: Assem
   const painPoints = pickStrArray(parsed.painPoints, 2)
   const wechatId = normalizeWechatId(pickStr(parsed.wechatId, 20), characterId)
   const wechatSignature =
-    pickStr(parsed.wechatSignature, 40) || comprehensive.base.wechatSignature.trim()
+    pickStr(parsed.wechatSignature, WECHAT_SIGNATURE_GENERATE_MAX) ||
+    comprehensive.base.wechatSignature.trim()
 
   const avatarUrl = params.form.avatarUrl.trim()
 

@@ -1,8 +1,8 @@
 import { normalizeBirthdayMD, zodiacZhFromStoredMD } from '../wechat/newFriendsPersona/characterProfilePhysioUtils'
 import type { Gender } from '../wechat/newFriendsPersona/types'
 import { daysInMonth, formatMD, randomChineseName } from '../wechat/newFriendsPersona/utils'
-import type { MeetMbtiFourLetter } from './meetPersonaPrompt'
-import { MEET_MBTI_SIXTEEN } from './meetPersonaPrompt'
+import { MEET_MBTI_SIXTEEN, type MeetMbtiFourLetter } from './meetPersonaPrompt'
+import { pickWechatSignatureFallback } from '../wechat/newFriendsPersona/wechatSignatureStyleRules'
 
 /**
  * 遇见 · 九维立体人格（Comprehensive Persona）
@@ -139,13 +139,11 @@ export function deriveMeetMottoFromPersona(p: ComprehensivePersona): string {
   return '走慢一点，也认真一点。'
 }
 
-/** 个性签名缺省：从外显/体征摘一句，避免世界书与微信签名为空 */
-export function deriveMeetWechatSignatureFromPersona(p: ComprehensivePersona): string {
-  const fromSurface = p.core.surface?.trim().slice(0, 44)
-  if (fromSurface) return `${fromSurface}…`
-  const fromInfo = p.base.info?.trim().slice(0, 44)
-  if (fromInfo) return `${fromInfo}…`
-  return '随缘回；忙完会看消息。'
+/** 个性签名缺省：口语短句，禁止从长档案截断 */
+export function deriveMeetWechatSignatureFromPersona(p: ComprehensivePersona, seed = ''): string {
+  const fromDaily = p.daily.quirks?.trim()
+  if (fromDaily && fromDaily.length <= 22 && fromDaily !== PLACEHOLDER) return fromDaily
+  return pickWechatSignatureFallback(seed || p.base.realName || p.base.info || 'meet')
 }
 
 function mapMeetGenderLabelToCharacterGender(g: string): Gender {
@@ -530,15 +528,7 @@ export function buildOfflineComprehensivePersona(
       weightKg: vitalsWeight,
       heightCm: pickOfflineHeightCmFromSeed(seed),
       zodiac: vitalsZodiac,
-      wechatSignature: (() => {
-        const sigs = [
-          '回消息看心情，急事请直说。',
-          '周末更常在；工作日随缘。',
-          '看见就回，没回就是在忙。',
-          '慢热，熟了会好聊很多。',
-        ]
-        return sigs[h % sigs.length]!
-      })(),
+      wechatSignature: pickWechatSignatureFallback(seed),
     },
     core: {
       mbti: mbtiLine,
