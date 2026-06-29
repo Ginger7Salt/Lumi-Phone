@@ -106,7 +106,10 @@ import {
   normalizeStoryTimelineRowKeywords,
   normalizeStoryTimelineRowTitle,
   parseCharactersPresentFromRowText,
-  isMainCharTimelinePlaceholder,
+  buildStoryTimelineMainCharPresenceOpts,
+  isMainCharPresentInStoryTimelineRow,
+  isMainCharPresentInTimelineTokens,
+  type StoryTimelineMainCharPresenceOpts,
   STORY_TIMELINE_COSTUME_DESC_MAX,
   STORY_TIMELINE_ROWS_CAP,
   type StoryTimelinePlotRow,
@@ -1963,7 +1966,10 @@ function normalizeStoryTimelineState(input: unknown): StoryTimelineState | null 
   }
 }
 
-function normalizeStoryTimelinePlotRow(input: unknown): StoryTimelinePlotRow | null {
+function normalizeStoryTimelinePlotRow(
+  input: unknown,
+  opts?: StoryTimelineMainCharPresenceOpts,
+): StoryTimelinePlotRow | null {
   const r = (input ?? {}) as Partial<StoryTimelinePlotRow>
   const id = typeof r.id === 'string' ? r.id.trim() : ''
   const characterId = typeof r.characterId === 'string' ? r.characterId.trim() : ''
@@ -1997,13 +2003,30 @@ function normalizeStoryTimelinePlotRow(input: unknown): StoryTimelinePlotRow | n
         .filter(Boolean)
         .slice(0, 12)
     : parseCharactersPresentFromRowText(rowText)
+  const presenceOpts: StoryTimelineMainCharPresenceOpts = {
+    mainCharacterId: opts?.mainCharacterId ?? characterId,
+    mainCharAliases: opts?.mainCharAliases,
+  }
   let sidePerspective = r.sidePerspective === true
   if (
     !sidePerspective &&
     charactersPresent.length &&
-    !charactersPresent.some(isMainCharTimelinePlaceholder)
+    !isMainCharPresentInTimelineTokens(charactersPresent, presenceOpts)
   ) {
     sidePerspective = true
+  }
+  const draftRow: StoryTimelinePlotRow = {
+    id,
+    characterId,
+    recordedAt,
+    sourceScope,
+    rowText: rowText.slice(0, 4000),
+    textHash,
+    ...(sidePerspective ? { sidePerspective: true } : {}),
+    ...(charactersPresent.length ? { charactersPresent } : {}),
+  }
+  if (sidePerspective && isMainCharPresentInStoryTimelineRow(draftRow, presenceOpts)) {
+    sidePerspective = false
   }
   const rowKeywordsFromField = normalizeStoryTimelineRowKeywords(r.rowKeywords)
   const rowKeywords =
@@ -6184,6 +6207,8 @@ export class PersonaDb {
   async listStoryTimelinePlotRowsByCharacterId(characterId: string): Promise<StoryTimelinePlotRow[]> {
     const cid = characterId.trim()
     if (!cid) return []
+    const ch = await this.getCharacter(cid)
+    const presenceOpts = buildStoryTimelineMainCharPresenceOpts(cid, ch)
     const db = await openDb()
     if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
       db.close()
@@ -6199,13 +6224,18 @@ export class PersonaDb {
     await txDone(tx)
     db.close()
     return rows
-      .map((r) => normalizeStoryTimelinePlotRow(r))
+      .map((r) => normalizeStoryTimelinePlotRow(r, presenceOpts))
       .filter((x): x is StoryTimelinePlotRow => !!x)
       .sort((a, b) => a.recordedAt - b.recordedAt)
   }
 
   async upsertStoryTimelinePlotRow(row: StoryTimelinePlotRow): Promise<void> {
-    const normalized = normalizeStoryTimelinePlotRow(row)
+    const cid = row.characterId.trim()
+    const ch = cid ? await this.getCharacter(cid) : null
+    const normalized = normalizeStoryTimelinePlotRow(
+      row,
+      buildStoryTimelineMainCharPresenceOpts(cid, ch),
+    )
     if (!normalized) return
     const db = await openDb()
     if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
@@ -6250,10 +6280,13 @@ export class PersonaDb {
   }
 
   async appendStoryTimelinePlotRow(row: StoryTimelinePlotRow): Promise<void> {
-    const normalized = normalizeStoryTimelinePlotRow(row)
-    if (!normalized) return
-    await this.upsertStoryTimelinePlotRow(normalized)
-    const all = await this.listStoryTimelinePlotRowsByCharacterId(normalized.characterId)
+    await this.upsertStoryTimelinePlotRow(row)
+    const cid = row.characterId.trim()
+    if (!cid) {
+      emitWeChatStorageChanged()
+      return
+    }
+    const all = await this.listStoryTimelinePlotRowsByCharacterId(cid)
     if (all.length <= STORY_TIMELINE_ROWS_CAP) {
       emitWeChatStorageChanged()
       return

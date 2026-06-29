@@ -894,7 +894,11 @@ export function buildStoryTimelinePlotRowFromDelta(
   characterId: string,
   delta: StoryTimelineSummaryDelta,
   scope: StoryTimelineEventScope,
-  opts?: { plotId?: string | null; recordedAtMs?: number },
+  opts?: {
+    plotId?: string | null
+    recordedAtMs?: number
+    mainCharPresence?: StoryTimelineMainCharPresenceOpts
+  },
 ): StoryTimelinePlotRow | null {
   if (!hasTimelineDeltaContent(delta)) return null
   const cid = characterId.trim()
@@ -909,7 +913,11 @@ export function buildStoryTimelinePlotRowFromDelta(
   const rowTitle = normalizeStoryTimelineRowTitle(delta.row_title)
   const rowKeywords = normalizeStoryTimelineRowKeywords(delta.row_keywords)
   const plotId = opts?.plotId?.trim()
-  const sidePerspective = inferStoryTimelineSidePerspective(delta)
+  const mainCharPresence: StoryTimelineMainCharPresenceOpts = {
+    mainCharacterId: opts?.mainCharPresence?.mainCharacterId ?? cid,
+    mainCharAliases: opts?.mainCharPresence?.mainCharAliases,
+  }
+  const sidePerspective = inferStoryTimelineSidePerspective(delta, mainCharPresence)
   const charactersPresent = delta.characters_present?.length ? [...delta.characters_present] : undefined
   const safePlotKey = plotId
     ? plotId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48)
@@ -1028,6 +1036,109 @@ export function isMainCharTimelinePlaceholder(token: string): boolean {
   return t === STORY_TIMELINE_MAIN_CHAR_PLACEHOLDER || t === '{{archive_char}}'
 }
 
+/** 主角色在场判定：占位符 + 绑定真名/昵称/备注 + {{id:主角色}} */
+export type StoryTimelineMainCharPresenceOpts = {
+  mainCharacterId?: string
+  mainCharAliases?: readonly string[]
+}
+
+function storyTimelinePresenceTokenKey(token: string): string {
+  return String(token ?? '').trim().toLowerCase()
+}
+
+/** 从人设卡字段收集可匹配的显示名（去重） */
+export function buildStoryTimelineMainCharAliasList(names: {
+  name?: string | null
+  wechatNickname?: string | null
+  remark?: string | null
+}): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of [names.name, names.wechatNickname, names.remark]) {
+    const t = String(raw ?? '').trim()
+    if (!t) continue
+    const key = storyTimelinePresenceTokenKey(t)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(t)
+  }
+  return out
+}
+
+export function buildStoryTimelineMainCharPresenceOpts(
+  characterId: string,
+  character:
+    | {
+        name?: string | null
+        wechatNickname?: string | null
+        remark?: string | null
+      }
+    | null
+    | undefined,
+): StoryTimelineMainCharPresenceOpts {
+  const cid = characterId.trim()
+  const aliases = buildStoryTimelineMainCharAliasList(character ?? {})
+  return {
+    ...(cid ? { mainCharacterId: cid } : {}),
+    ...(aliases.length ? { mainCharAliases: aliases } : {}),
+  }
+}
+
+/** 在场 token 是否指约会主角色：{{char}} / {{archive_char}} / {{id:主角色}} / 绑定真名 */
+export function isMainCharTimelineToken(
+  token: string,
+  opts?: StoryTimelineMainCharPresenceOpts,
+): boolean {
+  const t = String(token ?? '').trim()
+  if (!t) return false
+  if (isMainCharTimelinePlaceholder(t)) return true
+  const cid = opts?.mainCharacterId?.trim()
+  if (cid) {
+    const idMatch = t.match(/^\{\{id:([^}]+)\}\}$/)
+    if (idMatch?.[1]?.trim() === cid) return true
+  }
+  const tokKey = storyTimelinePresenceTokenKey(t)
+  for (const alias of opts?.mainCharAliases ?? []) {
+    if (storyTimelinePresenceTokenKey(alias) === tokKey) return true
+  }
+  return false
+}
+
+export function isMainCharPresentInTimelineTokens(
+  tokens: readonly string[],
+  opts?: StoryTimelineMainCharPresenceOpts,
+): boolean {
+  return tokens.some((token) => isMainCharTimelineToken(token, opts))
+}
+
+export function extractCostumeCharacterKeysFromRowText(rowText: string): string[] {
+  const block = String(rowText ?? '').match(/【服装变更】\s*\n([\s\S]*?)(?=\n\n【|$)/)?.[1] ?? ''
+  const keys: string[] = []
+  for (const line of block.split('\n')) {
+    const m = line.match(/^-\s*([^：:]+)[：:]/)
+    const key = m?.[1]?.trim()
+    if (key) keys.push(key)
+  }
+  return keys
+}
+
+export function extractMainCharPresenceTokensFromTimelineDelta(
+  delta: StoryTimelineSummaryDelta,
+): string[] {
+  const tokens = [...(delta.characters_present ?? [])]
+  if (delta.costumes && typeof delta.costumes === 'object') {
+    tokens.push(...Object.keys(delta.costumes))
+  }
+  return tokens
+}
+
+export function isMainCharPresentInTimelineDelta(
+  delta: StoryTimelineSummaryDelta,
+  opts?: StoryTimelineMainCharPresenceOpts,
+): boolean {
+  return isMainCharPresentInTimelineTokens(extractMainCharPresenceTokensFromTimelineDelta(delta), opts)
+}
+
 /** 从摘要正文【本轮锚点】行解析在场列表（兼容旧行无 charactersPresent 字段） */
 export function parseCharactersPresentFromRowText(rowText: string): string[] {
   const anchorLine = String(rowText ?? '').match(/【本轮锚点】[^\n]*/)?.[0] ?? ''
@@ -1039,11 +1150,15 @@ export function parseCharactersPresentFromRowText(rowText: string): string[] {
     .filter(Boolean)
 }
 
-export function inferStoryTimelineSidePerspective(delta: StoryTimelineSummaryDelta): boolean {
+export function inferStoryTimelineSidePerspective(
+  delta: StoryTimelineSummaryDelta,
+  opts?: StoryTimelineMainCharPresenceOpts,
+): boolean {
+  if (isMainCharPresentInTimelineDelta(delta, opts)) return false
   if (delta.side_perspective === true) return true
   const present = delta.characters_present ?? []
   if (!present.length) return false
-  return !present.some(isMainCharTimelinePlaceholder)
+  return true
 }
 
 /** 向量语义召回索引文本：摘要标题 + 关键词（非全文 rowText） */
@@ -1059,10 +1174,17 @@ export function resolveStoryTimelineRowCharactersPresent(row: StoryTimelinePlotR
   return parseCharactersPresentFromRowText(row.rowText)
 }
 
-export function isMainCharPresentInStoryTimelineRow(row: StoryTimelinePlotRow): boolean {
+export function isMainCharPresentInStoryTimelineRow(
+  row: StoryTimelinePlotRow,
+  opts?: StoryTimelineMainCharPresenceOpts,
+): boolean {
   const present = resolveStoryTimelineRowCharactersPresent(row)
-  if (!present.length) return row.sidePerspective !== true
-  return present.some(isMainCharTimelinePlaceholder)
+  const tokens = [...present, ...extractCostumeCharacterKeysFromRowText(row.rowText)]
+  if (!tokens.length) return row.sidePerspective !== true
+  return isMainCharPresentInTimelineTokens(tokens, {
+    mainCharacterId: opts?.mainCharacterId ?? row.characterId,
+    mainCharAliases: opts?.mainCharAliases,
+  })
 }
 
 function extractPublicAnchorHintFromRowText(rowText: string): string {
@@ -1088,6 +1210,7 @@ export function formatStoryTimelineSidePerspectiveRedactedRow(row: StoryTimeline
 export type StoryTimelineRowPromptInjectOpts = {
   /** 对侧幕且 {{char}} 未在场的行 redact（默认 true） */
   redactSidePerspectiveForMainChar?: boolean
+  mainCharPresence?: StoryTimelineMainCharPresenceOpts
 }
 
 export function formatStoryTimelineRowForPromptInject(
@@ -1095,7 +1218,11 @@ export function formatStoryTimelineRowForPromptInject(
   opts?: StoryTimelineRowPromptInjectOpts,
 ): string {
   const redact = opts?.redactSidePerspectiveForMainChar !== false
-  if (redact && row.sidePerspective === true && !isMainCharPresentInStoryTimelineRow(row)) {
+  const presence = {
+    mainCharacterId: opts?.mainCharPresence?.mainCharacterId ?? row.characterId,
+    mainCharAliases: opts?.mainCharPresence?.mainCharAliases,
+  }
+  if (redact && row.sidePerspective === true && !isMainCharPresentInStoryTimelineRow(row, presence)) {
     return formatStoryTimelineSidePerspectiveRedactedRow(row)
   }
   return row.rowText

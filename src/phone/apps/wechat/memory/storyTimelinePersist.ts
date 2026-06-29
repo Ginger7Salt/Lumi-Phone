@@ -10,6 +10,7 @@ import { recallStoryTimelineRowsByVector } from './storyTimelineRowRecall'
 import { MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS } from './memorySummaryRetention'
 import {
   buildStoryTimelinePlotRowFromDelta,
+  buildStoryTimelineMainCharPresenceOpts,
   formatStoryTimelineDeltaForDisplay,
   formatStoryTimelineInjectBody,
   formatStoryTimelineOpenAnchorsForSummaryPrompt,
@@ -17,9 +18,17 @@ import {
   mergeStoryTimelineState,
   selectStoryTimelineRecentInjectRows,
   type StoryTimelineEventScope,
+  type StoryTimelineMainCharPresenceOpts,
   type StoryTimelinePromptLoadOpts,
   type StoryTimelineSummaryDelta,
 } from './storyTimelineTypes'
+
+async function loadStoryTimelineMainCharPresence(characterId: string): Promise<StoryTimelineMainCharPresenceOpts> {
+  const cid = characterId.trim()
+  if (!cid) return {}
+  const ch = await personaDb.getCharacter(cid)
+  return buildStoryTimelineMainCharPresenceOpts(cid, ch)
+}
 
 /** 将 timeline 增量合并进当前状态，并 append 一行剧情摘要 */
 export async function persistStoryTimelineFromSummaryDelta(
@@ -42,10 +51,12 @@ export async function persistStoryTimelineFromSummaryDelta(
     typeof opts?.recordedAtMs === 'number' && Number.isFinite(opts.recordedAtMs)
       ? opts.recordedAtMs
       : merged.updatedAt
+  const mainCharPresence = await loadStoryTimelineMainCharPresence(cid)
   const plotRow =
     buildStoryTimelinePlotRowFromDelta(cid, delta, scope, {
       plotId: opts?.plotId,
       recordedAtMs: recordedAt,
+      mainCharPresence,
     }) ??
     (() => {
       const rowText = formatStoryTimelineDeltaForDisplay(delta, { recordedAtMs: recordedAt })
@@ -54,7 +65,7 @@ export async function persistStoryTimelineFromSummaryDelta(
         cid,
         { ...delta, event_summary: delta.event_summary ?? '（本轮状态更新）' },
         scope,
-        { plotId: opts?.plotId, recordedAtMs: recordedAt },
+        { plotId: opts?.plotId, recordedAtMs: recordedAt, mainCharPresence },
       )
     })()
   if (plotRow) {
@@ -73,6 +84,8 @@ export async function rebuildStoryTimelineFromDatingPlots(
 ): Promise<{ parallelSummaryPlotIds: string[] }> {
   const cid = characterId.trim()
   if (!cid) return { parallelSummaryPlotIds: [] }
+
+  const mainCharPresence = await loadStoryTimelineMainCharPresence(cid)
 
   let merged: import('./storyTimelineTypes').StoryTimelineState | null = null
   const plotRows: NonNullable<ReturnType<typeof buildStoryTimelinePlotRowFromDelta>>[] = []
@@ -94,6 +107,7 @@ export async function rebuildStoryTimelineFromDatingPlots(
       const row = buildStoryTimelinePlotRowFromDelta(cid, delta, 'offline', {
         plotId: plot.id,
         recordedAtMs: plot.timestamp,
+        mainCharPresence,
       })
       if (row) plotRows.push(row)
     }
@@ -180,7 +194,10 @@ export async function loadStoryTimelinePromptBlock(
     state,
     recentRows,
     vectorRows,
-    rowInjectOpts: { redactSidePerspectiveForMainChar: true },
+    rowInjectOpts: {
+      redactSidePerspectiveForMainChar: true,
+      mainCharPresence: await loadStoryTimelineMainCharPresence(cid),
+    },
   })
   if (!body.trim()) return ''
 
