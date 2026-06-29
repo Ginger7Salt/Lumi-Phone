@@ -1,5 +1,9 @@
 import type { Character } from './newFriendsPersona/types'
 import { emitWeChatStorageChanged, personaDb } from './newFriendsPersona/idb'
+import {
+  buildWechatSignatureChatUpdateRulesBlock,
+  coerceWechatSignature,
+} from './newFriendsPersona/wechatSignatureStyleRules'
 
 const WECHAT_NICK_MAX = 12
 const WECHAT_SIG_MAX = 22
@@ -150,8 +154,10 @@ export const WECHAT_CHARACTER_PROFILE_UPDATE_APPENDIX = `
 
 ■ 何时值得改（结合人设，勿机械每轮改）
 - **昵称**：关系确认后的小甜蜜（如「某某的对象」）、心情转折、玩梗改名；勿把档案**姓名**原样或仅姓氏当昵称。
-- **签名**：确定关系后可换成「爱老婆」「爱宝宝」等（须贴合人设与当前关系）；也可写极简留白、上班摸鱼、反内耗等。
+- **签名**：确定关系后可换成甜蜜留白（须贴合人设与当前关系）；须像真人随手改的状态，**禁止**打工人模板腔。
 - **人设差异**：有的角色签名只留**一句有意义的话**、几年不换；有的爱随手改——按你的性格与世界书判断，**没有充分理由就保持现状**。
+
+${buildWechatSignatureChatUpdateRulesBlock(WECHAT_SIG_MAX)}
 
 ■ 怎么输出（与口语回复同轮）
 - 先像真人一样用 **0～2 句**口语带过（也可静默直接改，视性格而定），**不要**写成教程。
@@ -195,9 +201,12 @@ export async function applyCharacterWechatProfileUpdateDirectives(params: {
     }
   }
 
-  if (nextSig !== undefined && nextSig !== (ch.wechatSignature?.trim() || '')) {
-    patch.wechatSignature = nextSig
-    signatureChanged = true
+  if (nextSig !== undefined) {
+    nextSig = coerceWechatSignature(nextSig, cid, WECHAT_SIG_MAX)
+    if (nextSig !== (ch.wechatSignature?.trim() || '')) {
+      patch.wechatSignature = nextSig
+      signatureChanged = true
+    }
   }
 
   if (!nicknameChanged && !signatureChanged) {

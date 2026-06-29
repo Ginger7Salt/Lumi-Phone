@@ -2,7 +2,10 @@ import { normalizeBirthdayMD, zodiacZhFromStoredMD } from '../wechat/newFriendsP
 import type { Gender } from '../wechat/newFriendsPersona/types'
 import { daysInMonth, formatMD, randomChineseName } from '../wechat/newFriendsPersona/utils'
 import { MEET_MBTI_SIXTEEN, type MeetMbtiFourLetter } from './meetPersonaPrompt'
-import { pickWechatSignatureFallback } from '../wechat/newFriendsPersona/wechatSignatureStyleRules'
+import {
+  pickWechatSignatureFallback,
+  looksLikeTemplateWechatSignature,
+} from '../wechat/newFriendsPersona/wechatSignatureStyleRules'
 
 /**
  * 遇见 · 九维立体人格（Comprehensive Persona）
@@ -139,10 +142,17 @@ export function deriveMeetMottoFromPersona(p: ComprehensivePersona): string {
   return '走慢一点，也认真一点。'
 }
 
-/** 个性签名缺省：口语短句，禁止从长档案截断 */
+/** 个性签名缺省：口语短句，禁止从长档案截断或模板腔 */
 export function deriveMeetWechatSignatureFromPersona(p: ComprehensivePersona, seed = ''): string {
   const fromDaily = p.daily.quirks?.trim()
-  if (fromDaily && fromDaily.length <= 22 && fromDaily !== PLACEHOLDER) return fromDaily
+  if (
+    fromDaily &&
+    fromDaily.length <= 22 &&
+    fromDaily !== PLACEHOLDER &&
+    !looksLikeTemplateWechatSignature(fromDaily)
+  ) {
+    return fromDaily
+  }
   return pickWechatSignatureFallback(seed || p.base.realName || p.base.info || 'meet')
 }
 

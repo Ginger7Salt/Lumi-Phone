@@ -1,6 +1,10 @@
 import type { ApiConfig } from '../api/types'
 import { normalizeWechatId, openAiCompatibleChat } from '../wechat/newFriendsPersona/ai'
 import {
+  coerceWechatSignature,
+  WECHAT_SIGNATURE_DISPLAY_MAX,
+} from '../wechat/newFriendsPersona/wechatSignatureStyleRules'
+import {
   callMeetOpenAiVisionChat,
   MEET_IMAGE_VISION_APPENDIX,
   MEET_USER_AVATAR_VISION_TEXT,
@@ -377,9 +381,10 @@ export async function aiGenerateEncounterNpc(params: {
         ...comprehensivePersona,
         base: { ...comprehensivePersona.base, weightKg: wFix, heightCm: hFix },
       }
-      const sigFix = isMeetProfilePlaceholder(comprehensivePersona.base.wechatSignature)
+      const sigRaw = isMeetProfilePlaceholder(comprehensivePersona.base.wechatSignature)
         ? deriveMeetWechatSignatureFromPersona(withVitals)
         : comprehensivePersona.base.wechatSignature
+      const sigFix = coerceWechatSignature(sigRaw, id, WECHAT_SIGNATURE_DISPLAY_MAX)
       comprehensivePersona = {
         ...withVitals,
         base: { ...withVitals.base, wechatSignature: sigFix },

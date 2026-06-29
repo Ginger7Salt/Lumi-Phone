@@ -27,6 +27,10 @@ import {
   formatMeetMbtiLettersForUi,
   isMeetProfilePlaceholder,
 } from './comprehensivePersona'
+import {
+  coerceWechatSignature,
+  WECHAT_SIGNATURE_DISPLAY_MAX,
+} from '../wechat/newFriendsPersona/wechatSignatureStyleRules'
 
 function mapGenderLabel(g: string): Gender {
   if (g.includes('女')) return 'female'
@@ -155,7 +159,7 @@ export async function upsertMeetNpcAsCharacter(
     const sigR = npc.comprehensivePersona.base.wechatSignature?.trim() ?? ''
     wechatSignatureLine =
       sigR && !isMeetProfilePlaceholder(sigR)
-        ? sigR.slice(0, 120)
+        ? coerceWechatSignature(sigR, npc.id, WECHAT_SIGNATURE_DISPLAY_MAX)
         : deriveMeetWechatSignatureFromPersona(npc.comprehensivePersona).slice(0, 120)
   }
 

@@ -586,6 +586,7 @@ export function buildPersonaAiGenerateUserPrompt(params: {
         : '生成前须已完成 Lumi 矩阵执行端身份内化（第零步）。'
     }`,
     '再次强调：bio 仅人设概括、不写对 {{user}} 的态度；颜值欣赏≠恋爱≠取向动摇；arc.secrets 只写角色自身秘密；{{user}} 身体描写须与绑定玩家性别一致；所有将落入世界书条目的正文与标题，角色用 {{char}}、绑定玩家用 {{user}}（bio 除外），勿写汉字真名。',
+    'wechatSignature 须像真人随手改的朋友圈状态（意象/半句话/留白），**严禁**打工人模板：下班了别找我、勿扰、摸鱼、搬砖、已读不回等。',
     '**全局禁止**：任何条目不得出现超雄、极端、病态 caricature（暴力压制、恐怖占有、跟踪监禁、PUA/煤气灯、精神疾病猎奇美化、性暴力 glorification 等）。',
   )
   return lines.join('\n')
