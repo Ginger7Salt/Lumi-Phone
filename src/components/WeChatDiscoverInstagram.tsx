@@ -5,8 +5,10 @@ import {
   Construction,
   Headphones,
   MessageCircleQuestionMark,
+  ScrollText,
   Store,
 } from 'lucide-react'
+import { SubconsciousArchivesApp } from '../phone/apps/wechat/diary/SubconsciousArchivesApp'
 import { useEffect, useState } from 'react'
 
 import { AnonymousQnAApp } from './anonymousQa/AnonymousQnAApp'
@@ -21,7 +23,13 @@ import type { OnOpenMomentParticipantProfile } from './moments/momentProfileNavi
 import { WeChatMomentsPage } from './moments/WeChatMomentsPage'
 import { mockContactsToMomentRefs } from './moments/publishMomentUtils'
 
-type DiscoverActionId = 'moments' | 'anonymous-qa' | 'listen-together' | 'shop' | 'jubensha'
+type DiscoverActionId =
+  | 'moments'
+  | 'anonymous-qa'
+  | 'listen-together'
+  | 'subconscious-archives'
+  | 'shop'
+  | 'jubensha'
 
 type DiscoverAction = {
   id: DiscoverActionId
@@ -54,6 +62,7 @@ const DISCOVER_ACTIONS: DiscoverAction[] = [
   { id: 'moments', label: '朋友圈', icon: Camera },
   { id: 'listen-together', label: '听一听', icon: Headphones },
   { id: 'anonymous-qa', label: '匿问我答', icon: MessageCircleQuestionMark },
+  { id: 'subconscious-archives', label: '私语档案', icon: ScrollText },
   { id: 'jubensha', label: '剧本杀馆', icon: BookOpen },
   { id: 'shop', label: '小店', icon: Store },
 ]
@@ -122,7 +131,7 @@ export function WeChatDiscoverInstagram({
   const momentContacts = mockContactsToMomentRefs(qnaContacts ?? [])
   const momentsUnreadCount = useMomentsInteractionUnreadCount()
   const [activeView, setActiveView] = useState<
-    'list' | 'moments' | 'listen-together' | 'anonymous-qa' | 'jubensha'
+    'list' | 'moments' | 'listen-together' | 'anonymous-qa' | 'subconscious-archives' | 'jubensha'
   >('list')
   useEffect(() => {
     onImmersiveViewChange?.(activeView !== 'list')
@@ -185,6 +194,16 @@ export function WeChatDiscoverInstagram({
       </div>
     )
   }
+  if (activeView === 'subconscious-archives') {
+    return (
+      <SubconsciousArchivesApp
+        className={`h-full min-h-0 ${className}`}
+        onBack={() => setActiveView('list')}
+        contacts={qnaContacts}
+        wechatCtx={qnaWechatCtx}
+      />
+    )
+  }
   if (activeView === 'jubensha') {
     return (
       <DiscoverFeatureUnderDev
@@ -216,6 +235,7 @@ export function WeChatDiscoverInstagram({
                       if (item.id === 'moments') setActiveView('moments')
                       if (item.id === 'listen-together') setActiveView('listen-together')
                       if (item.id === 'anonymous-qa') setActiveView('anonymous-qa')
+                      if (item.id === 'subconscious-archives') setActiveView('subconscious-archives')
                       if (item.id === 'jubensha') setActiveView('jubensha')
                     }}
                     className="flex w-full items-center px-4 py-4 text-left transition-colors duration-200 hover:bg-[#fafafa]"

@@ -268,11 +268,11 @@ export function lumiDefaultChatInputBar(): ChatTheme['inputBar'] {
 }
 
 export const WECHAT_BUBBLE_PRESETS: WeChatBubblePreset[] = [
+  WECHAT_APP_DEFAULT_BUBBLE_PRESET,
   WECHAT_APP_CLASSIC_BUBBLE_PRESET,
   IMESSAGE_BUBBLE_PRESET,
   TELEGRAM_BUBBLE_PRESET,
   TALKMAKER_BUBBLE_PRESET,
-  WECHAT_APP_DEFAULT_BUBBLE_PRESET,
 ]
 
 export function resolveInputBarLayoutForBubble(

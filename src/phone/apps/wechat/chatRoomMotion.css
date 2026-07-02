@@ -30,7 +30,6 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 8px 0;
 }
 
 [data-wx-chat-motion-scope] .wx-chat-history-dot {
@@ -71,12 +70,6 @@
 
 [data-wx-chat-motion-scope] .wx-chat-fail-btn:active {
   transform: scale(0.95);
-}
-
-/* 长列表：跳过视口外消息行的 layout/paint */
-[data-wx-chat-motion-scope] .wx-chat-msg-row {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 100px;
 }
 
 /* 底部「正在输入」三圆点 — GPU 动画，禁止 JS 帧循环 */

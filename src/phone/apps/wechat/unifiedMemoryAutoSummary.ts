@@ -44,9 +44,15 @@ import {
   buildDatingCombinedMemoryUserAppendix,
   splitDatingAiResponseAndUnifiedMemoryJson,
   requestUnifiedMemorySummaryWithLinked,
+  requestSimpleOnlineMemorySummary,
   type ChatTranscriptTurn,
   type UnifiedMemorySummaryWithLinkedResult,
 } from './wechatChatAi'
+import {
+  formatOnlineMemorySummaryStorageBody,
+  onlineMemoryKeywordsFromSummary,
+  resolveMemorySummaryRowKeywordsFromParsed,
+} from './memory/onlineMemorySummaryFormat'
 import {
   getCharacterLinkedPlayerIdentityIds,
   resolveActivePrivateChatSessionPlayerIdentityId,
@@ -639,6 +645,29 @@ function resolveStoryTimelineScopeForGather(
   return 'private'
 }
 
+/** 剧情时间轴（档案馆「线下摘要」）仅在线下约会/本轮约会 AI 剧情存在时写入。 */
+function gatherHasOfflineDatingTimelineContext(
+  gather: UnifiedMemoryGatherResult,
+  opts: { tagOfflineIncludesNewAiTurn?: boolean; datingAiPlotId?: string | null },
+): boolean {
+  return (
+    gather.hadOfflinePrior ||
+    opts.tagOfflineIncludesNewAiTurn === true ||
+    !!opts.datingAiPlotId?.trim()
+  )
+}
+
+/** 纯线上（微信/遇见、无线下约会摘录）走扁平总结，不调用 primary+linked 合并接口。 */
+function shouldUseSimpleOnlineMemorySummary(
+  gather: UnifiedMemoryGatherResult,
+  params: { onlineOnly?: boolean; datingAiPlotId?: string | null },
+): boolean {
+  if (params.datingAiPlotId?.trim()) return false
+  if (gather.hadOfflinePrior) return false
+  if (String(gather.npcLinked.block || '').trim()) return false
+  return params.onlineOnly === true || gather.hadOnline || gather.hadMeet
+}
+
 export function buildTimelineFallbackParamsFromGather(
   gather: UnifiedMemoryGatherResult,
   chatFallback: ApiConfig | null,
@@ -707,7 +736,13 @@ export async function applyUnifiedMemoryFromParsedSummary(
   const roundChannel: MemoryAiRoundCountChannel = opts.aiRoundCountChannel ?? 'wechat'
   const defer = opts.deferPrimaryAndUnifiedCursors === true
   const memSettingsRow = await personaDb.getMemorySettings()
-  const rowPerRoundMode = isOfflineDatingRowPerRoundMode(memSettingsRow)
+  /** 线下约会每轮摘要表；微信私聊/群聊/遇见的 prose 总结不受此项影响（见 memoryRowPerRoundMode）。 */
+  const rowPerRoundMode =
+    isOfflineDatingRowPerRoundMode(memSettingsRow) &&
+    opts.onlineOnly !== true &&
+    (gather.hadOfflinePrior ||
+      opts.tagOfflineIncludesNewAiTurn === true ||
+      !!opts.datingAiPlotId?.trim())
   const cid = gather.characterId
   const ck = gather.conversationKey
   const linkedOwnerId = gather.npcLinked.linkedArchiveOwnerId.trim() || gather.plotsArchiveId
@@ -750,6 +785,22 @@ export async function applyUnifiedMemoryFromParsedSummary(
       primaryUserBindings = sanitized.userPlaceholderBindings
     } catch {
       /* 保持原文，避免总结整体失败 */
+    }
+  }
+  if (primaryBody) {
+    const resolvedRowKeywords = resolveMemorySummaryRowKeywordsFromParsed({
+      rowKeywords: summary.primary.rowKeywords,
+      memoryTriggerCategory: summary.primary.memoryTriggerCategory,
+      memoryTriggerPrecise: summary.primary.memoryTriggerPrecise,
+      memoryTriggerEmotionNeed: summary.primary.memoryTriggerEmotionNeed,
+      memorySupplementKeywords: summary.primary.memorySupplementKeywords,
+      content: summary.primary.content,
+    })
+    if (summary.primary.rowTitle || resolvedRowKeywords.length > 0) {
+      primaryBody = formatOnlineMemorySummaryStorageBody(primaryBody, {
+        rowTitle: summary.primary.rowTitle,
+        rowKeywords: resolvedRowKeywords,
+      }).slice(0, 4000)
     }
   }
   if (rowPerRoundMode) primaryBody = ''
@@ -801,17 +852,19 @@ export async function applyUnifiedMemoryFromParsedSummary(
   const hadOfflineTag = gather.hadOfflinePrior || opts.tagOfflineIncludesNewAiTurn
   const datingRound = opts.datingAiPlotId?.trim()
   const linkedDeleteOwners = linkedMemoryOwnerIdsForGather(gather)
-  let timelineDelta = summary.primary.timeline
+  const offlineTimelineEligible =
+    !opts.onlineOnly && gatherHasOfflineDatingTimelineContext(gather, opts)
+  let timelineDelta = offlineTimelineEligible ? summary.primary.timeline : undefined
   if (
+    offlineTimelineEligible &&
     (!timelineDelta || !hasTimelineDeltaContent(timelineDelta)) &&
-    opts.timelineFallback &&
-    !opts.onlineOnly
+    opts.timelineFallback
   ) {
     const fetched = await fetchStoryTimelineSummaryFallback(opts.timelineFallback)
     if (fetched) timelineDelta = fetched
   }
   const hasTimeline =
-    !opts.onlineOnly && timelineDelta != null && hasTimelineDeltaContent(timelineDelta)
+    offlineTimelineEligible && timelineDelta != null && hasTimelineDeltaContent(timelineDelta)
 
   const wroteAny = rowPerRoundMode
     ? hasTimeline ||
@@ -854,12 +907,21 @@ export async function applyUnifiedMemoryFromParsedSummary(
     const trimmed = tagPrefix + primaryBody
     const meetOnlyScope =
       gather.hadMeet && !gather.hadOnline && !hadOfflineTag ? ('meet' as const) : undefined
-    const kwBackup = buildAutoSummaryMemoryKeywordsBackup({
-      memoryTriggerCategory: summary.primary.memoryTriggerCategory,
-      memoryTriggerPrecise: summary.primary.memoryTriggerPrecise,
-      memoryTriggerEmotionNeed: summary.primary.memoryTriggerEmotionNeed,
-      memorySupplementKeywords: summary.primary.memorySupplementKeywords,
-    })
+    const kwBackup =
+      onlineMemoryKeywordsFromSummary({
+        rowKeywords: summary.primary.rowKeywords,
+        memoryTriggerCategory: summary.primary.memoryTriggerCategory,
+        memoryTriggerPrecise: summary.primary.memoryTriggerPrecise,
+        memoryTriggerEmotionNeed: summary.primary.memoryTriggerEmotionNeed,
+        memorySupplementKeywords: summary.primary.memorySupplementKeywords,
+        content: summary.primary.content,
+      }) ??
+      buildAutoSummaryMemoryKeywordsBackup({
+        memoryTriggerCategory: summary.primary.memoryTriggerCategory,
+        memoryTriggerPrecise: summary.primary.memoryTriggerPrecise,
+        memoryTriggerEmotionNeed: summary.primary.memoryTriggerEmotionNeed,
+        memorySupplementKeywords: summary.primary.memorySupplementKeywords,
+      })
     await personaDb.upsertCharacterMemory({
       id: `mem-${now}-${Math.random().toString(36).slice(2, 9)}`,
       characterId: cid,
@@ -883,7 +945,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
     })
   }
 
-  if (timelineDelta && !opts.onlineOnly) {
+  if (timelineDelta && offlineTimelineEligible) {
     const plotIdForRow = defer ? opts.datingAiPlotId?.trim() : undefined
     if (defer && plotIdForRow) {
       /** 约会每轮：行表与 state 由 {@link rebuildStoryTimelineFromDatingPlots} 统一重建 */
@@ -1327,21 +1389,33 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
     return { ok: false, primaryWritten: false, failureReason }
   }
 
-  const summary = await requestUnifiedMemorySummaryWithLinked({
-    apiConfig: summaryApi,
-    onlineTranscript: gather.onlineTranscript,
-    meetTranscript: params.onlineOnly ? [] : gather.hadMeet ? gather.meetTranscript : [],
-    offlineTextBlock: params.onlineOnly ? '' : gather.hadOfflinePrior ? gather.offlineBlock : '',
-    npcLinkedExcerptsBlock: params.onlineOnly ? '' : gather.npcLinked.block,
-    peerFallback: gather.characterRealName,
-    peerCharacterId: gather.characterId,
-    primaryIdRoster: await buildMemorySummaryPrimaryIdRoster({
-      archiveRootId: gather.plotsArchiveId,
-      peerCharacterId: gather.characterId,
-      extraCharacterIds: collectSharedRecordOriginCharacterIds(gather.chunkMessages),
-    }),
-    priorOpenAnchorsBlock: await loadStoryTimelineOpenAnchorsBlockForSummary(gather.characterId),
-  })
+  const summary = shouldUseSimpleOnlineMemorySummary(gather, params)
+    ? {
+        primary: await requestSimpleOnlineMemorySummary({
+          apiConfig: summaryApi,
+          onlineTranscript: gather.onlineTranscript,
+          meetTranscript:
+            params.onlineOnly || !gather.hadMeet ? [] : gather.meetTranscript,
+          peerFallback: gather.characterRealName,
+          peerCharacterId: gather.characterId,
+        }),
+        linked: [],
+      }
+    : await requestUnifiedMemorySummaryWithLinked({
+        apiConfig: summaryApi,
+        onlineTranscript: gather.onlineTranscript,
+        meetTranscript: params.onlineOnly ? [] : gather.hadMeet ? gather.meetTranscript : [],
+        offlineTextBlock: params.onlineOnly ? '' : gather.hadOfflinePrior ? gather.offlineBlock : '',
+        npcLinkedExcerptsBlock: params.onlineOnly ? '' : gather.npcLinked.block,
+        peerFallback: gather.characterRealName,
+        peerCharacterId: gather.characterId,
+        primaryIdRoster: await buildMemorySummaryPrimaryIdRoster({
+          archiveRootId: gather.plotsArchiveId,
+          peerCharacterId: gather.characterId,
+          extraCharacterIds: collectSharedRecordOriginCharacterIds(gather.chunkMessages),
+        }),
+        priorOpenAnchorsBlock: await loadStoryTimelineOpenAnchorsBlockForSummary(gather.characterId),
+      })
 
   const applied = await applyUnifiedMemoryFromParsedSummary(summary, gather, {
     offlinePlotsForCursorAdvance: params.onlineOnly ? [] : gather.offlinePlotsPrior,
@@ -1359,9 +1433,10 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
         : roundChannel === 'meet'
           ? 'meet'
           : 'private'),
-    timelineFallback: params.onlineOnly
-      ? undefined
-      : buildTimelineFallbackParamsFromGather(gather, params.apiConfig),
+    timelineFallback:
+      params.onlineOnly || !gatherHasOfflineDatingTimelineContext(gather, { datingAiPlotId: params.datingAiPlotId })
+        ? undefined
+        : buildTimelineFallbackParamsFromGather(gather, params.apiConfig),
   })
 
   const primaryWritten = applied.primaryWritten
@@ -1659,7 +1734,22 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
 
   const tagPrefix =
     `${hadOnline ? '[私聊]' : ''}${hadArchive ? '[群聊]' : ''}${hadOnline || hadArchive ? ' ' : ''}`
-  const trimmed = tagPrefix + body
+  const resolvedRowKeywords = resolveMemorySummaryRowKeywordsFromParsed({
+    rowKeywords: summary.rowKeywords,
+    memoryTriggerCategory: summary.memoryTriggerCategory,
+    memoryTriggerPrecise: summary.memoryTriggerPrecise,
+    memoryTriggerEmotionNeed: summary.memoryTriggerEmotionNeed,
+    memorySupplementKeywords: summary.memorySupplementKeywords,
+    content: summary.content,
+  })
+  const trimmed =
+    tagPrefix +
+    (resolvedRowKeywords.length || summary.rowTitle
+      ? formatOnlineMemorySummaryStorageBody(body, {
+          rowTitle: summary.rowTitle,
+          rowKeywords: resolvedRowKeywords,
+        })
+      : body)
 
   const memoryTargets =
     group?.members
@@ -1674,7 +1764,16 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
   const now = Date.now()
   if (memoryTargets.length) {
     const triggerMode = await resolveAutoSummaryMemoryTriggerMode()
-    const kwBackup = buildAutoSummaryMemoryKeywordsBackup({
+    const kwBackup =
+      onlineMemoryKeywordsFromSummary({
+        rowKeywords: summary.rowKeywords,
+        memoryTriggerCategory: summary.memoryTriggerCategory,
+        memoryTriggerPrecise: summary.memoryTriggerPrecise,
+        memoryTriggerEmotionNeed: summary.memoryTriggerEmotionNeed,
+        memorySupplementKeywords: summary.memorySupplementKeywords,
+        content: summary.content,
+      }) ??
+      buildAutoSummaryMemoryKeywordsBackup({
       memoryTriggerCategory: summary.memoryTriggerCategory,
       memoryTriggerPrecise: summary.memoryTriggerPrecise,
       memoryTriggerEmotionNeed: summary.memoryTriggerEmotionNeed,

@@ -73,7 +73,7 @@ export function buildWechatThinkingChainRomanceSteps(
   }
   if (resolved.activeConfession) {
     steps.push(
-      `- 第${['五', '六', '七', '八', '九', '十'][stepNo - 5] ?? String(stepNo)}步：执行下列「角色情感破冰与告白演绎引擎」推演与自检，校准本轮是否应推进破冰/告白/关系确认，以及告白台词是否具备人设化核心表达：\n${CHARACTER_EMOTION_CONFESSION_ENGINE_APPENDIX}`,
+      `- 第${['五', '六', '七', '八', '九', '十'][stepNo - 5] ?? String(stepNo)}步：执行下列「{{char}} 情感破冰与告白演绎引擎」推演与自检，校准本轮是否应推进破冰/告白/关系确认，以及告白台词是否具备人设化核心表达：\n${CHARACTER_EMOTION_CONFESSION_ENGINE_APPENDIX}`,
     )
     stepNo += 1
   }
@@ -91,7 +91,7 @@ export function buildOfflineRomanceThinkingChainSections(
 ${LUMI_DOCTRINE_OF_LOVE_APPENDIX}`)
   }
   if (resolved.activeConfession) {
-    parts.push(`【角色情感破冰与告白演绎引擎】
+    parts.push(`【{{char}} 情感破冰与告白演绎引擎】
 以下规则为本轮情感推进与告白演绎的**硬性约束**；须在思维链中先校准是否触发破冰/告白/关系确认，再决定正文对白、动作、心理与亲密度：
 ${CHARACTER_EMOTION_CONFESSION_ENGINE_APPENDIX}`)
   }

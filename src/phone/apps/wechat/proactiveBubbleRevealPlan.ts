@@ -15,6 +15,10 @@ import {
   isCharacterMusicSyncDirectiveArtifactLine,
   parseCharacterMusicSyncDirectiveFromArtifactLine,
 } from './musicSync/wechatCharacterMusicSyncAi'
+import {
+  isCharacterMiniGameInviteDirectiveArtifactLine,
+  parseCharacterMiniGameInviteDirectiveFromArtifactLine,
+} from './miniGame/wechatCharacterMiniGameInviteAi'
 import { emitTasteOrderPlaced } from '../takeout/tasteOrderBridge'
 import {
   buildCharacterTakeoutOrderBundle,
@@ -81,6 +85,8 @@ async function planProactiveBubbleLineAsync(
   if (
     parseCharacterMusicSyncDirectiveFromArtifactLine(trimmed) ||
     isCharacterMusicSyncDirectiveArtifactLine(trimmed) ||
+    parseCharacterMiniGameInviteDirectiveFromArtifactLine(trimmed) ||
+    isCharacterMiniGameInviteDirectiveArtifactLine(trimmed) ||
     isLocationShareDirectiveArtifactLine(trimmed) ||
     isTakeoutOrderDirectiveArtifactLine(trimmed)
   ) {

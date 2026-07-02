@@ -25,7 +25,7 @@ export const DEFAULT_CHAT_THEME_ID = 'default-bw'
 
 export const DEFAULT_CHAT_THEME: ChatTheme = {
   id: DEFAULT_CHAT_THEME_ID,
-  name: '默认黑灰白',
+  name: '简约灰蓝',
   isDefault: true,
   inputBar: {
     borderRadius: 16,

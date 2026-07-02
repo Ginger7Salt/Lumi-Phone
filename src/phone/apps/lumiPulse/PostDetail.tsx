@@ -1,13 +1,19 @@
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { ArrowLeft, Sparkles } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Pressable } from '../../components/Pressable'
 import { useCurrentApiConfig } from '../api/ApiSettingsContext'
 import { PostCard } from './components/PostCard'
+import { PulseWeiboFacePicker } from './components/PulseWeiboFacePicker'
+import { PulseWeiboFaceText } from './components/PulseWeiboFaceText'
 import { PULSE_COLORS, PULSE_MODAL_SPRING } from './constants'
-import { ForwardSheet } from './ForwardSheet'
 import { aiGeneratePulseComments, aiGeneratePulseFeedPosts, nestPulseComments } from './lumiPulseAi'
+import {
+  pickStablePulseNetizenAvatarPath,
+  resolvePulseAuthorAvatarForPersist,
+  resolvePulseAuthorAvatarUrl,
+} from './pulseNetizenAvatar'
 import type { PulseComment, PulsePost } from './pulseTypes'
 import { usePulsePostComments } from './pulseStoreSelectors'
 import { usePulseStore } from './usePulseStore'
@@ -19,13 +25,31 @@ function CommentBlock({
   comment: PulseComment & { replies?: PulseComment[] }
   depth?: number
 }) {
+  const avatarSrc = useMemo(() => {
+    const stored = resolvePulseAuthorAvatarUrl(comment.authorAvatarUrl)
+    if (stored) return stored
+    const path = resolvePulseAuthorAvatarForPersist(
+      comment.authorPovId,
+      comment.authorName,
+      comment.authorAvatarUrl,
+      comment.isAiGenerated,
+    )
+    return resolvePulseAuthorAvatarUrl(path)
+  }, [comment.authorAvatarUrl, comment.authorName, comment.authorPovId, comment.isAiGenerated])
+
   return (
     <div className={depth > 0 ? 'ml-5 mt-3 border-l border-black/[0.04] pl-4' : 'mt-4'}>
       <div className="flex items-center gap-2">
-        <div className="size-8 rounded-full bg-[#F5F5F4]" />
+        {avatarSrc ? (
+          <img src={avatarSrc} alt="" className="size-8 rounded-full object-cover ring-1 ring-black/[0.04]" />
+        ) : (
+          <div className="size-8 rounded-full bg-[#F5F5F4]" />
+        )}
         <span className="text-[12px] font-medium text-[#1C1C1E]">{comment.authorName}</span>
       </div>
-      <p className="mt-1.5 font-serif text-[13px] leading-relaxed text-neutral-600">{comment.content}</p>
+      <p className="mt-1.5 font-serif text-[13px] leading-relaxed text-neutral-600">
+        <PulseWeiboFaceText text={comment.content} />
+      </p>
       {comment.replies?.map((r) => (
         <CommentBlock key={r.id} comment={r} depth={depth + 1} />
       ))}
@@ -39,25 +63,31 @@ export function PostDetail({
   authorLabel: _authorLabel,
   onBack,
   onToast,
+  onRepost,
 }: {
   post: PulsePost
   currentPovId: string
   authorLabel: string
   onBack: () => void
   onToast: (msg: string) => void
+  onRepost: () => void
 }) {
   const apiConfig = useCurrentApiConfig('chatCard')
   const comments = usePulsePostComments(post.id)
   const toggleLike = usePulseStore((s) => s.toggleLike)
   const addComment = usePulseStore((s) => s.appendAiComments)
-  const publishPost = usePulseStore((s) => s.publishPost)
   const appendAiPosts = usePulseStore((s) => s.appendAiPosts)
   const addUserComment = usePulseStore((s) => s.addComment)
-  const [forwardOpen, setForwardOpen] = useState(false)
+  const ensurePostDetailAvatars = usePulseStore((s) => s.ensurePostDetailAvatars)
   const [refreshing, setRefreshing] = useState(false)
   const [commentDraft, setCommentDraft] = useState('')
 
   const nested = useMemo(() => nestPulseComments(comments), [comments])
+
+  /** 首次打开详情：为 AI 网友帖/评分配随机网友头像并写入 IndexedDB */
+  useEffect(() => {
+    ensurePostDetailAvatars(post.id)
+  }, [ensurePostDetailAvatars, post.id])
 
   const handleRefreshTimeline = useCallback(async () => {
     setRefreshing(true)
@@ -89,6 +119,7 @@ export function PostDetail({
           postId: post.id,
           authorPovId: `ai:${row.authorName}`,
           authorName: row.authorName,
+          authorAvatarUrl: pickStablePulseNetizenAvatarPath(`ai:${row.authorName}`),
           content: row.content,
           createdAt: now - built.length * 12_000,
           parentId,
@@ -103,15 +134,6 @@ export function PostDetail({
       setRefreshing(false)
     }
   }, [addComment, apiConfig, appendAiPosts, currentPovId, onToast, post])
-
-  const handleRepost = () => {
-    publishPost({
-      authorPovId: currentPovId,
-      authorName: _authorLabel,
-      content: `//@${post.authorName}: ${post.content}`,
-    })
-    onToast('已转发到你的时间线')
-  }
 
   return (
     <>
@@ -138,25 +160,9 @@ export function PostDetail({
             currentPovId={currentPovId}
             onOpen={() => {}}
             onLike={() => toggleLike(post.id)}
+            onRepost={onRepost}
             compact
           />
-
-          <div className="mt-3 flex gap-2 px-1">
-            <Pressable
-              type="button"
-              onClick={handleRepost}
-              className="flex-1 rounded-full bg-white py-2.5 text-center text-[12px] text-neutral-600 shadow-[0_2px_15px_rgba(0,0,0,0.03)]"
-            >
-              转发
-            </Pressable>
-            <Pressable
-              type="button"
-              onClick={() => setForwardOpen(true)}
-              className="flex-1 rounded-full bg-white py-2.5 text-center text-[12px] text-[#1C1C1E] shadow-[0_2px_15px_rgba(0,0,0,0.03)]"
-            >
-              发送给微信好友
-            </Pressable>
-          </div>
 
           <Pressable
             type="button"
@@ -182,7 +188,10 @@ export function PostDetail({
           className="absolute inset-x-0 bottom-0 border-t border-black/[0.04] bg-white/92 px-4 py-3 backdrop-blur-xl"
           style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}
         >
-          <div className="flex items-center gap-2 rounded-full bg-[#F5F5F4]/80 px-3 py-2">
+          <div className="flex items-center gap-1 rounded-full bg-[#F5F5F4]/80 px-2 py-2">
+            <PulseWeiboFacePicker
+              onPick={(token) => setCommentDraft((prev) => `${prev}${token}`)}
+            />
             <input
               value={commentDraft}
               onChange={(e) => setCommentDraft(e.target.value)}
@@ -209,19 +218,6 @@ export function PostDetail({
           </div>
         </div>
       </motion.div>
-
-      <AnimatePresence>
-        {forwardOpen ? (
-          <ForwardSheet
-            post={post}
-            onClose={() => setForwardOpen(false)}
-            onSent={() => {
-              setForwardOpen(false)
-              onToast('已投递至微信 (Forwarded to WeChat).')
-            }}
-          />
-        ) : null}
-      </AnimatePresence>
     </>
   )
 }

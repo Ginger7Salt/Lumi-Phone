@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { AtSign, Heart, MessageCircle, Sparkles } from 'lucide-react'
+import { AtSign, Heart, MessageCircle, Repeat2, Sparkles } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 
 import { Pressable } from '../../components/Pressable'
@@ -7,9 +7,11 @@ import { useCurrentApiConfig } from '../api/ApiSettingsContext'
 import { NotificationCell } from './components/NotificationCell'
 import { PULSE_COLORS, PULSE_MODAL_SPRING } from './constants'
 import { aiGeneratePulseDmThreads, flatToDmThreads } from './lumiPulseAi'
-import type { PulseDmThread } from './pulseTypes'
+import type { PulseDmThread, PulseInteraction } from './pulseTypes'
 import { usePulseDmThreads, usePulseInteractions } from './pulseStoreSelectors'
 import { usePulseStore } from './usePulseStore'
+
+type InboxCategory = 'all' | 'mention' | 'comment' | 'like' | 'repost'
 
 function DmThreadView({ thread, onBack }: { thread: PulseDmThread; onBack: () => void }) {
   return (
@@ -20,7 +22,7 @@ function DmThreadView({ thread, onBack }: { thread: PulseDmThread; onBack: () =>
       exit={{ x: '100%' }}
       transition={PULSE_MODAL_SPRING}
     >
-      <header className="flex items-center gap-3 border-b border-black/[0.04] bg-white/90 px-4 py-3 backdrop-blur-xl">
+      <header className="flex items-center gap-3 bg-white/90 px-4 py-3 shadow-[0_2px_15px_rgba(0,0,0,0.03)] backdrop-blur-xl">
         <Pressable type="button" onClick={onBack} className="text-[13px] text-neutral-500">
           返回
         </Pressable>
@@ -44,34 +46,70 @@ function DmThreadView({ thread, onBack }: { thread: PulseDmThread; onBack: () =>
   )
 }
 
+function interactionLabel(it: PulseInteraction): string {
+  switch (it.type) {
+    case 'like':
+      return ' 赞了你'
+    case 'comment':
+      return ' 评论了你'
+    case 'mention':
+      return ' @了你'
+    case 'repost':
+      return ' 转发了你'
+    case 'follow':
+      return ' 关注了你'
+    default:
+      return ' 互动了你'
+  }
+}
+
+function matchesCategory(it: PulseInteraction, cat: InboxCategory): boolean {
+  if (cat === 'all') return true
+  return it.type === cat
+}
+
 export function PulseInbox({ povName, currentPovId }: { povName: string; currentPovId: string }) {
   const apiConfig = useCurrentApiConfig('chatCard')
   const interactions = usePulseInteractions()
   const dmThreads = usePulseDmThreads()
   const replaceDmThreads = usePulseStore((s) => s.replaceDmThreads)
   const markDmRead = usePulseStore((s) => s.markDmThreadRead)
-  const markInteractionsRead = usePulseStore((s) => s.markInteractionsRead)
+  const markInteractionsReadByType = usePulseStore((s) => s.markInteractionsReadByType)
   const [activeDm, setActiveDm] = useState<PulseDmThread | null>(null)
   const [genDm, setGenDm] = useState(false)
+  const [category, setCategory] = useState<InboxCategory>('all')
 
   const unreadByType = useMemo(() => {
     const unread = interactions.filter((i) => !i.read)
     return {
-      mention: unread.some((i) => i.type === 'comment'),
-      comment: unread.filter((i) => i.type === 'comment').length > 0,
+      mention: unread.some((i) => i.type === 'mention'),
+      comment: unread.some((i) => i.type === 'comment'),
       like: unread.some((i) => i.type === 'like'),
+      repost: unread.some((i) => i.type === 'repost'),
     }
   }, [interactions])
+
+  const filteredInteractions = useMemo(
+    () => interactions.filter((it) => matchesCategory(it, category)),
+    [interactions, category],
+  )
 
   const generateDm = useCallback(async () => {
     setGenDm(true)
     try {
       const rows = await aiGeneratePulseDmThreads({ apiConfig, povName, threadCount: 4 })
       replaceDmThreads(flatToDmThreads(rows), currentPovId)
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : '生成失败')
     } finally {
       setGenDm(false)
     }
   }, [apiConfig, currentPovId, povName, replaceDmThreads])
+
+  const pickCategory = (cat: InboxCategory) => {
+    setCategory(cat)
+    if (cat !== 'all') markInteractionsReadByType(cat)
+  }
 
   return (
     <>
@@ -81,14 +119,15 @@ export function PulseInbox({ povName, currentPovId }: { povName: string; current
         </div>
 
         <div className="shrink-0 px-4 pb-4">
-          <div className="flex gap-2.5">
+          <div className="grid grid-cols-4 gap-2">
             <NotificationCell
               label="@ 我的"
               Icon={AtSign}
               tintBg="rgba(162,178,198,0.2)"
               iconColor={PULSE_COLORS.mistBlue}
               unread={unreadByType.mention}
-              onPress={markInteractionsRead}
+              active={category === 'mention'}
+              onPress={() => pickCategory(category === 'mention' ? 'all' : 'mention')}
             />
             <NotificationCell
               label="评论"
@@ -96,7 +135,8 @@ export function PulseInbox({ povName, currentPovId }: { povName: string; current
               tintBg="rgba(163,196,188,0.2)"
               iconColor={PULSE_COLORS.sage}
               unread={unreadByType.comment}
-              onPress={markInteractionsRead}
+              active={category === 'comment'}
+              onPress={() => pickCategory(category === 'comment' ? 'all' : 'comment')}
             />
             <NotificationCell
               label="赞"
@@ -104,7 +144,17 @@ export function PulseInbox({ povName, currentPovId }: { povName: string; current
               tintBg="rgba(229,152,155,0.2)"
               iconColor={PULSE_COLORS.dustyRose}
               unread={unreadByType.like}
-              onPress={markInteractionsRead}
+              active={category === 'like'}
+              onPress={() => pickCategory(category === 'like' ? 'all' : 'like')}
+            />
+            <NotificationCell
+              label="转发"
+              Icon={Repeat2}
+              tintBg="rgba(212,175,55,0.15)"
+              iconColor={PULSE_COLORS.lightGold}
+              unread={unreadByType.repost}
+              active={category === 'repost'}
+              onPress={() => pickCategory(category === 'repost' ? 'all' : 'repost')}
             />
           </div>
         </div>
@@ -123,22 +173,18 @@ export function PulseInbox({ povName, currentPovId }: { povName: string; current
             </Pressable>
           </div>
 
-          {interactions.length > 0 ? (
+          {filteredInteractions.length > 0 ? (
             <div className="mb-5 space-y-2">
-              {interactions.slice(0, 5).map((it) => (
+              {filteredInteractions.slice(0, 8).map((it) => (
                 <div
                   key={it.id}
-                  className="rounded-2xl bg-white px-4 py-3 shadow-[0_2px_15px_rgba(0,0,0,0.03)]"
+                  className={`rounded-2xl bg-white px-4 py-3 shadow-[0_2px_15px_rgba(0,0,0,0.03)] ${
+                    !it.read ? 'ring-1 ring-[#E5989B]/20' : ''
+                  }`}
                 >
                   <p className="text-[13px] text-[#1C1C1E]">
                     <span className="font-medium">{it.fromName}</span>
-                    {it.type === 'like'
-                      ? ' 赞了你'
-                      : it.type === 'comment'
-                        ? ' 评论了你'
-                        : it.type === 'follow'
-                          ? ' 关注了你'
-                          : ' 转发了你'}
+                    {interactionLabel(it)}
                   </p>
                   {it.content ? (
                     <p className="mt-1 font-serif text-[12px] text-neutral-500">{it.content}</p>
@@ -146,6 +192,8 @@ export function PulseInbox({ povName, currentPovId }: { povName: string; current
                 </div>
               ))}
             </div>
+          ) : category !== 'all' ? (
+            <p className="mb-5 py-6 text-center text-[12px] text-neutral-400">该分类暂无新互动</p>
           ) : null}
 
           {dmThreads.map((t) => (
@@ -158,7 +206,11 @@ export function PulseInbox({ povName, currentPovId }: { povName: string; current
               }}
               className="mb-2 flex w-full items-center gap-3 rounded-2xl bg-white px-4 py-3.5 text-left shadow-[0_2px_15px_rgba(0,0,0,0.03)]"
             >
-              <div className="size-12 shrink-0 rounded-full bg-[#F5F5F4]" />
+              {t.fanAvatarUrl ? (
+                <img src={t.fanAvatarUrl} alt="" className="size-12 shrink-0 rounded-full object-cover" />
+              ) : (
+                <div className="size-12 shrink-0 rounded-full bg-[#F5F5F4]" />
+              )}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-[14px] font-medium text-[#1C1C1E]">{t.fanName}</span>

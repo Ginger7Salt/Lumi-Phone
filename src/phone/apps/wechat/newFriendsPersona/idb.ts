@@ -37,6 +37,7 @@ import type {
   WeChatCallStatusPayload,
   WeChatVoicePayload,
   WeChatMusicSyncPayload,
+  WeChatMiniGamePayload,
   WeChatListenCommentSharePayload,
   WeChatListenProfileSharePayload,
   WeChatListenTrackSharePayload,
@@ -1106,6 +1107,7 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     const ttsScript = typeof r.ttsScript === 'string' ? r.ttsScript.trim().slice(0, 2000) : ''
     const audioUrl = typeof r.audioUrl === 'string' ? r.audioUrl.trim() : ''
     const transcriptText = typeof r.transcriptText === 'string' ? r.transcriptText.trim() : ''
+    const voicePlayed = r.voicePlayed === true
     return {
       durationSec,
       emotionAnalyzed,
@@ -1113,6 +1115,7 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
       ttsScript: ttsScript || undefined,
       audioUrl: audioUrl || undefined,
       transcriptText: transcriptText || undefined,
+      ...(voicePlayed ? { voicePlayed: true } : {}),
     }
   })()
   const rawMusicSync = (m as { musicSync?: unknown }).musicSync
@@ -1160,6 +1163,159 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     }
     if (kind === 'music_decline') {
       return { kind: 'music_decline', inviteId, replyText: replyText || '现在没空，自己听吧。' }
+    }
+    return undefined
+  })()
+  const rawMiniGameInvite = (m as { miniGameInvite?: unknown }).miniGameInvite
+  const miniGameInvite: WeChatMiniGamePayload | undefined = (() => {
+    if (!rawMiniGameInvite || typeof rawMiniGameInvite !== 'object') return undefined
+    const r = rawMiniGameInvite as Record<string, unknown>
+    const kind = typeof r.kind === 'string' ? r.kind.trim() : ''
+    const inviteId = typeof r.inviteId === 'string' ? r.inviteId.trim() : ''
+    if (!inviteId) return undefined
+    const gameType = typeof r.gameType === 'string' ? r.gameType.trim().slice(0, 32) : ''
+    const gameTitle = typeof r.gameTitle === 'string' ? r.gameTitle.trim().slice(0, 64) : ''
+    const replyText = typeof r.replyText === 'string' ? r.replyText.trim().slice(0, 500) : ''
+    if (kind === 'game_invite') {
+      if (!gameType || !gameTitle) return undefined
+      const reactionEnabled = r.reactionEnabled === true
+      const charRespondedRaw = typeof r.charResponded === 'string' ? r.charResponded.trim() : ''
+      const charResponded =
+        charRespondedRaw === 'accepted' || charRespondedRaw === 'declined' ? charRespondedRaw : undefined
+      const userRespondedRaw = typeof r.userResponded === 'string' ? r.userResponded.trim() : ''
+      const userResponded =
+        userRespondedRaw === 'accepted' || userRespondedRaw === 'declined' ? userRespondedRaw : undefined
+      const inviteReplyText =
+        typeof r.replyText === 'string' ? r.replyText.trim().slice(0, 500) : ''
+      const gomokuSession = (() => {
+        const rawSession = r.gomokuSession
+        if (!rawSession || typeof rawSession !== 'object' || Array.isArray(rawSession)) return undefined
+        const gs = rawSession as Record<string, unknown>
+        const bankRaw = gs.bank
+        const bank: Record<string, string[]> = {}
+        if (bankRaw && typeof bankRaw === 'object' && !Array.isArray(bankRaw)) {
+          for (const [k, v] of Object.entries(bankRaw as Record<string, unknown>)) {
+            if (!Array.isArray(v)) continue
+            const lines = v
+              .filter((x): x is string => typeof x === 'string')
+              .map((s) => s.trim().slice(0, 48))
+              .filter(Boolean)
+              .slice(0, 5)
+            if (lines.length) bank[k] = lines
+          }
+        }
+        const gameStartLines = Array.isArray(gs.gameStartLines)
+          ? gs.gameStartLines
+              .filter((x): x is string => typeof x === 'string')
+              .map((s) => s.trim().slice(0, 48))
+              .filter(Boolean)
+              .slice(0, 5)
+          : []
+        const difficulty = typeof gs.difficulty === 'number' && Number.isFinite(gs.difficulty) ? gs.difficulty : 3
+        const thinkDelayMinMs =
+          typeof gs.thinkDelayMinMs === 'number' && Number.isFinite(gs.thinkDelayMinMs)
+            ? Math.round(gs.thinkDelayMinMs)
+            : 2000
+        const thinkDelayMaxMs =
+          typeof gs.thinkDelayMaxMs === 'number' && Number.isFinite(gs.thinkDelayMaxMs)
+            ? Math.round(gs.thinkDelayMaxMs)
+            : 8000
+        if (!Object.keys(bank).length && !gameStartLines.length) return undefined
+        return {
+          difficulty,
+          thinkDelayMinMs,
+          thinkDelayMaxMs,
+          gameStartLines,
+          bank,
+        }
+      })()
+      const matchResultRaw = typeof r.matchResult === 'string' ? r.matchResult.trim() : ''
+      const matchResult =
+        matchResultRaw === 'player_win' || matchResultRaw === 'char_win' || matchResultRaw === 'draw'
+          ? matchResultRaw
+          : undefined
+      return {
+        kind: 'game_invite',
+        inviteId,
+        gameType,
+        gameTitle,
+        reactionEnabled,
+        ...(charResponded ? { charResponded } : {}),
+        ...(userResponded ? { userResponded } : {}),
+        ...(inviteReplyText ? { replyText: inviteReplyText } : {}),
+        ...(gomokuSession ? { gomokuSession } : {}),
+        ...(matchResult ? { matchResult } : {}),
+      }
+    }
+    if (kind === 'game_accept') {
+      if (!gameType || !gameTitle) return undefined
+      const gomokuSession = (() => {
+        const rawSession = r.gomokuSession
+        if (!rawSession || typeof rawSession !== 'object' || Array.isArray(rawSession)) return undefined
+        const gs = rawSession as Record<string, unknown>
+        const bankRaw = gs.bank
+        const bank: Record<string, string[]> = {}
+        if (bankRaw && typeof bankRaw === 'object' && !Array.isArray(bankRaw)) {
+          for (const [k, v] of Object.entries(bankRaw as Record<string, unknown>)) {
+            if (!Array.isArray(v)) continue
+            const lines = v
+              .filter((x): x is string => typeof x === 'string')
+              .map((s) => s.trim().slice(0, 48))
+              .filter(Boolean)
+              .slice(0, 5)
+            if (lines.length) bank[k] = lines
+          }
+        }
+        const gameStartLines = Array.isArray(gs.gameStartLines)
+          ? gs.gameStartLines
+              .filter((x): x is string => typeof x === 'string')
+              .map((s) => s.trim().slice(0, 48))
+              .filter(Boolean)
+              .slice(0, 5)
+          : []
+        const difficulty = typeof gs.difficulty === 'number' && Number.isFinite(gs.difficulty) ? gs.difficulty : 3
+        const thinkDelayMinMs =
+          typeof gs.thinkDelayMinMs === 'number' && Number.isFinite(gs.thinkDelayMinMs)
+            ? Math.round(gs.thinkDelayMinMs)
+            : 2000
+        const thinkDelayMaxMs =
+          typeof gs.thinkDelayMaxMs === 'number' && Number.isFinite(gs.thinkDelayMaxMs)
+            ? Math.round(gs.thinkDelayMaxMs)
+            : 8000
+        if (!Object.keys(bank).length && !gameStartLines.length) return undefined
+        return {
+          difficulty,
+          thinkDelayMinMs,
+          thinkDelayMaxMs,
+          gameStartLines,
+          bank,
+        }
+      })()
+      const matchResultRaw = typeof r.matchResult === 'string' ? r.matchResult.trim() : ''
+      const matchResult =
+        matchResultRaw === 'player_win' || matchResultRaw === 'char_win' || matchResultRaw === 'draw'
+          ? matchResultRaw
+          : undefined
+      return {
+        kind: 'game_accept',
+        inviteId,
+        replyText: replyText || '好啊，来！',
+        gameType,
+        gameTitle,
+        reactionEnabled: r.reactionEnabled === true,
+        ...(gomokuSession ? { gomokuSession } : {}),
+        ...(matchResult ? { matchResult } : {}),
+      }
+    }
+    if (kind === 'game_decline') {
+      if (!gameType || !gameTitle) return undefined
+      return {
+        kind: 'game_decline',
+        inviteId,
+        replyText: replyText || '现在没空，下次吧。',
+        gameType,
+        gameTitle,
+      }
     }
     return undefined
   })()
@@ -1419,6 +1575,7 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     callStatus,
     voice,
     musicSync,
+    miniGameInvite,
     listenCommentShare,
     listenProfileShare,
     listenTrackShare,
@@ -4805,6 +4962,7 @@ export class PersonaDb {
       redPacket?: Partial<WeChatRedPacketPayload>
       voice?: Partial<WeChatVoicePayload>
       musicSync?: Partial<WeChatMusicSyncPayload>
+      miniGameInvite?: Partial<WeChatMiniGamePayload>
     },
   ): Promise<void> {
     const tid = messageId.trim()
@@ -4832,6 +4990,12 @@ export class PersonaDb {
             ? ({ ...existing.musicSync, ...patch.musicSync } as WeChatMusicSyncPayload)
             : (patch.musicSync as WeChatMusicSyncPayload)
           : existing.musicSync,
+      miniGameInvite:
+        patch.miniGameInvite !== undefined
+          ? existing.miniGameInvite
+            ? ({ ...existing.miniGameInvite, ...patch.miniGameInvite } as WeChatMiniGamePayload)
+            : (patch.miniGameInvite as WeChatMiniGamePayload)
+          : existing.miniGameInvite,
     }
     const normalized = normalizeWeChatChatMessage(merged)
     if (!normalized) return

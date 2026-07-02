@@ -53,9 +53,12 @@ function resolveBulletTop(
 export function DanmakuOverlay({
   bullets,
   zoneStyle,
+  loop = true,
 }: {
   bullets: DanmakuOverlayBullet[]
   zoneStyle: CSSProperties
+  /** 为 true 时同轮弹幕循环滚动，直到下一轮被清空 */
+  loop?: boolean
 }) {
   const prepared = useMemo(
     () =>
@@ -88,6 +91,7 @@ export function DanmakuOverlay({
             const top = resolveBulletTop(it, maxTrackIndex, lineHeight)
             const dur = Math.max(3, it.durationSec)
             const delay = Math.max(0, it.startDelaySec ?? 0)
+            const iteration = loop ? 'infinite' : '1'
             return (
               <span
                 key={it.id}
@@ -98,7 +102,7 @@ export function DanmakuOverlay({
                   color: it.colorRgba,
                   lineHeight: `${lineHeight}px`,
                   textShadow: it.style === 'none' ? '0 1px 2px rgba(0,0,0,0.18)' : undefined,
-                  animation: `wxDmFlyRightToLeft ${dur}s linear ${delay}s 1 both`,
+                  animation: `wxDmFlyRightToLeft ${dur}s linear ${delay}s ${iteration} both`,
                   ...tokenStyle,
                 }}
               >

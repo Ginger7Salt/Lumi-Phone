@@ -2,7 +2,7 @@ import { Home, Compass, MessageCircle, UserRound } from 'lucide-react'
 import { motion } from 'framer-motion'
 
 import { Pressable } from '../../components/Pressable'
-import { PULSE_COLORS } from './constants'
+import { PULSE_COLORS, PULSE_TAB_SPRING } from './constants'
 import type { PulseTab } from './pulseTypes'
 
 const TABS: {
@@ -28,7 +28,7 @@ export function PulseTabBar({
 }) {
   return (
     <nav
-      className="relative shrink-0 border-t border-black/[0.03] bg-white/85 backdrop-blur-xl"
+      className="relative shrink-0 bg-white/85 shadow-[0_-2px_20px_rgba(0,0,0,0.03)] backdrop-blur-xl"
       style={{ paddingBottom: 'max(10px, env(safe-area-inset-bottom, 0px))' }}
     >
       <div className="grid grid-cols-4 px-2 pt-2">
@@ -43,11 +43,16 @@ export function PulseTabBar({
               aria-current={isActive ? 'page' : undefined}
             >
               <div className="relative">
-                <Icon
-                  className="size-[22px]"
-                  strokeWidth={isActive ? 1.6 : 1.25}
-                  style={{ color: isActive ? PULSE_COLORS.ink : '#C4C4C4' }}
-                />
+                <motion.div
+                  animate={{ scale: isActive ? 1.08 : 1 }}
+                  transition={PULSE_TAB_SPRING}
+                >
+                  <Icon
+                    className="size-[22px]"
+                    strokeWidth={isActive ? 1.6 : 1.25}
+                    style={{ color: isActive ? PULSE_COLORS.ink : '#C4C4C4' }}
+                  />
+                </motion.div>
                 {id === 'inbox' && inboxUnread ? (
                   <span
                     className="absolute -right-0.5 -top-0.5 size-2 rounded-full ring-2 ring-white"

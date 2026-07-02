@@ -73,8 +73,7 @@ export function ForwardSheet({
       >
         <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-black/10" />
         <div className="px-5 pt-4">
-          <p className="text-[10px] uppercase tracking-[0.28em] text-neutral-400">Forward to WeChat</p>
-          <h2 className="mt-1 font-serif text-[17px] text-[#1C1C1E]">发送给微信好友</h2>
+          <h2 className="mt-1 font-serif text-[17px] text-[#1C1C1E]">转发给微信好友</h2>
           <p className="mt-2 line-clamp-2 font-serif text-[12px] leading-relaxed text-neutral-500">
             {post.content}
           </p>

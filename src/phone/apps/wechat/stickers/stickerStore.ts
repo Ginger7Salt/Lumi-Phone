@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { personaDb } from '../newFriendsPersona/idb'
 
+import {
+  WECHAT_CLASSIC_GROUP_ID,
+} from './wechatClassicStickerPack'
+
 export interface StickerItem {
   id: string
   url: string
@@ -29,6 +33,7 @@ const DEFAULT_GROUP_ID_2 = 'default-sticker-pack-2'
 const DEFAULT_GROUP_ID_3 = 'default-sticker-pack-3'
 const DEFAULT_GROUP_ID_4 = 'default-sticker-pack-4'
 const READONLY_GROUP_IDS = new Set([
+  WECHAT_CLASSIC_GROUP_ID,
   DEFAULT_GROUP_ID_1,
   DEFAULT_GROUP_ID_2,
   DEFAULT_GROUP_ID_3,
@@ -104,7 +109,7 @@ const DEFAULT_GROUPS: StickerGroup[] = [
     createdAt: 0,
     readonly: true,
   },
-].filter((g) => g.items.length > 0)
+].filter((g) => !!g && g.items.length > 0)
 
 function uid(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -255,7 +260,7 @@ export type StickerCatalogEntry = {
 function allStickerGroups(): StickerGroup[] {
   const state = readState()
   /** 自定义分组优先：注入 AI 目录与解析匹配时，避免被默认大包截断 */
-  return [...state.groups, ...DEFAULT_GROUPS]
+  return [...state.groups, ...DEFAULT_GROUPS].filter((g) => g.id !== WECHAT_CLASSIC_GROUP_ID)
 }
 
 /** 发 AI 请求 / 解析角色 `[表情包]` 行前须 await，确保自定义包已从 IndexedDB 载入 */
@@ -634,7 +639,10 @@ export function useStickerStore() {
     }))
   }, [update])
 
-  const groups = useMemo(() => [...DEFAULT_GROUPS, ...state.groups], [state.groups])
+  const groups = useMemo(
+    () => [...DEFAULT_GROUPS, ...state.groups].filter((g) => g.id !== WECHAT_CLASSIC_GROUP_ID),
+    [state.groups],
+  )
 
   return {
     groups,

@@ -11,6 +11,7 @@ import {
   CHARACTER_FREE_WILL_ILLUSION_APPENDIX,
   FAVORABILITY_SYSTEM_COT_APPENDIX,
   LUMI_SYSTEM_OVERRIDE_APPENDIX,
+  RELATIONSHIP_TEXTURE_COT_OFFLINE_APPENDIX,
 } from '../wechatReplyOutputPrompt'
 
 /**
@@ -253,6 +254,8 @@ ${LUMI_OFFLINE_COGNITIVE_LIMIT_RULES_BOOK}
 仅在思维链内写：好感或信任波动（建议单次 ±0.2～±0.5）、**原因**、关系阶段、**本段行为约束**。**正文与 OS 禁止**写进度条式数值。
 
 {{OFFLINE_ROMANCE_SECTIONS}}
+
+${RELATIONSHIP_TEXTURE_COT_OFFLINE_APPENDIX}
 
 【深度自由意志幻觉内核】
 以下规则为本轮动机、策略与去人机感表达的**增量约束**（基础独立人格/拒 AI 等见线下认知限制规则书，不重复）：

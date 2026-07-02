@@ -3,6 +3,9 @@ import { motion } from 'framer-motion'
 import { Pressable } from '../../../components/Pressable'
 import { PULSE_COLORS } from '../constants'
 import type { PulseTrendingTag, PulseTrendingTopic } from '../pulseTypes'
+import { formatPulseCount } from '../pulseTypes'
+import { PulseNum } from './PulseNum'
+import { PulseWeiboFaceText } from './PulseWeiboFaceText'
 
 const TAG_STYLE: Record<PulseTrendingTag, string> = {
   新: 'bg-[#A3C4BC] text-white',
@@ -36,25 +39,34 @@ export function TrendingItem({
       }}
       className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3.5 shadow-[0_2px_15px_rgba(0,0,0,0.03)]"
     >
-      <span
-        className="w-7 shrink-0 text-center font-mono text-[17px] font-semibold tabular-nums"
+      <PulseNum
+        className="w-7 shrink-0 text-center text-[17px] font-semibold"
         style={{ color: rankColor(rank) }}
       >
         {rank}
-      </span>
+      </PulseNum>
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium text-[15px] text-[#1C1C1E]">{topic.title}</p>
         {topic.excerpt ? (
-          <p className="mt-0.5 truncate text-[12px] text-neutral-400">{topic.excerpt}</p>
+          <p className="mt-0.5 truncate text-[12px] text-neutral-400">
+            <PulseWeiboFaceText text={topic.excerpt} />
+          </p>
         ) : null}
       </div>
-      {topic.tag ? (
-        <span
-          className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide ${TAG_STYLE[topic.tag]}`}
-        >
-          {topic.tag}
-        </span>
-      ) : null}
+      <div className="flex shrink-0 flex-col items-end gap-1">
+        {topic.tag ? (
+          <span
+            className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wide ${TAG_STYLE[topic.tag]}`}
+          >
+            {topic.tag}
+          </span>
+        ) : null}
+        {topic.postCount && topic.postCount > 0 ? (
+          <PulseNum className="text-[10px] text-neutral-400">
+            {formatPulseCount(topic.postCount)}
+          </PulseNum>
+        ) : null}
+      </div>
     </motion.div>
   )
 

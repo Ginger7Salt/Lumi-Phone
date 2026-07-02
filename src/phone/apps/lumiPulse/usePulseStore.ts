@@ -2,23 +2,32 @@ import { create } from 'zustand'
 
 import { personaDb } from '../wechat/newFriendsPersona/idb'
 import { DEFAULT_PULSE_ROOT, LUMI_PULSE_KV_KEY } from './constants'
+import { resolvePulseAuthorAvatarForPersist, pickStablePulseNetizenAvatarPath } from './pulseNetizenAvatar'
 import type {
   PulseAccountData,
   PulseComment,
   PulseDmThread,
+  PulseFollowingUser,
+  PulseGeneratedProfileBundle,
   PulseInteraction,
   PulsePersistedRoot,
   PulsePovId,
   PulsePost,
   PulseProfileStats,
   PulseTrendingTopic,
+  PulseWorldData,
 } from './pulseTypes'
-import { defaultProfileStats, emptyPulseAccountData } from './pulseTypes'
+import { defaultProfileStats, emptyPulseAccountData, isPulseWorldPovId } from './pulseTypes'
+import {
+  absorbLegacyWorldIntoPov,
+  getWorldSlice,
+  migratePulseRoot,
+} from './pulseWorldData'
 
 type PulseStore = {
   hydrated: boolean
   currentAccountId: string | null
-  /** 当前登录视角 — 所有读写必须依赖此字段 */
+  /** 当前进入的世界锚点（主要角色 char:）— 所有读写必须依赖此字段 */
   currentPOVId: PulsePovId | null
   root: PulsePersistedRoot
 
@@ -59,12 +68,22 @@ type PulseStore = {
   replaceDmThreads: (threads: PulseDmThread[], povId: PulsePovId) => void
   markDmThreadRead: (threadId: string) => void
   markInteractionsRead: () => void
+  markInteractionsReadByType: (type: PulseInteraction['type']) => void
   appendAiPosts: (
     rows: Array<{ authorName: string; content: string }>,
     authorPovId: PulsePovId,
   ) => void
   appendAiComments: (postId: string, comments: PulseComment[]) => void
   bumpProfileStats: (povId: PulsePovId, patch: Partial<PulseProfileStats>) => void
+  /** 写入 AI 生成的个人主页数据（统计、动态、评论、消息互动） */
+  applyGeneratedProfileBundle: (input: {
+    povId: PulsePovId
+    authorName: string
+    authorAvatarUrl?: string
+    bundle: PulseGeneratedProfileBundle
+  }) => void
+  /** 为尚无头像的 AI 网友帖/评补全并持久化随机网友头像 */
+  ensurePostDetailAvatars: (postId: string) => void
 }
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null
@@ -99,6 +118,31 @@ function patchAccount(
   }
 }
 
+/** 在当前世界数据块上 patch */
+function patchWorld(
+  root: PulsePersistedRoot,
+  accountId: string,
+  povId: PulsePovId,
+  recipe: (draft: PulseWorldData) => PulseWorldData,
+): PulsePersistedRoot {
+  return patchAccount(root, accountId, (draft) => {
+    const prev = getWorldSlice(draft, povId)
+    return {
+      ...draft,
+      worldByPov: {
+        ...draft.worldByPov,
+        [povId]: recipe(prev),
+      },
+    }
+  })
+}
+
+function requireWorldPov(): { pov: PulsePovId; accountId: string; root: PulsePersistedRoot } | null {
+  const { currentPOVId, currentAccountId, root } = usePulseStore.getState()
+  if (!currentAccountId || !currentPOVId || !isPulseWorldPovId(currentPOVId)) return null
+  return { pov: currentPOVId, accountId: currentAccountId, root }
+}
+
 export const usePulseStore = create<PulseStore>((set, get) => ({
   hydrated: false,
   currentAccountId: null,
@@ -110,35 +154,71 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
     if (acc === get().currentAccountId && get().hydrated) return
 
     let root: PulsePersistedRoot = DEFAULT_PULSE_ROOT
+    let shouldPersistMigration = false
     try {
       const raw = await personaDb.getPhoneKv(LUMI_PULSE_KV_KEY)
       if (raw && typeof raw === 'object' && (raw as PulsePersistedRoot).version === 1) {
-        root = raw as PulsePersistedRoot
+        const loaded = raw as PulsePersistedRoot
+        shouldPersistMigration = Object.values(loaded.byAccount ?? {}).some((acc) => {
+          const row = acc as PulseAccountData
+          return (
+            (row.posts?.length ?? 0) > 0 ||
+            (row.trending?.length ?? 0) > 0 ||
+            Object.keys(row.commentsByPostId ?? {}).length > 0
+          )
+        })
+        root = migratePulseRoot(loaded)
       }
     } catch (e) {
       console.warn('[LumiPulse] hydrate failed', e)
     }
 
-    const lastPov = acc ? root.byAccount[acc]?.lastPovId ?? null : null
+    const savedPov = acc ? root.byAccount[acc]?.lastPovId ?? null : null
+    let lastPov = isPulseWorldPovId(savedPov) ? savedPov : null
+
+    if (acc && lastPov) {
+      const accountData = ensureAccount(root, acc)
+      const absorbed = absorbLegacyWorldIntoPov(accountData, lastPov)
+      if (absorbed) {
+        root = patchAccount(root, acc, () => absorbed)
+        schedulePersist(root)
+      }
+    }
+
     set({
       hydrated: true,
       currentAccountId: acc,
       root,
       currentPOVId: lastPov,
     })
+
+    if (shouldPersistMigration) {
+      schedulePersist(root)
+    }
   },
 
   setCurrentPOVId(povId) {
     const { currentAccountId, root } = get()
-    if (!currentAccountId || !povId) {
-      set({ currentPOVId: povId })
+    const worldPov = isPulseWorldPovId(povId) ? povId : null
+    if (!currentAccountId || !worldPov) {
+      set({ currentPOVId: worldPov })
       return
     }
-    const nextRoot = patchAccount(root, currentAccountId, (draft) => ({
+
+    let nextRoot = patchAccount(root, currentAccountId, (draft) => ({
       ...draft,
-      lastPovId: povId,
+      lastPovId: worldPov,
     }))
-    set({ currentPOVId: povId, root: nextRoot })
+
+    const absorbed = absorbLegacyWorldIntoPov(
+      nextRoot.byAccount[currentAccountId]!,
+      worldPov,
+    )
+    if (absorbed) {
+      nextRoot = patchAccount(nextRoot, currentAccountId, () => absorbed)
+    }
+
+    set({ currentPOVId: worldPov, root: nextRoot })
     schedulePersist(nextRoot)
   },
 
@@ -160,15 +240,24 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
   },
 
   getPostsForDiscover() {
-    return [...get().getAccountData().posts].sort((a, b) => b.createdAt - a.createdAt)
+    const ctx = requireWorldPov()
+    if (!ctx) return []
+    const world = getWorldSlice(ctx.root.byAccount[ctx.accountId]!, ctx.pov)
+    return [...world.posts].sort((a, b) => b.createdAt - a.createdAt)
   },
 
   getComments(postId) {
-    return get().getAccountData().commentsByPostId[postId] ?? []
+    const ctx = requireWorldPov()
+    if (!ctx) return []
+    const world = getWorldSlice(ctx.root.byAccount[ctx.accountId]!, ctx.pov)
+    return world.commentsByPostId[postId] ?? []
   },
 
   getTrending() {
-    return [...get().getAccountData().trending].sort((a, b) => a.rank - b.rank)
+    const ctx = requireWorldPov()
+    if (!ctx) return []
+    const world = getWorldSlice(ctx.root.byAccount[ctx.accountId]!, ctx.pov)
+    return [...world.trending].sort((a, b) => a.rank - b.rank)
   },
 
   getInteractions() {
@@ -186,14 +275,19 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
   },
 
   publishPost(input) {
-    const { currentAccountId, root } = get()
-    if (!currentAccountId) return ''
+    const ctx = requireWorldPov()
+    if (!ctx) return ''
     const id = `pp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const post: PulsePost = {
       id,
       authorPovId: input.authorPovId,
       authorName: input.authorName,
-      authorAvatarUrl: input.authorAvatarUrl,
+      authorAvatarUrl: resolvePulseAuthorAvatarForPersist(
+        input.authorPovId,
+        input.authorName,
+        input.authorAvatarUrl,
+        input.isAiGenerated,
+      ),
       content: input.content.trim(),
       createdAt: Date.now(),
       likeCount: 0,
@@ -205,7 +299,7 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
       verified: input.verified ?? input.authorPovId.startsWith('char:'),
       imageUrls: input.imageUrls?.length ? input.imageUrls : undefined,
     }
-    const nextRoot = patchAccount(root, currentAccountId, (draft) => ({
+    const nextRoot = patchWorld(ctx.root, ctx.accountId, ctx.pov, (draft) => ({
       ...draft,
       posts: [post, ...draft.posts],
     }))
@@ -215,17 +309,16 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
   },
 
   toggleLike(postId) {
-    const pov = get().currentPOVId
-    const { currentAccountId, root } = get()
-    if (!pov || !currentAccountId) return
-    const nextRoot = patchAccount(root, currentAccountId, (draft) => ({
+    const ctx = requireWorldPov()
+    if (!ctx) return
+    const nextRoot = patchWorld(ctx.root, ctx.accountId, ctx.pov, (draft) => ({
       ...draft,
       posts: draft.posts.map((p) => {
         if (p.id !== postId) return p
-        const liked = p.likedByPovIds.includes(pov)
+        const liked = p.likedByPovIds.includes(ctx.pov)
         const likedByPovIds = liked
-          ? p.likedByPovIds.filter((x) => x !== pov)
-          : [...p.likedByPovIds, pov]
+          ? p.likedByPovIds.filter((x) => x !== ctx.pov)
+          : [...p.likedByPovIds, ctx.pov]
         return {
           ...p,
           likedByPovIds,
@@ -238,21 +331,26 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
   },
 
   addComment(input) {
-    const { currentAccountId, root } = get()
-    if (!currentAccountId) return ''
+    const ctx = requireWorldPov()
+    if (!ctx) return ''
     const id = `pc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const comment: PulseComment = {
       id,
       postId: input.postId,
       authorPovId: input.authorPovId,
       authorName: input.authorName,
-      authorAvatarUrl: input.authorAvatarUrl,
+      authorAvatarUrl: resolvePulseAuthorAvatarForPersist(
+        input.authorPovId,
+        input.authorName,
+        input.authorAvatarUrl,
+        input.isAiGenerated,
+      ),
       content: input.content.trim(),
       createdAt: Date.now(),
       parentId: input.parentId,
       isAiGenerated: input.isAiGenerated,
     }
-    const nextRoot = patchAccount(root, currentAccountId, (draft) => {
+    const nextRoot = patchWorld(ctx.root, ctx.accountId, ctx.pov, (draft) => {
       const list = draft.commentsByPostId[input.postId] ?? []
       return {
         ...draft,
@@ -272,13 +370,13 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
 
   setTrending(topics, forPovId) {
     const { currentAccountId, root } = get()
-    if (!currentAccountId) return
+    if (!currentAccountId || !isPulseWorldPovId(forPovId)) return
     const ranked = topics.map((t, i) => ({
       ...t,
       rank: i + 1,
       generatedForPovId: forPovId,
     }))
-    const nextRoot = patchAccount(root, currentAccountId, (draft) => ({
+    const nextRoot = patchWorld(root, currentAccountId, forPovId, (draft) => ({
       ...draft,
       trending: ranked,
     }))
@@ -358,6 +456,24 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
     schedulePersist(nextRoot)
   },
 
+  markInteractionsReadByType(type) {
+    const pov = get().currentPOVId
+    const { currentAccountId, root } = get()
+    if (!pov || !currentAccountId) return
+    const nextRoot = patchAccount(root, currentAccountId, (draft) => {
+      const list = draft.interactionsByPov[pov] ?? []
+      return {
+        ...draft,
+        interactionsByPov: {
+          ...draft.interactionsByPov,
+          [pov]: list.map((it) => (it.type === type ? { ...it, read: true } : it)),
+        },
+      }
+    })
+    set({ root: nextRoot })
+    schedulePersist(nextRoot)
+  },
+
   appendAiPosts(rows, authorPovId) {
     for (const row of rows) {
       get().publishPost({
@@ -371,9 +487,9 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
   },
 
   appendAiComments(postId, comments) {
-    const { currentAccountId, root } = get()
-    if (!currentAccountId) return
-    const nextRoot = patchAccount(root, currentAccountId, (draft) => {
+    const ctx = requireWorldPov()
+    if (!ctx) return
+    const nextRoot = patchWorld(ctx.root, ctx.accountId, ctx.pov, (draft) => {
       const list = draft.commentsByPostId[postId] ?? []
       return {
         ...draft,
@@ -403,6 +519,193 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
         },
       }
     })
+    set({ root: nextRoot })
+    schedulePersist(nextRoot)
+  },
+
+  applyGeneratedProfileBundle(input) {
+    const { currentAccountId, root } = get()
+    const pov = input.povId.trim()
+    if (!currentAccountId || !isPulseWorldPovId(pov)) return
+
+    const now = Date.now()
+    const newPosts: PulsePost[] = []
+    const commentsByPostId: Record<string, PulseComment[]> = {}
+    const interactionItems: Omit<PulseInteraction, 'id' | 'read'>[] = []
+
+    input.bundle.posts.forEach((row, index) => {
+      const postId = `pp-gen-${now}-${index}-${Math.random().toString(36).slice(2, 6)}`
+      const createdAt = now - (input.bundle.posts.length - index) * 86_400_000 - index * 120_000
+
+      newPosts.push({
+        id: postId,
+        authorPovId: pov,
+        authorName: input.authorName,
+        authorAvatarUrl: input.authorAvatarUrl,
+        content: row.content,
+        createdAt,
+        likeCount: row.likeCount,
+        commentCount: row.commentCount,
+        repostCount: row.repostCount,
+        likedByPovIds: [],
+        verified: true,
+        isAiGenerated: true,
+      })
+
+      const snippet = row.content.slice(0, 48)
+      const builtComments: PulseComment[] = row.comments.map((c, ci) => ({
+        id: `pc-gen-${postId}-${ci}`,
+        postId,
+        authorPovId: `ai:${c.authorName}`,
+        authorName: c.authorName,
+        authorAvatarUrl: resolvePulseAuthorAvatarForPersist(
+          `ai:${c.authorName}`,
+          c.authorName,
+          undefined,
+          true,
+        ),
+        content: c.content,
+        createdAt: createdAt + (ci + 1) * 45_000,
+        isAiGenerated: true,
+      }))
+      commentsByPostId[postId] = builtComments
+
+      for (const c of builtComments) {
+        interactionItems.push({
+          type: 'comment',
+          fromName: c.authorName,
+          fromAvatarUrl: c.authorAvatarUrl,
+          postId,
+          postSnippet: snippet,
+          content: c.content,
+          createdAt: c.createdAt,
+        })
+      }
+      if (row.repostCount > 0) {
+        const fromName = builtComments[0]?.authorName ?? '网友'
+        interactionItems.push({
+          type: 'repost',
+          fromName,
+          postId,
+          postSnippet: snippet,
+          createdAt: createdAt + 60_000,
+        })
+      }
+      if (row.likeCount > 0) {
+        const fromName = builtComments[1]?.authorName ?? builtComments[0]?.authorName ?? '路人'
+        interactionItems.push({
+          type: 'like',
+          fromName,
+          postId,
+          postSnippet: snippet,
+          createdAt: createdAt + 90_000,
+        })
+      }
+    })
+
+    let nextRoot = patchAccount(root, currentAccountId, (draft) => {
+      const followingRows: PulseFollowingUser[] = input.bundle.followingUsers.map((u) => {
+        const povId = `ai:${u.name}` as PulsePovId
+        return {
+          povId,
+          name: u.name,
+          bio: u.bio,
+          avatarUrl: pickStablePulseNetizenAvatarPath(povId),
+          verified: false,
+        }
+      })
+      return {
+        ...draft,
+        profileStatsByPov: {
+          ...draft.profileStatsByPov,
+          [pov]: { ...input.bundle.profileStats },
+        },
+        followingByPov: {
+          ...draft.followingByPov,
+          [pov]: followingRows,
+        },
+      }
+    })
+
+    nextRoot = patchWorld(nextRoot, currentAccountId, pov, (draft) => {
+      const mergedComments = { ...draft.commentsByPostId }
+      for (const [pid, list] of Object.entries(commentsByPostId)) {
+        mergedComments[pid] = list
+      }
+      return {
+        ...draft,
+        posts: [...newPosts, ...draft.posts],
+        commentsByPostId: mergedComments,
+      }
+    })
+
+    if (interactionItems.length) {
+      const stamped = interactionItems.map((it) => ({
+        ...it,
+        id: `pi-${now}-${Math.random().toString(36).slice(2, 6)}`,
+        read: false,
+      }))
+      nextRoot = patchAccount(nextRoot, currentAccountId, (draft) => {
+        const prev = draft.interactionsByPov[pov] ?? []
+        return {
+          ...draft,
+          interactionsByPov: {
+            ...draft.interactionsByPov,
+            [pov]: [...stamped, ...prev].slice(0, 80),
+          },
+        }
+      })
+    }
+
+    set({ root: nextRoot })
+    schedulePersist(nextRoot)
+  },
+
+  ensurePostDetailAvatars(postId) {
+    const ctx = requireWorldPov()
+    if (!ctx) return
+    const pid = postId.trim()
+    if (!pid) return
+
+    const world = getWorldSlice(ctx.root.byAccount[ctx.accountId]!, ctx.pov)
+    let postsChanged = false
+    const posts = world.posts.map((p) => {
+      if (p.id !== pid || p.authorAvatarUrl?.trim()) return p
+      const nextUrl = resolvePulseAuthorAvatarForPersist(
+        p.authorPovId,
+        p.authorName,
+        p.authorAvatarUrl,
+        p.isAiGenerated,
+      )
+      if (!nextUrl) return p
+      postsChanged = true
+      return { ...p, authorAvatarUrl: nextUrl }
+    })
+
+    const commentList = world.commentsByPostId[pid] ?? []
+    let commentsChanged = false
+    const nextComments = commentList.map((c) => {
+      if (c.authorAvatarUrl?.trim()) return c
+      const nextUrl = resolvePulseAuthorAvatarForPersist(
+        c.authorPovId,
+        c.authorName,
+        c.authorAvatarUrl,
+        c.isAiGenerated,
+      )
+      if (!nextUrl) return c
+      commentsChanged = true
+      return { ...c, authorAvatarUrl: nextUrl }
+    })
+
+    if (!postsChanged && !commentsChanged) return
+
+    const nextRoot = patchWorld(ctx.root, ctx.accountId, ctx.pov, (draft) => ({
+      ...draft,
+      posts: postsChanged ? posts : draft.posts,
+      commentsByPostId: commentsChanged
+        ? { ...draft.commentsByPostId, [pid]: nextComments }
+        : draft.commentsByPostId,
+    }))
     set({ root: nextRoot })
     schedulePersist(nextRoot)
   },

@@ -2,20 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { useCustomization } from '../../CustomizationContext'
 import { personaDb } from '../wechat/newFriendsPersona/idb'
-import type { Character, PlayerIdentity } from '../wechat/newFriendsPersona/types'
+import type { Character } from '../wechat/newFriendsPersona/types'
 import { isPersonaRosterMainCharacter } from '../wechat/newFriendsPersona/personaRoster/personaRosterTypes'
-import {
-  findAccountById,
-  loadAccountsBundle,
-  resolveAccountSessionIdentityId,
-} from '../wechat/wechatAccountPersistence'
+import { DEFAULT_WORLD_BACKGROUND_ID } from '../wechat/newFriendsPersona/worldBackgroundConstants'
+import { loadAccountsBundle } from '../wechat/wechatAccountPersistence'
 import type { PulsePovOption } from './pulseTypes'
-import { toCharPovId, toPlayerPovId } from './pulseTypes'
+import { toCharPovId } from './pulseTypes'
 
+/** 世界选择：仅列出主要角色，每位角色代表一个可进入的世界观 */
 export function usePulsePovOptions() {
   const { state } = useCustomization()
   const [mainCharacters, setMainCharacters] = useState<Character[]>([])
-  const [playerIdentity, setPlayerIdentity] = useState<PlayerIdentity | null>(null)
+  const [worldNameByBgId, setWorldNameByBgId] = useState<Record<string, string>>({})
   const [currentAccountId, setCurrentAccountId] = useState<string | null>(null)
   const [hydrated, setHydrated] = useState(false)
 
@@ -24,7 +22,7 @@ export function usePulsePovOptions() {
     if (!bundle) {
       setCurrentAccountId(null)
       setMainCharacters([])
-      setPlayerIdentity(null)
+      setWorldNameByBgId({})
       setHydrated(true)
       return
     }
@@ -32,16 +30,22 @@ export function usePulsePovOptions() {
     setCurrentAccountId(accId)
     const linkedIds = state.wechatPersonaContacts.map((c) => c.characterId).filter(Boolean)
     const roots = await personaDb.listRootCharactersAccessibleToWechatAccount(accId, linkedIds)
-    setMainCharacters(roots.filter(isPersonaRosterMainCharacter))
+    const mains = roots.filter(isPersonaRosterMainCharacter)
+    setMainCharacters(mains)
 
-    const account = findAccountById(bundle, accId)
-    const sessionId = account ? resolveAccountSessionIdentityId(account).trim() : ''
-    if (sessionId && sessionId !== '__none__') {
-      const idRow = await personaDb.getPlayerIdentity(sessionId)
-      setPlayerIdentity(idRow ?? null)
-    } else {
-      setPlayerIdentity(null)
-    }
+    const bgIds = [
+      ...new Set(
+        mains.map((c) => c.worldBackgroundId?.trim() || DEFAULT_WORLD_BACKGROUND_ID),
+      ),
+    ]
+    const nameMap: Record<string, string> = {}
+    await Promise.all(
+      bgIds.map(async (id) => {
+        const wb = await personaDb.getWorldBackground(id)
+        nameMap[id] = wb?.name?.trim() || '现代都市'
+      }),
+    )
+    setWorldNameByBgId(nameMap)
     setHydrated(true)
   }, [state.wechatPersonaContacts])
 
@@ -51,30 +55,21 @@ export function usePulsePovOptions() {
 
   const options = useMemo((): PulsePovOption[] => {
     const rows: PulsePovOption[] = []
-    const profile = state.profile
-    const sessionId = playerIdentity?.id?.trim()
-    if (sessionId) {
-      rows.push({
-        povId: toPlayerPovId(sessionId),
-        kind: 'player',
-        rawId: sessionId,
-        label: profile.displayName?.trim() || playerIdentity?.name?.trim() || '我',
-        avatarUrl: profile.avatarImageUrl?.trim() || playerIdentity?.avatarUrl?.trim(),
-      })
-    }
     for (const ch of mainCharacters) {
       const id = ch.id.trim()
       if (!id) continue
+      const bgId = ch.worldBackgroundId?.trim() || DEFAULT_WORLD_BACKGROUND_ID
       rows.push({
         povId: toCharPovId(id),
         kind: 'char',
         rawId: id,
         label: ch.name?.trim() || '未命名',
+        worldName: worldNameByBgId[bgId] ?? '现代都市',
         avatarUrl: ch.avatarUrl?.trim(),
       })
     }
     return rows
-  }, [mainCharacters, playerIdentity, state.profile])
+  }, [mainCharacters, worldNameByBgId])
 
   return {
     hydrated,

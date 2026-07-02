@@ -1,10 +1,17 @@
 import { motion } from 'framer-motion'
-import { BadgeCheck, Heart, MessageCircle, Repeat2 } from 'lucide-react'
+import { Heart, MessageCircle, Repeat2, ShieldCheck } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
 import { PULSE_CARD_SHADOW, PULSE_COLORS, PULSE_LIKE_SPRING } from '../constants'
+import { PulseNum, PulseNumericText } from './PulseNum'
+import {
+  isPulseNetizenAuthor,
+  pickStablePulseNetizenAvatarPath,
+  resolvePulseAuthorAvatarUrl,
+} from '../pulseNetizenAvatar'
 import type { PulsePost } from '../pulseTypes'
+import { PulseWeiboFaceText } from './PulseWeiboFaceText'
 
 const LINE_CLAMP = 5
 
@@ -44,11 +51,11 @@ function PostImageGrid({ urls }: { urls: string[] }) {
 
 function VerifiedBadge() {
   return (
-    <BadgeCheck
+    <ShieldCheck
       className="size-[14px] shrink-0"
-      style={{ color: PULSE_COLORS.mistBlue }}
+      style={{ color: PULSE_COLORS.lightGold }}
       strokeWidth={1.6}
-      aria-label="认证"
+      aria-label="专属认证"
     />
   )
 }
@@ -58,16 +65,27 @@ export function PostCard({
   currentPovId,
   onOpen,
   onLike,
+  onRepost,
   compact = false,
 }: {
   post: PulsePost
   currentPovId: string
   onOpen: () => void
   onLike: () => void
+  onRepost: () => void
   compact?: boolean
 }) {
   const liked = post.likedByPovIds.includes(currentPovId)
   const [expanded, setExpanded] = useState(false)
+
+  const authorAvatarSrc = useMemo(() => {
+    const stored = resolvePulseAuthorAvatarUrl(post.authorAvatarUrl)
+    if (stored) return stored
+    if (!isPulseNetizenAuthor(post.authorPovId, post.isAiGenerated)) return undefined
+    return resolvePulseAuthorAvatarUrl(
+      pickStablePulseNetizenAvatarPath(post.authorPovId.trim() || post.authorName),
+    )
+  }, [post.authorAvatarUrl, post.authorName, post.authorPovId, post.isAiGenerated])
 
   const { preview, needsClamp } = useMemo(() => {
     const lines = post.content.split('\n')
@@ -88,9 +106,9 @@ export function PostCard({
     >
       <Pressable type="button" onClick={onOpen} className="block w-full text-left">
         <header className="flex items-center gap-3">
-          {post.authorAvatarUrl ? (
+          {authorAvatarSrc ? (
             <img
-              src={post.authorAvatarUrl}
+              src={authorAvatarSrc}
               alt=""
               className="size-11 rounded-full object-cover ring-1 ring-black/[0.04]"
             />
@@ -102,15 +120,17 @@ export function PostCard({
               <p className="truncate text-[15px] font-semibold text-[#1C1C1E]">{post.authorName}</p>
               {post.verified ? <VerifiedBadge /> : null}
             </div>
-            <p className="text-[11px] text-neutral-400">{formatPulseTime(post.createdAt)}</p>
+            <p className="text-[11px] text-neutral-400">
+              <PulseNumericText text={formatPulseTime(post.createdAt)} />
+            </p>
           </div>
         </header>
 
         <div className="mt-3">
-          <p className="whitespace-pre-wrap font-serif text-[15px] leading-relaxed tracking-[0.01em] text-[#1C1C1E]">
-            {expanded || !needsClamp ? post.content : preview}
-            {!expanded && needsClamp ? '…' : null}
-          </p>
+          <PulseWeiboFaceText
+            text={expanded || !needsClamp ? post.content : preview + (needsClamp && !expanded ? '…' : '')}
+            className="font-serif text-[15px] leading-relaxed tracking-[0.01em] text-[#1C1C1E]"
+          />
           {needsClamp && !expanded ? (
             <Pressable
               type="button"
@@ -132,11 +152,12 @@ export function PostCard({
       <div className="mt-4 flex items-center justify-between px-1 text-neutral-400">
         <Pressable
           type="button"
-          onClick={onOpen}
+          onClick={onRepost}
           className="flex items-center gap-1.5 text-[12px] tracking-wide"
+          aria-label="转发"
         >
           <Repeat2 className="size-[16px]" strokeWidth={1.3} />
-          <span>{post.repostCount || ''}</span>
+          <PulseNum>{post.repostCount || ''}</PulseNum>
         </Pressable>
         <Pressable
           type="button"
@@ -144,7 +165,7 @@ export function PostCard({
           className="flex items-center gap-1.5 text-[12px] tracking-wide"
         >
           <MessageCircle className="size-[16px]" strokeWidth={1.3} />
-          <span>{post.commentCount || ''}</span>
+          <PulseNum>{post.commentCount || ''}</PulseNum>
         </Pressable>
         <Pressable type="button" onClick={onLike} className="flex items-center gap-1.5 text-[12px] tracking-wide">
           <motion.span
@@ -160,7 +181,9 @@ export function PostCard({
               style={{ color: liked ? PULSE_COLORS.dustyRose : 'currentColor' }}
             />
           </motion.span>
-          <span style={liked ? { color: PULSE_COLORS.dustyRose } : undefined}>{post.likeCount || ''}</span>
+          <PulseNum style={liked ? { color: PULSE_COLORS.dustyRose } : undefined}>
+            {post.likeCount || ''}
+          </PulseNum>
         </Pressable>
       </div>
     </motion.article>

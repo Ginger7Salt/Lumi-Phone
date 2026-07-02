@@ -125,7 +125,7 @@ export function WeChatChatSkinPreviewPanel({
   roomBgStyle,
   tailMaskColor = '#EDEDED',
 }: Props) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const textareaRef = useRef<HTMLDivElement>(null)
   const effectiveBubble = useMemo(() => migrateMislabeledLumiDefaultBubble(bubble), [bubble])
   const inputBar = useMemo(
     () => resolveEffectiveChatInputBarForBubble(chatTheme.inputBar, effectiveBubble),

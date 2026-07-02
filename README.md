@@ -1,6 +1,13 @@
 # React + TypeScript + Vite
 
-## 开发笔记（群聊多行解析）
+## Lumi Pulse（微博模拟）
+
+- 路径：`src/phone/apps/lumiPulse/`
+- 视觉：Soft Pastel Light Luxury（暖白 `#FCFCFC`、烟粉 `#E5989B`、雾霾蓝 `#A2B2C6`）
+- 四 Tab：首页 / 发现 / 消息 / 我；数据按 `currentPOVId` 隔离
+- 组件：`PostCard`、`TrendingItem`、`NotificationCell`、`MediaWaterfall`
+
+---
 
 - `wechatChatAi.ts` 中 `splitInlineStickerPayloadsFromPlainText`：续行无 `<<SPEAKER>>` 时，多行会合并为一段。若**整段**没有 `[表情包]` 标记，旧逻辑会整段视为**一条**气泡，导致多行/表情包全挤在一条里。现改为**始终**先按换行切物理行，再对每行做行内 `[表情包]` 拆分，与解析层 `count=17` 的拆分意图一致。
 

@@ -9,6 +9,7 @@ export function NotificationCell({
   tintBg,
   iconColor,
   unread,
+  active,
   onPress,
 }: {
   label: string
@@ -16,13 +17,16 @@ export function NotificationCell({
   tintBg: string
   iconColor: string
   unread?: boolean
+  active?: boolean
   onPress?: () => void
 }) {
   return (
     <Pressable
       type="button"
       onClick={onPress}
-      className="relative flex flex-1 flex-col items-center gap-2 rounded-2xl bg-white px-2 py-4 shadow-[0_2px_15px_rgba(0,0,0,0.03)]"
+      className={`relative flex flex-1 flex-col items-center gap-2 rounded-2xl px-1 py-3.5 shadow-[0_2px_15px_rgba(0,0,0,0.03)] ${
+        active ? 'bg-[#FCFCFC] ring-1 ring-[#E5989B]/25' : 'bg-white'
+      }`}
     >
       <div
         className="relative flex size-12 items-center justify-center rounded-full"

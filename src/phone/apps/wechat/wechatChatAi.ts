@@ -25,6 +25,9 @@ import { normalizeMemoryIdPlaceholderSyntax } from './memory/memoryIdPlaceholder
 import {
   STORY_TIMELINE_SUMMARY_JSON_FIELDS,
   hasTimelineDeltaContent,
+  normalizeStoryTimelineRowKeyword,
+  normalizeStoryTimelineRowKeywords,
+  normalizeStoryTimelineRowTitle,
   parseStoryTimelineSummaryDelta,
   type StoryTimelineSummaryDelta,
 } from './memory/storyTimelineTypes'
@@ -35,6 +38,7 @@ import {
 import {
   looksLikeMemoryJsonSchemaLeak,
   repairMemorySummaryBodyFromModel,
+  resolveMemorySummaryContentFromModelRaw,
 } from './memory/memorySummarySchemaLeakRepair'
 import { personaDb } from './newFriendsPersona/idb'
 import {
@@ -57,6 +61,7 @@ import { WECHAT_FRIEND_REQUEST_ADJUDICATION_OUTPUT_APPENDIX } from './wechatFrie
 import { WECHAT_ROLEPLAY_SYSTEM_PROMPT } from './wechatChatPrompt'
 import { PROACTIVE_INITIATION_USER_NUDGE } from './proactivePrivateMessageTypes'
 import { buildStickerCatalogPromptBlock, ensureStickerStoreHydrated } from './stickers/stickerStore'
+import { buildWechatClassicEmojiCatalogPromptBlock } from './stickers/wechatClassicEmojiPrompt'
 import { collectRecentCharacterStickerRefsFromTranscript } from './stickers/stickerAntiRepeat'
 import { buildStickerAntiRepeatPromptBlock } from './stickers/stickerPromptRules'
 import {
@@ -183,6 +188,15 @@ function resolveStickerCatalogPromptBlockForLore(
     stickerRoundTriggerPercent,
     buildStickerCatalogPromptBlock,
   )
+}
+
+function buildWeChatStickerAndClassicEmojiPromptBlocks(
+  loreInject: string,
+  stickerRoundTriggerPercent?: number,
+): string {
+  const stickerCat = resolveStickerCatalogPromptBlockForLore(loreInject, stickerRoundTriggerPercent)
+  const classicCat = buildWechatClassicEmojiCatalogPromptBlock()
+  return classicCat ? `${stickerCat}\n\n${classicCat}` : stickerCat
 }
 
 /** 微信单聊主回复（含思维链解析路径）completion 上限；仍受模型/API 限制 */
@@ -1405,7 +1419,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
   })
   const isLumi = params.promptMode === 'lumi-assistant'
   const busyPrefix = buildBusyPrefix(params.busyContext)
-  const stickerCat = resolveStickerCatalogPromptBlockForLore(
+  const stickerCat = buildWeChatStickerAndClassicEmojiPromptBlocks(
     loreInjectForStickerPolicy,
     params.stickerRoundTriggerPercent,
   )
@@ -1821,7 +1835,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
       : `${imgRulesBase}\n\n${WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_IMAGE_ROUND_HINT}`
   ).replace(/\[角色姓名\]/g, roleName)
   const busyPrefix = buildBusyPrefix(params.busyContext)
-  const stickerCat = resolveStickerCatalogPromptBlockForLore(
+  const stickerCat = buildWeChatStickerAndClassicEmojiPromptBlocks(
     loreInjectForStickerPolicy,
     params.stickerRoundTriggerPercent,
   )
@@ -2676,28 +2690,36 @@ const MEMORY_JSON_OUTPUT_RULE = `
 ${STORY_TIMELINE_SUMMARY_JSON_FIELDS}
 ${MEMORY_BODY_PLACEHOLDER_INSTRUCTION}`.trim()
 
-const MEMORY_SUMMARY_SYSTEM = `
-你是「长期记忆」提取助手。根据用户给出的“本次未总结片段”对话摘录，写出一条可长期沿用的记忆条目，并提炼触发关键词。
+/** 微信线上总结：扁平 JSON，与线下摘要表同构（标题 + 关键词 + 正文），不含 timeline / primary / linked。 */
+const ONLINE_WECHAT_MEMORY_JSON_OUTPUT_RULE = `
+【输出格式】只输出**一个扁平** JSON 对象（禁止 primary/linked 嵌套；禁止 markdown 围栏；禁止 JSON 前后任何解释、分析、思维链或英文段落）。字段如下：
+- "row_title": string，摘要短标题（**4～10 字**；概括本轮聊天主题或情绪转折）
+- "row_keywords": string[]，**必填 3～5 个**检索词（每条 **≤5 个汉字**；如「表白」「定位」「微信」）
+- "content": string，**第三人称**备忘正文（**60～200 字**）；玩家 **{{user}}**、对方 **{{char}}**；**禁止**第一人称「我」；遵守【记忆正文·指称铁律】
+${MEMORY_BODY_PLACEHOLDER_INSTRUCTION}`.trim()
+
+const ONLINE_WECHAT_MEMORY_SUMMARY_SYSTEM = `
+你是「微信线上总结」助手。用户会给出尚未总结的聊天摘录（可能含私聊与/或遇见会话），请写成一条可长期沿用的备忘。
 要求：
-- **全文第三人称**；玩家一律 **{{user}}**，当前私聊对象一律 **{{char}}**；**禁止**第一人称「我」「我的」；不要用材料里的真名/昵称汉字。
-- 只总结本次提供的片段，禁止混入历史记忆、禁止补写片段外剧情。
-- 只阐述可从聊天文本直接核对的事实：谁说了什么、确认了什么、约定了什么、结果怎样。
-- 禁止写“我怎么想/我觉得/我感到”等主观心理活动；禁止写角色未在聊天里明确表达的心理活动。
-- 禁止推断、脑补、升华、鸡汤、文学化修辞、官话套话、空泛评价。
-- 口语化、具体、可回忆，像正常备忘，不要写成分析报告。
-- 不要写「用户说」「对方说」「本轮总结」等元话语。
-- 正文长度以 60～180 字为宜（信息很少时可更短）。
-${MEMORY_JSON_OUTPUT_RULE}
+- **只输出 JSON**，禁止思维链、禁止英文分析、禁止复述字段说明。
+- **全文第三人称**；只总结材料中可直接核对的事实（谁说了什么、确认/约定了什么、结果怎样）。
+- 禁止心理臆测、文学修辞、分析报告口吻；不要写「用户说」「对方说」等元话语。
+- row_title / row_keywords 须从材料提炼，便于日后检索。
+${ONLINE_WECHAT_MEMORY_JSON_OUTPUT_RULE}
 `.trim()
 
 export type MemoryAutoSummaryResult = {
   content: string
+  /** 线上总结短标题（与线下摘要 row_title 同构） */
+  rowTitle?: string
+  /** 线上总结检索词（与线下摘要 row_keywords 同构） */
+  rowKeywords?: string[]
   memoryTriggerCategory?: string
   memoryTriggerPrecise?: string
   memoryTriggerEmotionNeed?: string[]
   /** 对应 JSON 字段 extra_keywords：三维之外至多 2 条补充触发短语，入库时并入 memoryKeywords */
   memorySupplementKeywords?: string[]
-  /** 可选剧情时间轴增量（自动总结 JSON 的 timeline 字段） */
+  /** 可选剧情时间轴增量（仅线下合并总结 JSON 的 timeline 字段） */
   timeline?: StoryTimelineSummaryDelta
 }
 
@@ -2709,8 +2731,34 @@ function finalizeMemorySummaryContent(raw: string): string {
 }
 
 function clampMemorySummaryTriggers(o: MemoryAutoSummaryResult): MemoryAutoSummaryResult {
+  const rowTitle = normalizeStoryTimelineRowTitle(o.rowTitle)
+  const rowKeywords = normalizeStoryTimelineRowKeywords(o.rowKeywords)
+  const resolvedRowKeywords =
+    rowKeywords.length > 0
+      ? rowKeywords
+      : (() => {
+          const legacy: string[] = []
+          const cat = normalizeStoryTimelineRowKeyword(o.memoryTriggerCategory)
+          if (cat) legacy.push(cat)
+          const precise = String(o.memoryTriggerPrecise ?? '')
+            .replace(/\s+/g, '')
+            .trim()
+            .slice(0, 10)
+          if (precise) legacy.push(precise)
+          for (const e of o.memoryTriggerEmotionNeed ?? []) {
+            const t = normalizeStoryTimelineRowKeyword(e)
+            if (t) legacy.push(t)
+          }
+          for (const e of o.memorySupplementKeywords ?? []) {
+            const t = String(e ?? '').replace(/\s+/g, '').trim().slice(0, 16)
+            if (t) legacy.push(t)
+          }
+          return normalizeStoryTimelineRowKeywords(legacy)
+        })()
   return {
     content: finalizeMemorySummaryContent(o.content),
+    ...(rowTitle ? { rowTitle } : {}),
+    ...(resolvedRowKeywords.length ? { rowKeywords: resolvedRowKeywords } : {}),
     memoryTriggerCategory: clampModelMemoryTriggerCategory(o.memoryTriggerCategory),
     memoryTriggerPrecise: clampModelMemoryTriggerPrecise(o.memoryTriggerPrecise),
     memoryTriggerEmotionNeed: clampModelMemoryEmotionNeedList(o.memoryTriggerEmotionNeed),
@@ -2719,28 +2767,75 @@ function clampMemorySummaryTriggers(o: MemoryAutoSummaryResult): MemoryAutoSumma
   }
 }
 
-/** 解析自动总结模型输出（JSON 优先；失败则整段作为 content）。 */
+/** 解析自动总结模型输出（JSON 优先；失败时拒收英文分析/字段泄漏，尽量抽出 content）。 */
 export function parseMemoryAutoSummaryModelOutput(raw: string): MemoryAutoSummaryResult {
   const stripped = stripAssistantFence(String(raw ?? '')).trim()
   const start = stripped.indexOf('{')
   const end = stripped.lastIndexOf('}')
   if (start < 0 || end <= start) {
     return clampMemorySummaryTriggers({
-      content: stripped.replace(/^\s*【[^】]+】\s*/g, '').trim(),
+      content: resolveMemorySummaryContentFromModelRaw(raw),
     })
   }
   try {
     const j = JSON.parse(stripped.slice(start, end + 1)) as Record<string, unknown>
-    const content = String(j.content ?? '').trim().replace(/^\s*【[^】]+】\s*/g, '').trim()
-    const category = typeof j.category === 'string' ? j.category : typeof j.memoryTriggerCategory === 'string' ? j.memoryTriggerCategory : ''
-    const precise = typeof j.precise === 'string' ? j.precise : typeof j.memoryTriggerPrecise === 'string' ? j.memoryTriggerPrecise : ''
-    const emRaw = j.emotion_need ?? j.emotionNeed ?? j.memoryTriggerEmotionNeed
+    const primObj = j.primary
+    const contentSource =
+      primObj && typeof primObj === 'object' && !Array.isArray(primObj)
+        ? (primObj as Record<string, unknown>)
+        : j
+    const content = String(contentSource.content ?? j.content ?? '')
+      .trim()
+      .replace(/^\s*【[^】]+】\s*/g, '')
+      .trim()
+    const category =
+      typeof contentSource.category === 'string'
+        ? contentSource.category
+        : typeof j.category === 'string'
+          ? j.category
+          : typeof j.memoryTriggerCategory === 'string'
+            ? j.memoryTriggerCategory
+            : ''
+    const precise =
+      typeof contentSource.precise === 'string'
+        ? contentSource.precise
+        : typeof j.precise === 'string'
+          ? j.precise
+          : typeof j.memoryTriggerPrecise === 'string'
+            ? j.memoryTriggerPrecise
+            : ''
+    const emRaw =
+      contentSource.emotion_need ??
+      contentSource.emotionNeed ??
+      j.emotion_need ??
+      j.emotionNeed ??
+      j.memoryTriggerEmotionNeed
     const emotion_need = Array.isArray(emRaw) ? emRaw.map((x) => String(x ?? '').trim()).filter(Boolean) : []
-    const exRaw = j.extra_keywords ?? j.extraKeywords ?? j.memorySupplementKeywords
+    const exRaw =
+      contentSource.extra_keywords ??
+      contentSource.extraKeywords ??
+      j.extra_keywords ??
+      j.extraKeywords ??
+      j.memorySupplementKeywords
     const extra_keywords = Array.isArray(exRaw) ? exRaw.map((x) => String(x ?? '').trim()) : []
-    const timeline = parseStoryTimelineSummaryDelta(j.timeline)
+    const rowTitle = normalizeStoryTimelineRowTitle(
+      contentSource.row_title ?? contentSource.rowTitle ?? j.row_title ?? j.rowTitle,
+    )
+    const rowKeywords = normalizeStoryTimelineRowKeywords(
+      contentSource.row_keywords ??
+        contentSource.rowKeywords ??
+        contentSource.keywords ??
+        contentSource.keyword ??
+        j.row_keywords ??
+        j.rowKeywords ??
+        j.keywords ??
+        j.keyword,
+    )
+    const timeline = parseStoryTimelineSummaryDelta(contentSource.timeline ?? j.timeline)
     return clampMemorySummaryTriggers({
-      content: content || stripped.replace(/^\s*【[^】]+】\s*/g, '').trim(),
+      content: resolveMemorySummaryContentFromModelRaw(raw, content),
+      ...(rowTitle ? { rowTitle } : {}),
+      ...(rowKeywords.length ? { rowKeywords } : {}),
       memoryTriggerCategory: category.trim() || undefined,
       memoryTriggerPrecise: precise.trim() || undefined,
       memoryTriggerEmotionNeed: emotion_need.length ? emotion_need : undefined,
@@ -2749,13 +2844,13 @@ export function parseMemoryAutoSummaryModelOutput(raw: string): MemoryAutoSummar
     })
   } catch {
     return clampMemorySummaryTriggers({
-      content: stripped.replace(/^\s*【[^】]+】\s*/g, '').trim(),
+      content: resolveMemorySummaryContentFromModelRaw(raw),
     })
   }
 }
 
 /**
- * 根据近期对话生成一条长期记忆 + 触发关键词（供自动总结入库）。
+ * 微信线上总结：把未总结聊天摘录交给总结模型，输出标题 + 关键词 + 正文（扁平 JSON）。
  */
 export async function requestWeChatMemorySummary(params: {
   apiConfig: ApiConfig | null
@@ -2763,28 +2858,52 @@ export async function requestWeChatMemorySummary(params: {
   /** 当前私聊对象人设 id，用于性别指代附录 */
   peerCharacterId?: string
 }): Promise<MemoryAutoSummaryResult> {
+  return requestSimpleOnlineMemorySummary({
+    apiConfig: params.apiConfig,
+    onlineTranscript: params.transcript,
+    peerCharacterId: params.peerCharacterId,
+  })
+}
+
+/**
+ * 纯线上（微信私聊 / 遇见，无线下约会）自动总结：单次调用、扁平 JSON，不走 primary+linked 合并链路。
+ */
+export async function requestSimpleOnlineMemorySummary(params: {
+  apiConfig: ApiConfig | null
+  onlineTranscript: ChatTranscriptTurn[]
+  meetTranscript?: ChatTranscriptTurn[]
+  peerFallback?: string
+  peerCharacterId?: string
+}): Promise<MemoryAutoSummaryResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
   }
-  const tail = params.transcript.slice(-40)
-  const lines = tail
-    .map((t) => `${t.from === 'self' ? '我' : '对方'}：${String(t.text || '').trim()}`)
-    .filter((s) => s.length > 3)
-  const userBlock = lines.length ? lines.join('\n') : '（无有效对话）'
+  const peer = params.peerFallback?.trim() || '对方'
+  const onlineBlock = formatUnifiedMemoryOnlineBlock(params.onlineTranscript, peer)
+  const meetBlock =
+    params.meetTranscript && params.meetTranscript.length
+      ? formatUnifiedMemoryOnlineBlock(params.meetTranscript, peer)
+      : ''
   const genderAppendix = await buildMemorySummaryPeerGenderAppendix(params.peerCharacterId)
+  const materialParts = [
+    `【微信私聊摘录（未总结）】\n${onlineBlock}`,
+    meetBlock ? `【遇见会话摘录（未总结）】\n${meetBlock}` : '',
+  ].filter(Boolean)
   const messages: OpenAiCompatibleMessage[] = [
-    { role: 'system', content: MEMORY_SUMMARY_SYSTEM },
+    { role: 'system', content: ONLINE_WECHAT_MEMORY_SUMMARY_SYSTEM },
     {
       role: 'user',
       content:
-        `以下是“尚未总结”的对话摘录，请仅基于这段内容生成长期记忆 JSON：\n\n${userBlock}\n\n` +
-        `【指称】摘录标签「我」=玩家、「对方」= {{char}}；写入 JSON 的 content 须**第三人称**：玩家**只许** {{user}}，对方**只许** {{char}}，**禁止**第一人称「我」及真名/昵称汉字。${genderAppendix}`,
+        `以下是尚未总结的线上聊天材料，请**仅**基于下列内容输出扁平 JSON（row_title、row_keywords、content）：\n\n` +
+        `${materialParts.join('\n\n')}\n\n` +
+        `【指称】摘录标签「我」=玩家、「对方」= {{char}}；content 须第三人称：玩家只许 {{user}}，对方只许 {{char}}，禁止第一人称「我」及真名/昵称汉字。${genderAppendix}`,
     },
   ]
   const text = await openAiCompatibleChat(cfg, messages, {
     temperature: 0.35,
-    max_tokens: 720,
+    max_tokens: 900,
+    response_format: 'json_object',
   })
   return parseMemoryAutoSummaryModelOutput(text)
 }
@@ -3750,6 +3869,13 @@ const WECHAT_GROUP_MULTI_SPEAKER_LUMI_RULES = `
 - **正确示例**：\`<<SPEAKER:id>>大人你居然还在笑！\` 换行后 \`<<SPEAKER:id>>[表情包]爷真的服了（无语流汗）\`
 - **禁止** \`emoji:\` / \`emoji：\`、\`表情:\`、\`sticker:\` 等前缀；否则无法匹配资源。
 
+【微信经典黄脸（inline 文字表情）】
+- 可在带 \`<<SPEAKER:…>>\` 的**普通文字行**内写 \`[呲牙]\`、\`[OK]\` 等（名称见《微信经典表情》目录，**逐字一致**）；可与对白混排，也可单独一行只发表情。
+- **不是** \`[表情包]\` GIF 行；不受 GIF 概率限制。松弛对话**宜常带**贴脸黄脸；亲密关系下安慰/情话场景可更自然。
+- **\`[微笑]\` 慎用**：年轻语境常读成「死亡微笑」（冷/无语/略气），非字面开心；默认勿在同龄日常里发，仅长辈/商务/不懂网感人设或真的冷/无语时用。
+- **偏负面黄脸**：\`[裂开]\` \`[尴尬]\` \`[再见]\` \`[擦汗]\` \`[汗]\` \`[便便]\` \`[吐]\` 等通常表负面/无语/尴尬/拒意，勿误判为正面。其他黄脸与 GIF 包多为氛围标点，勿过度解读。
+- 严肃争吵、冷战时仍优先纯文字。
+
 【群助手风纪（剧情向｜非强制）】
 - 群内存在按敏感词拦截的「群助手」：若你人设腹黑、想制造修罗场，**可以**在合理范围内诱导他人在不知情下踩线（仍须服从人设与后果自负的常识）；**禁止**写成对真人用户的恶意骚扰指引。
 
@@ -3877,7 +4003,7 @@ export function buildWeChatGroupMultiSpeakerSystem(params: {
     chatMemberIds: params.chatMemberIds,
     globalWechatPlate: 'group_chat',
   })
-  const stickerCat = resolveStickerCatalogPromptBlockForLore(archiveInject)
+  const stickerCat = buildWeChatStickerAndClassicEmojiPromptBlocks(archiveInject)
   const loreLead = archiveInject ? `${archiveInject}\n\n----------\n` : ''
   const list = params.members
     .map((m) => {

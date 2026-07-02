@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 
-import type { PulseComment, PulseDmThread, PulseInteraction, PulsePost, PulseProfileStats, PulseTrendingTopic } from './pulseTypes'
+import type { PulseComment, PulseDmThread, PulseFollowingUser, PulseInteraction, PulsePost, PulseProfileStats, PulseTrendingTopic } from './pulseTypes'
 import { defaultProfileStats } from './pulseTypes'
+import { getWorldSlice } from './pulseWorldData'
 import { usePulseStore } from './usePulseStore'
 
 const EMPTY_POSTS: PulsePost[] = []
@@ -9,20 +10,23 @@ const EMPTY_COMMENTS: PulseComment[] = []
 const EMPTY_TRENDING: PulseTrendingTopic[] = []
 const EMPTY_INTERACTIONS: PulseInteraction[] = []
 const EMPTY_DM_THREADS: PulseDmThread[] = []
+const EMPTY_FOLLOWING: PulseFollowingUser[] = []
 const DEFAULT_PROFILE_STATS = defaultProfileStats()
 
-function selectAccountPosts(state: ReturnType<typeof usePulseStore.getState>): PulsePost[] {
+/** 当前世界的动态流（各世界完全隔离） */
+function selectWorldPosts(state: ReturnType<typeof usePulseStore.getState>): PulsePost[] {
   const acc = state.currentAccountId
-  if (!acc) return EMPTY_POSTS
-  return state.root.byAccount[acc]?.posts ?? EMPTY_POSTS
+  const pov = state.currentPOVId
+  if (!acc || !pov) return EMPTY_POSTS
+  return state.root.byAccount[acc]?.worldByPov[pov]?.posts ?? EMPTY_POSTS
 }
 
 export function usePulseDiscoverPosts(): PulsePost[] {
-  const posts = usePulseStore(selectAccountPosts)
+  const posts = usePulseStore(selectWorldPosts)
   return useMemo(() => [...posts].sort((a, b) => b.createdAt - a.createdAt), [posts])
 }
 
-/** 首页：关注 = 他人动态；推荐 = 全站 */
+/** 首页：关注 = 他人动态；推荐 = 当前世界全站 */
 export function usePulseHomePosts(
   segment: 'following' | 'recommended',
   currentPovId: string,
@@ -58,16 +62,23 @@ export function usePulseMediaPosts(authorPovId: string): PulsePost[] {
 export function usePulsePostComments(postId: string): PulseComment[] {
   return usePulseStore((s) => {
     const acc = s.currentAccountId
-    if (!acc) return EMPTY_COMMENTS
-    return s.root.byAccount[acc]?.commentsByPostId[postId] ?? EMPTY_COMMENTS
+    const pov = s.currentPOVId
+    if (!acc || !pov) return EMPTY_COMMENTS
+    const account = s.root.byAccount[acc]
+    if (!account) return EMPTY_COMMENTS
+    return getWorldSlice(account, pov).commentsByPostId[postId] ?? EMPTY_COMMENTS
   })
 }
 
+/** 当前世界的热搜榜 */
 export function usePulseTrendingTopics(): PulseTrendingTopic[] {
   const trending = usePulseStore((s) => {
     const acc = s.currentAccountId
-    if (!acc) return EMPTY_TRENDING
-    return s.root.byAccount[acc]?.trending ?? EMPTY_TRENDING
+    const pov = s.currentPOVId
+    if (!acc || !pov) return EMPTY_TRENDING
+    const account = s.root.byAccount[acc]
+    if (!account) return EMPTY_TRENDING
+    return getWorldSlice(account, pov).trending
   })
   return useMemo(() => [...trending].sort((a, b) => a.rank - b.rank), [trending])
 }
@@ -99,4 +110,34 @@ export function usePulseProfileStats(povId: string | null | undefined): PulsePro
     if (!acc || !id) return DEFAULT_PROFILE_STATS
     return s.root.byAccount[acc]?.profileStatsByPov[id] ?? DEFAULT_PROFILE_STATS
   })
+}
+
+/** 当前 POV 的关注列表；无持久化数据时从动态作者推导 */
+export function usePulseFollowingList(povId: string | null | undefined): PulseFollowingUser[] {
+  const resolvedPovId = povId ?? usePulseStore((s) => s.currentPOVId)
+  const stored = usePulseStore((s) => {
+    const acc = s.currentAccountId
+    const id = povId ?? s.currentPOVId
+    if (!acc || !id) return EMPTY_FOLLOWING
+    return s.root.byAccount[acc]?.followingByPov[id] ?? EMPTY_FOLLOWING
+  })
+  const posts = usePulseDiscoverPosts()
+
+  return useMemo(() => {
+    if (stored.length) return stored
+    if (!resolvedPovId) return EMPTY_FOLLOWING
+    const seen = new Set<string>()
+    const derived: PulseFollowingUser[] = []
+    for (const p of posts) {
+      if (p.authorPovId === resolvedPovId || seen.has(p.authorPovId)) continue
+      seen.add(p.authorPovId)
+      derived.push({
+        povId: p.authorPovId,
+        name: p.authorName,
+        avatarUrl: p.authorAvatarUrl,
+        verified: p.verified,
+      })
+    }
+    return derived
+  }, [posts, resolvedPovId, stored])
 }

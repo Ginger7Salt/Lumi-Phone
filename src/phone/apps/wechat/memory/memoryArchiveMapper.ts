@@ -53,7 +53,14 @@ export function resolveMemorySourceIdentity(
 
 export function memorySceneTagsFromRow(m: CharacterMemory): MemorySceneTag[] {
   const parsed = parseMemorySourcePrefix(m.content)
+  const category = String(m.memoryTriggerCategory ?? '').trim()
+  const isDiary =
+    parsed.hasDiaryTag ||
+    category === '日记' ||
+    category === '私密日记' ||
+    m.id.startsWith('diary_')
   const tags: MemorySceneTag[] = []
+  if (isDiary) tags.push('日记')
   if (parsed.hasMomentTag || m.memoryScope === 'moment') tags.push('朋友圈')
   if (parsed.hasMeetTag || m.memoryScope === 'meet') tags.push('遇见')
   if (parsed.hasOnlineTag) tags.push('私聊')
@@ -152,6 +159,7 @@ export function memoryTagsToPrefixFlags(tags: MemorySceneTag[]): ParsedMemoryWit
   const set = new Set(tags)
   return {
     hasMeetTag: set.has('遇见'),
+    hasDiaryTag: set.has('日记'),
     hasOnlineTag: set.has('私聊'),
     hasGroupChatTag: set.has('群聊'),
     hasOfflineTag: set.has('线下'),

@@ -16,6 +16,8 @@ export type MessageItemShellProps = {
   selfAnimated?: boolean
   isRecalled?: boolean
   textFingerprint?: string
+  /** 气泡模版切换时变化，避免 memo 挡住 Telegram / 微信等外观更新 */
+  bubbleSkinKey?: string
   children: ReactNode
   onToggleSelect?: () => void
   isMultiSelectMode?: boolean
@@ -76,6 +78,7 @@ function messageItemShellEqual(a: MessageItemShellProps, b: MessageItemShellProp
     a.selfAnimated === b.selfAnimated &&
     a.isRecalled === b.isRecalled &&
     a.textFingerprint === b.textFingerprint &&
+    a.bubbleSkinKey === b.bubbleSkinKey &&
     a.isMultiSelectMode === b.isMultiSelectMode
   )
 }
@@ -90,6 +93,17 @@ export function chatMsgRenderFingerprint(m: {
   isRecalled?: boolean
   otherAnimated?: boolean
   selfAnimated?: boolean
+  miniGameInvite?: {
+    kind?: string
+    inviteId?: string
+    charResponded?: string
+    userResponded?: string
+    replyText?: string
+    matchResult?: string
+  }
 }): string {
-  return `${m.id}|${m.status ?? ''}|${m.isRecalled ? 1 : 0}|${m.otherAnimated ? 1 : 0}|${m.selfAnimated ? 1 : 0}|${(m.text ?? '').length}`
+  const base = `${m.id}|${m.status ?? ''}|${m.isRecalled ? 1 : 0}|${m.otherAnimated ? 1 : 0}|${m.selfAnimated ? 1 : 0}|${(m.text ?? '').length}`
+  const mg = m.miniGameInvite
+  if (!mg) return base
+  return `${base}|mg:${mg.kind ?? ''}:${mg.inviteId ?? ''}:${mg.charResponded ?? ''}:${mg.userResponded ?? ''}:${mg.matchResult ?? ''}:${(mg.replyText ?? '').slice(0, 48)}`
 }

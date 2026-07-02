@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { Pressable } from '../../components/Pressable'
 import { useCurrentApiConfig } from '../api/ApiSettingsContext'
 import { TrendingItem } from './components/TrendingItem'
+import { PulseWeiboFaceText } from './components/PulseWeiboFaceText'
 import { PULSE_COLORS, PULSE_STAGGER } from './constants'
 import { aiGeneratePulseTrending } from './lumiPulseAi'
 import type { PulseTrendingTopic } from './pulseTypes'
@@ -83,7 +84,7 @@ export function PulseDiscover({
                 >
                   <p className="text-[13px] font-medium text-[#1C1C1E]">{p.authorName}</p>
                   <p className="mt-1 line-clamp-2 font-serif text-[13px] leading-relaxed text-neutral-600">
-                    {p.content}
+                    <PulseWeiboFaceText text={p.content} />
                   </p>
                 </div>
               ))
@@ -96,7 +97,9 @@ export function PulseDiscover({
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-[17px] font-semibold text-[#1C1C1E]">热搜榜</h2>
-                <p className="mt-0.5 text-[11px] tracking-[0.12em] text-neutral-400">实时舆论脉搏</p>
+                <p className="mt-0.5 text-[11px] tracking-[0.12em] text-neutral-400">
+                  {povName}的世界 · 独立舆论场
+                </p>
               </div>
               <Pressable
                 type="button"

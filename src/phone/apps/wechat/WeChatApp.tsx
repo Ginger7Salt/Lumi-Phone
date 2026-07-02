@@ -3664,6 +3664,7 @@ function WeChatAppInner({ onBack }: Props) {
   const [themePanelBoot, setThemePanelBoot] = useState<ThemePanelBoot>({})
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
   const [chatCheckPhoneOpen, setChatCheckPhoneOpen] = useState(false)
+  const [chatMiniGameOverlayOpen, setChatMiniGameOverlayOpen] = useState(false)
   const [psycheRadarOpen, setPsycheRadarOpen] = useState(false)
   const [messagesPlusMenuOpen, setMessagesPlusMenuOpen] = useState(false)
   const [newGroupFromMessagesOpen, setNewGroupFromMessagesOpen] = useState(false)
@@ -4492,6 +4493,13 @@ function WeChatAppInner({ onBack }: Props) {
     }
   }, [wxDockChat, currentAccountId, playerIdentityId, chatRouteIdentityId, activeConversationCharacterId])
 
+  /** 切换聊天对象时先清顶栏输入态，再由当前 ChatRoom 按会话重新上报（勿绑 route.name，否则从列表返回同一会话会误清且 ChatRoom 不会重报） */
+  useEffect(() => {
+    setChatOtherTyping(false)
+    setChatPendingQueueCount(0)
+    setChatOpponentRevealPending(false)
+  }, [activeConversationCharacterId, chatRouteIdentityId])
+
   useEffect(() => {
     setWeChatGlobalMessageGuardState({
       isMessagesTab: messagesListTabActive,
@@ -5004,6 +5012,7 @@ function WeChatAppInner({ onBack }: Props) {
     (route.name === 'tabs' && route.tab === 'discover' && discoverMomentsOpen) ||
     (route.name === 'chat' && chatSettingsOpen) ||
     (route.name === 'chat' && chatCheckPhoneOpen) ||
+    (route.name === 'chat' && chatMiniGameOverlayOpen) ||
     (route.name === 'tabs' && newGroupFromMessagesOpen)
   const activeTabBgFill = useMemo(() => {
     const byTab = wechatTheme.pageBgByTab?.[activeTab as WeChatTabId]
@@ -6178,6 +6187,7 @@ function WeChatAppInner({ onBack }: Props) {
                 psycheRadarOpen={psycheRadarOpen}
                 onPsycheRadarOpenChange={setPsycheRadarOpen}
                 onCheckPhoneOpenChange={setChatCheckPhoneOpen}
+                onMiniGameOverlayOpenChange={setChatMiniGameOverlayOpen}
               />
             )}
           </div>

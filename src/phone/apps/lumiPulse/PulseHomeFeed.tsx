@@ -4,7 +4,7 @@ import { useState } from 'react'
 
 import { Pressable } from '../../components/Pressable'
 import { PostCard } from './components/PostCard'
-import { PULSE_COLORS } from './constants'
+import { PULSE_COLORS, PULSE_TAB_SPRING } from './constants'
 import { PublishEditor } from './PublishEditor'
 import type { PulseHomeSegment } from './pulseTypes'
 import { usePulseHomePosts } from './pulseStoreSelectors'
@@ -20,11 +20,13 @@ export function PulseHomeFeed({
   authorName,
   authorAvatarUrl,
   onOpenPost,
+  onRepostPost,
 }: {
   currentPovId: string
   authorName: string
   authorAvatarUrl?: string
   onOpenPost: (postId: string) => void
+  onRepostPost: (postId: string) => void
 }) {
   const [segment, setSegment] = useState<PulseHomeSegment>('following')
   const [editorOpen, setEditorOpen] = useState(false)
@@ -40,16 +42,19 @@ export function PulseHomeFeed({
               const active = segment === id
               return (
                 <Pressable key={id} type="button" onClick={() => setSegment(id)} className="relative py-2">
-                  <span
+                  <motion.span
+                    animate={{ scale: active ? 1 : 0.96, opacity: active ? 1 : 0.55 }}
+                    transition={PULSE_TAB_SPRING}
                     className={`text-[16px] ${active ? 'font-semibold text-[#1C1C1E]' : 'text-neutral-400'}`}
                   >
                     {label}
-                  </span>
+                  </motion.span>
                   {active ? (
                     <motion.span
                       layoutId="pulse-home-seg"
                       className="absolute inset-x-0 -bottom-0.5 mx-auto h-[2px] w-5 rounded-full"
                       style={{ backgroundColor: PULSE_COLORS.dustyRose }}
+                      transition={PULSE_TAB_SPRING}
                     />
                   ) : null}
                 </Pressable>
@@ -67,24 +72,35 @@ export function PulseHomeFeed({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-28 pt-1">
-          {posts.length ? (
-            posts.map((post) => (
-              <PostCard
-                key={post.id}
-                post={post}
-                currentPovId={currentPovId}
-                onOpen={() => onOpenPost(post.id)}
-                onLike={() => toggleLike(post.id)}
-              />
-            ))
-          ) : (
-            <div className="flex flex-col items-center justify-center px-8 py-24 text-center">
-              <p className="font-serif text-[15px] text-neutral-500">
-                {segment === 'following' ? '关注流尚空' : '推荐流尚空'}
-              </p>
-              <p className="mt-2 text-[12px] text-neutral-400">点击右上角发布，或去发现页演化热搜</p>
-            </div>
-          )}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={segment}
+              initial={{ opacity: 0, x: segment === 'following' ? -12 : 12 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: segment === 'following' ? 12 : -12 }}
+              transition={PULSE_TAB_SPRING}
+            >
+              {posts.length ? (
+                posts.map((post) => (
+                  <PostCard
+                    key={post.id}
+                    post={post}
+                    currentPovId={currentPovId}
+                    onOpen={() => onOpenPost(post.id)}
+                    onLike={() => toggleLike(post.id)}
+                    onRepost={() => onRepostPost(post.id)}
+                  />
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center px-8 py-24 text-center">
+                  <p className="font-serif text-[15px] text-neutral-500">
+                    {segment === 'following' ? '关注流尚空' : '推荐流尚空'}
+                  </p>
+                  <p className="mt-2 text-[12px] text-neutral-400">点击右上角发布，或去发现页演化热搜</p>
+                </div>
+              )}
+            </motion.div>
+          </AnimatePresence>
         </div>
       </div>
 

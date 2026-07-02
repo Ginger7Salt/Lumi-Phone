@@ -17,12 +17,35 @@ export type GameEventType =
   | 'win'
   | 'lose'
 
+/** 五子棋局面反应键（见 gomokuSituation.ts） */
+export type GomokuReactionKey =
+  | 'blockFour'
+  | 'blockWin'
+  | 'playerBlockFour'
+  | 'playerBlockWin'
+  | 'aiOpenFour'
+  | 'aiOpenThree'
+  | 'playerOpenFour'
+  | 'playerMove'
+  | 'brilliant'
+  | 'routine'
+  | 'thinking'
+  | 'firstMove'
+  | 'charFirstMove'
+  | 'drawPlayerFirst'
+  | 'drawCharFirst'
+  | 'win'
+  | 'lose'
+  | 'draw'
+
 export interface GameEvent {
   type: GameEventType
   /** 人类可读细节，如「三连消」「棋盘将满」 */
   detail?: string
   score?: number
   won?: boolean
+  /** 五子棋：预生成台词库索引键 */
+  gomokuKey?: GomokuReactionKey
 }
 
 export type GameEventEmitter = (event: GameEvent) => void

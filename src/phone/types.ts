@@ -170,9 +170,13 @@ export type WeChatChatRoomBg =
   | { mode: 'solid'; color: string }
   | { mode: 'image'; imageUrl: string; fallbackColor: string }
 
+/** 微信聊天室默认壁纸（仓库根 `image/`，开发期由 Vite 中间件提供） */
+export const DEFAULT_WECHAT_CHAT_WALLPAPER_PATH = '/image/聊天壁纸默认1.jpg'
+
 export const DEFAULT_WECHAT_CHAT_ROOM_BG: WeChatChatRoomBg = {
-  mode: 'solid',
-  color: '#EDEDED',
+  mode: 'image',
+  imageUrl: DEFAULT_WECHAT_CHAT_WALLPAPER_PATH,
+  fallbackColor: '#EDEDED',
 }
 
 export type WeChatBubbleTheme = {
@@ -206,6 +210,21 @@ export function wechatBubbleThemesEqual(a: WeChatBubbleTheme, b: WeChatBubbleThe
     a.bubbleTailStyle === b.bubbleTailStyle &&
     a.mergeConsecutiveAvatarGroup === b.mergeConsecutiveAvatarGroup
   )
+}
+
+/** 气泡外观模版指纹：切换 wechat / telegram / imessage 等时用于强制消息行重绘 */
+export function wechatBubbleSkinKey(bubble: WeChatBubbleTheme): string {
+  return [
+    bubble.bubbleTailStyle ?? 'lumi',
+    bubble.showAvatar ? 1 : 0,
+    bubble.showBubbleTail ? 1 : 0,
+    bubble.mergeConsecutiveAvatarGroup ? 1 : 0,
+    bubble.selfBubbleRadiusPx,
+    bubble.otherBubbleRadiusPx,
+    bubble.avatarRadiusPx,
+    bubble.selfBubbleBg,
+    bubble.otherBubbleBg,
+  ].join('|')
 }
 
 export type WeChatTabBarItem = {
@@ -392,8 +411,7 @@ export const DEFAULT_WALLPAPER_URL = publicAssetUrl(DEFAULT_WALLPAPER_PATH)
 /** 主屏桌面图标格数量（4×4 桌面区内的 4×2 图标带） */
 export const DESKTOP_LAYOUT_SLOT_COUNT = 8
 
-/** 微信「信息」列表与聊天会话页默认背景图（放在 `public/image/`，经 {@link publicAssetUrl} 带 base） */
-export const DEFAULT_WECHAT_CHAT_WALLPAPER_PATH = '/image/聊天壁纸默认1.jpg'
+/** 微信「信息」列表与聊天会话页默认背景图（放在 `image/`，经 {@link resolvePublicImageUrl} 解析） */
 export const DEFAULT_WECHAT_CHAT_WALLPAPER_URL = publicAssetUrl(DEFAULT_WECHAT_CHAT_WALLPAPER_PATH)
 
 /** 个人名片默认头像规范路径（写入 localStorage / 人设包用，展示时请 {@link resolvePublicImageUrl}） */

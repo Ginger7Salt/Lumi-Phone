@@ -2,52 +2,90 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { GameCanvas } from './GameCanvas'
 import { GameLobbySheet } from './GameLobbySheet'
+import { GameReadyScreen } from './GameReadyScreen'
+import type { GomokuSessionSetup } from './gomokuReactionBank'
+import type { WeChatMiniGameMatchResult } from '../newFriendsPersona/types'
 import type { MiniGameType } from './types'
 
+export type MiniGameSession = {
+  gameType: MiniGameType
+  inviteId: string
+  userInviteMessageId?: string
+  acceptMessageId?: string
+  preloadedGomokuSetup?: GomokuSessionSetup
+}
+
 export function MiniGameFlow({
-  open,
+  lobbyOpen,
+  session,
   charId,
+  charName,
   avatarUrl,
-  onClose,
+  playerAvatarUrl,
+  conversationKey,
+  onCloseLobby,
+  onSendInvite,
+  onCloseGame,
+  onGameFinished,
 }: {
-  open: boolean
+  lobbyOpen: boolean
+  session: MiniGameSession | null
   charId: string
+  charName?: string
   avatarUrl?: string
-  onClose: () => void
+  playerAvatarUrl?: string
+  conversationKey?: string
+  onCloseLobby: () => void
+  onSendInvite: (game: MiniGameType) => void
+  onCloseGame: () => void
+  onGameFinished?: (params: { inviteId: string; matchResult: WeChatMiniGameMatchResult }) => void
 }) {
-  const [activeGame, setActiveGame] = useState<MiniGameType | null>(null)
-  const [reactionEnabled, setReactionEnabled] = useState(true)
+  const [launchPhase, setLaunchPhase] = useState<'ready' | 'playing'>('ready')
 
   useEffect(() => {
-    if (!open) {
-      setActiveGame(null)
-    }
-  }, [open])
+    if (session) setLaunchPhase('ready')
+  }, [session])
 
-  const handleCloseAll = useCallback(() => {
-    setActiveGame(null)
-    onClose()
-  }, [onClose])
-
-  const handleLaunch = useCallback((game: MiniGameType, reactions: boolean) => {
-    setReactionEnabled(reactions)
-    setActiveGame(game)
+  const handleStartGame = useCallback(() => {
+    setLaunchPhase('playing')
   }, [])
 
-  const showLobby = open && !activeGame
+  const handleSendInvite = useCallback(
+    (game: MiniGameType) => {
+      onSendInvite(game)
+      onCloseLobby()
+    },
+    [onCloseLobby, onSendInvite],
+  )
 
   return (
     <>
-      <GameLobbySheet open={showLobby} onClose={handleCloseAll} onLaunch={handleLaunch} />
-      {activeGame ? (
-        <GameCanvas
-          open={!!activeGame}
-          gameType={activeGame}
-          charId={charId}
-          avatarUrl={avatarUrl}
-          reactionEnabled={reactionEnabled}
-          onClose={() => setActiveGame(null)}
-        />
+      <GameLobbySheet open={lobbyOpen} onClose={onCloseLobby} onSendInvite={handleSendInvite} />
+      {session ? (
+        <>
+          <GameReadyScreen
+            open={launchPhase === 'ready'}
+            gameType={session.gameType}
+            charName={charName}
+            avatarUrl={avatarUrl}
+            playerAvatarUrl={playerAvatarUrl}
+            onClose={onCloseGame}
+            onStartGame={handleStartGame}
+          />
+          <GameCanvas
+            open={launchPhase === 'playing'}
+            gameType={session.gameType}
+            charId={charId}
+            charName={charName}
+            avatarUrl={avatarUrl}
+            playerAvatarUrl={playerAvatarUrl}
+            conversationKey={conversationKey}
+            inviteId={session.inviteId}
+            preloadedGomokuSetup={session.preloadedGomokuSetup}
+            onClose={onCloseGame}
+            onGameFinished={onGameFinished}
+          />
+        </>
       ) : null}
     </>
   )

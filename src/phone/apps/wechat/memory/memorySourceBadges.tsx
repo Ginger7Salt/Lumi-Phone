@@ -10,6 +10,8 @@ export type ParsedMemoryWithSources = {
   hasMeetTag: boolean
   /** 来自微信朋友圈刻录 */
   hasMomentTag: boolean
+  /** 来自私语档案潜意识日记 */
+  hasDiaryTag: boolean
   body: string
 }
 
@@ -22,9 +24,17 @@ export function parseMemorySourcePrefix(raw: string): ParsedMemoryWithSources {
   let hasLinkedOfflineTag = false
   let hasMeetTag = false
   let hasMomentTag = false
+  let hasDiaryTag = false
   if (s.startsWith('[遇见]')) {
     hasMeetTag = true
     s = s.slice('[遇见]'.length)
+  }
+  if (s.startsWith('[私密日记]')) {
+    hasDiaryTag = true
+    s = s.slice('[私密日记]'.length)
+  } else if (s.startsWith('[日记]')) {
+    hasDiaryTag = true
+    s = s.slice('[日记]'.length)
   }
   if (s.startsWith('[私聊]')) {
     hasOnlineTag = true
@@ -50,7 +60,7 @@ export function parseMemorySourcePrefix(raw: string): ParsedMemoryWithSources {
     s = s.slice('[朋友圈]'.length)
   }
   const body = s.replace(/^\s+/, '')
-  return { hasOnlineTag, hasGroupChatTag, hasOfflineTag, hasLinkedOfflineTag, hasMeetTag, hasMomentTag, body }
+  return { hasOnlineTag, hasGroupChatTag, hasOfflineTag, hasLinkedOfflineTag, hasMeetTag, hasMomentTag, hasDiaryTag, body }
 }
 
 /** 按与 `parseMemorySourcePrefix` 相同顺序拼接前缀与正文（用于编辑后写回） */
@@ -62,6 +72,7 @@ type MemorySourcePrefixFlags = Pick<
   | 'hasLinkedOfflineTag'
   | 'hasMeetTag'
   | 'hasMomentTag'
+  | 'hasDiaryTag'
 >
 
 export function composeMemoryWithSourcePrefix(
@@ -70,6 +81,7 @@ export function composeMemoryWithSourcePrefix(
 ): string {
   let s = ''
   if (flags.hasMeetTag) s += '[遇见]'
+  if (flags.hasDiaryTag) s += '[日记]'
   if (flags.hasOnlineTag) s += '[私聊]'
   if (flags.hasGroupChatTag) s += '[群聊]'
   if (flags.hasOfflineTag) s += '[线下]'
@@ -104,6 +116,11 @@ const BADGE_MEET: CSSProperties = {
   color: '#ffffff',
 }
 
+const BADGE_DIARY: CSSProperties = {
+  background: '#d97706',
+  color: '#ffffff',
+}
+
 /** 记忆档案馆页：说明卡片上的来源标签含义 */
 export function MemorySourceLegendStrip({ className }: { className?: string }) {
   const chip = 'inline-block shrink-0 rounded-[6px] px-[6px] py-[2px] text-[10px] font-semibold leading-tight text-white shadow-sm'
@@ -130,6 +147,9 @@ export function MemorySourceLegendStrip({ className }: { className?: string }) {
       <span className={chip} style={{ background: '#374151', color: '#ffffff' }}>
         朋友圈
       </span>
+      <span className={chip} style={BADGE_DIARY}>
+        日记
+      </span>
     </div>
   )
 }
@@ -150,7 +170,7 @@ export function MemoryContentWithSourceBadges({
   /** 正文去标签后为空时的占位（不传则保持空字符串） */
   emptyBodyFallback?: string
 }) {
-  const { hasOnlineTag, hasGroupChatTag, hasOfflineTag, hasLinkedOfflineTag, hasMeetTag, body } =
+  const { hasOnlineTag, hasGroupChatTag, hasOfflineTag, hasLinkedOfflineTag, hasMeetTag, hasDiaryTag, body } =
     parseMemorySourcePrefix(content)
   const sc = size === 'md' ? 'px-2 py-0.5 text-[12px] rounded-md' : 'px-[6px] py-[2px] text-[11px] rounded-[6px]'
 
@@ -207,6 +227,17 @@ export function MemoryContentWithSourceBadges({
         style={BADGE_MEET}
       >
         遇见
+      </span>,
+    )
+  }
+  if (hasDiaryTag) {
+    badges.push(
+      <span
+        key="diary"
+        className={`mr-1 inline-block shrink-0 align-middle font-semibold leading-tight shadow-sm ${sc}`}
+        style={BADGE_DIARY}
+      >
+        日记
       </span>,
     )
   }

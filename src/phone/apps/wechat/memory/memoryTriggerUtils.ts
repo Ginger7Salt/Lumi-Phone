@@ -1,4 +1,5 @@
 import type { CharacterMemory } from '../newFriendsPersona/types'
+import { extractStoryTimelineRowKeywordsFromRowText } from './storyTimelineTypes'
 
 /** 单角色注入时「始终触发」类记忆条数上限，防止 token 失控 */
 export const MEMORY_ALWAYS_INJECT_CAP = 28
@@ -15,7 +16,7 @@ export function trimMemoryTriggerText(raw: string | undefined | null): string | 
 /** 参与「触发词合并」的字段子集（记忆行或自动总结结果均可） */
 export type MemoryTriggerPhraseSource = Pick<
   CharacterMemory,
-  'memoryTriggerCategory' | 'memoryTriggerPrecise' | 'memoryTriggerEmotionNeed' | 'memoryKeywords'
+  'memoryTriggerCategory' | 'memoryTriggerPrecise' | 'memoryTriggerEmotionNeed' | 'memoryKeywords' | 'content'
 >
 
 /**
@@ -35,6 +36,9 @@ export function flattenMemoryTriggerKeywords(m: MemoryTriggerPhraseSource): stri
   push(m.memoryTriggerPrecise)
   for (const e of m.memoryTriggerEmotionNeed ?? []) push(e)
   for (const k of m.memoryKeywords ?? []) push(k)
+  if (!out.length && m.content) {
+    for (const k of extractStoryTimelineRowKeywordsFromRowText(m.content)) push(k)
+  }
   return out
 }
 
@@ -135,6 +139,7 @@ export function buildAutoSummaryMemoryKeywordsBackup(params: {
     memoryTriggerPrecise: params.memoryTriggerPrecise,
     memoryTriggerEmotionNeed: params.memoryTriggerEmotionNeed,
     memoryKeywords: undefined,
+    content: '',
   })
   const seen = new Set(base.map((x) => x.toLowerCase()))
   const out = [...base]

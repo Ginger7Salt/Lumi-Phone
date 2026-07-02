@@ -3,6 +3,7 @@ import { Keyboard, Mic, Paperclip, Plus, Smile } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { Pressable } from '../../../components/Pressable'
 import { wechatChatComposerFontStyle } from '../WeChatChatMixedText'
+import { WeChatComposerField } from '../WeChatComposerField'
 
 const COMPOSER_ROW_CLASS = 'flex min-h-[36px] min-w-0 flex-1 items-center'
 const COMPOSER_SIDE_BTN_CLASS = 'flex h-7 w-7 shrink-0 items-center justify-center text-[#8E8E93]'
@@ -92,6 +93,8 @@ export function ChatInputBar({
   onDraftChange,
   onComposerKeyDown,
   onToggleEmoji,
+  onShowKeyboard,
+  emojiPanelOpen = false,
   onTogglePlus,
   onSend,
 }: {
@@ -107,16 +110,23 @@ export function ChatInputBar({
   planeCanAct: boolean
   plusMenuOpen: boolean
   onToggleInputMode: () => void
-  textareaRef: RefObject<HTMLTextAreaElement | null>
+  textareaRef: RefObject<HTMLDivElement | null>
   onVoicePointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => void
   onVoicePointerMove: (e: ReactPointerEvent<HTMLButtonElement>) => void
   onVoicePointerUp: (e: ReactPointerEvent<HTMLButtonElement>) => void
   onDraftChange: (v: string) => void
-  onComposerKeyDown: (e: ReactKeyboardEvent<HTMLTextAreaElement>) => void
+  onComposerKeyDown: (e: ReactKeyboardEvent<HTMLDivElement>) => void
   onToggleEmoji: () => void
+  /** 表情面板已展开时，点「键盘」收起面板并聚焦输入框 */
+  onShowKeyboard?: () => void
+  emojiPanelOpen?: boolean
   onTogglePlus: () => void
   onSend: () => void
 }) {
+  const onEmojiOrKeyboardClick = () => {
+    if (emojiPanelOpen) onShowKeyboard?.()
+    else onToggleEmoji()
+  }
   const hasDraft = draft.trim().length > 0
   const sendBtnColor =
     layout === 'wechat' || layout === 'imessage' || layout === 'telegram' || layout === 'talkmaker'
@@ -136,11 +146,15 @@ export function ChatInputBar({
           </Pressable>
           <Pressable
             type="button"
-            aria-label="表情"
-            onClick={onToggleEmoji}
+            aria-label={emojiPanelOpen ? '键盘' : '表情'}
+            onClick={onEmojiOrKeyboardClick}
             className="flex h-9 w-9 shrink-0 items-center justify-center text-gray-500"
           >
-            <Smile size={24} strokeWidth={1.5} aria-hidden />
+            {emojiPanelOpen ? (
+              <Keyboard size={24} strokeWidth={1.5} aria-hidden />
+            ) : (
+              <Smile size={24} strokeWidth={1.5} aria-hidden />
+            )}
           </Pressable>
           <div className="flex min-h-[36px] min-w-0 flex-1 items-center rounded-full bg-[#F2F2F2] px-4 py-1.5">
             {inputMode === 'voice' ? (
@@ -158,15 +172,14 @@ export function ChatInputBar({
               </motion.button>
             ) : (
               <>
-                <textarea
+                <WeChatComposerField
                   ref={textareaRef}
                   className={COMPOSER_TEXT_CLASS}
                   style={composerTextareaStyle(96)}
                   placeholder="发送消息..."
                   aria-label="输入消息"
-                  rows={1}
                   value={draft}
-                  onChange={(e) => onDraftChange(e.target.value)}
+                  onChange={onDraftChange}
                   onKeyDown={onComposerKeyDown}
                 />
                 <Pressable
@@ -224,24 +237,27 @@ export function ChatInputBar({
           </motion.button>
         ) : (
           <div className={telegramComposerRowClass}>
-            <textarea
+            <WeChatComposerField
               ref={textareaRef}
               className={COMPOSER_TEXT_CLASS}
               style={composerTextareaStyle(128)}
               placeholder="Message"
               aria-label="输入消息"
-              rows={1}
               value={draft}
-              onChange={(e) => onDraftChange(e.target.value)}
+              onChange={onDraftChange}
               onKeyDown={onComposerKeyDown}
             />
             <Pressable
               type="button"
-              aria-label="表情"
-              onClick={onToggleEmoji}
+              aria-label={emojiPanelOpen ? '键盘' : '表情'}
+              onClick={onEmojiOrKeyboardClick}
               className={`ml-2 ${telegramActionBtnClass} text-[#8E8E93]`}
             >
-              <Smile size={24} strokeWidth={1.5} aria-hidden />
+              {emojiPanelOpen ? (
+                <Keyboard size={24} strokeWidth={1.5} aria-hidden />
+              ) : (
+                <Smile size={24} strokeWidth={1.5} aria-hidden />
+              )}
             </Pressable>
           </div>
         )}
@@ -314,21 +330,24 @@ export function ChatInputBar({
           >
             <Pressable
               type="button"
-              aria-label="表情"
-              onClick={onToggleEmoji}
+              aria-label={emojiPanelOpen ? '键盘' : '表情'}
+              onClick={onEmojiOrKeyboardClick}
               className={`mr-2 ${COMPOSER_SIDE_BTN_CLASS}`}
             >
-              <Smile size={24} strokeWidth={1.5} aria-hidden />
+              {emojiPanelOpen ? (
+                <Keyboard size={24} strokeWidth={1.5} aria-hidden />
+              ) : (
+                <Smile size={24} strokeWidth={1.5} aria-hidden />
+              )}
             </Pressable>
-            <textarea
+            <WeChatComposerField
               ref={textareaRef}
               className={COMPOSER_TEXT_CLASS}
               style={composerTextareaStyle(96)}
               placeholder="iMessage"
               aria-label="输入消息"
-              rows={1}
               value={draft}
-              onChange={(e) => onDraftChange(e.target.value)}
+              onChange={onDraftChange}
               onKeyDown={onComposerKeyDown}
             />
             <Pressable
@@ -404,7 +423,7 @@ export function ChatInputBar({
         </div>
       ) : (
         <div data-wx-chat-input-shell className={wechatComposerShellClass} style={wechatComposerShellStyle}>
-          <textarea
+          <WeChatComposerField
             ref={textareaRef}
             className="min-h-[24px] min-w-0 flex-1 resize-none bg-transparent text-[15px] leading-6 outline-none"
             style={{
@@ -414,9 +433,8 @@ export function ChatInputBar({
             }}
             placeholder=""
             aria-label="输入消息"
-            rows={1}
             value={draft}
-            onChange={(e) => onDraftChange(e.target.value)}
+            onChange={onDraftChange}
             onKeyDown={onComposerKeyDown}
           />
         </div>
@@ -424,12 +442,16 @@ export function ChatInputBar({
 
       <Pressable
         type="button"
-        aria-label="表情"
-        onClick={onToggleEmoji}
+        aria-label={emojiPanelOpen ? '键盘' : '表情'}
+        onClick={onEmojiOrKeyboardClick}
         className={wechatSideBtnClass}
         style={wechatSideBtnStyle}
       >
-        <Smile size={28} strokeWidth={1.8} aria-hidden />
+        {emojiPanelOpen ? (
+          <Keyboard size={28} strokeWidth={1.8} aria-hidden />
+        ) : (
+          <Smile size={28} strokeWidth={1.8} aria-hidden />
+        )}
       </Pressable>
 
       <Pressable
@@ -493,7 +515,7 @@ export function ChatInputBar({
           按住说话
         </motion.button>
       ) : (
-        <textarea
+        <WeChatComposerField
           ref={textareaRef}
           data-wx-chat-input-shell
           className="min-h-[44px] min-w-0 flex-1 resize-none text-[16px] leading-snug outline-none"
@@ -508,21 +530,24 @@ export function ChatInputBar({
           }}
           placeholder="输入消息..."
           aria-label="输入消息"
-          rows={1}
           value={draft}
-          onChange={(e) => onDraftChange(e.target.value)}
+          onChange={onDraftChange}
           onKeyDown={onComposerKeyDown}
         />
       )}
 
       <Pressable
         type="button"
-        aria-label="表情"
-        onClick={onToggleEmoji}
+        aria-label={emojiPanelOpen ? '键盘' : '表情'}
+        onClick={onEmojiOrKeyboardClick}
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
         style={{ color: btnColor }}
       >
-        <Smile size={btnPx} strokeWidth={2} aria-hidden />
+        {emojiPanelOpen ? (
+          <Keyboard size={btnPx} strokeWidth={2} aria-hidden />
+        ) : (
+          <Smile size={btnPx} strokeWidth={2} aria-hidden />
+        )}
       </Pressable>
       <Pressable
         type="button"

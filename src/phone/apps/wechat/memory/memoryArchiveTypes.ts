@@ -4,7 +4,7 @@ import type { MomentMemoryPayload } from '../newFriendsPersona/types'
 /** 三大身份来源：主号微信 / 副号微信 / 遇见 */
 export type MemorySourceIdentity = 'main_wechat' | 'sub_wechat' | 'lumi_meet'
 
-export type MemorySceneTag = '私聊' | '群聊' | '线下' | '关联线下' | '遇见' | '朋友圈'
+export type MemorySceneTag = '私聊' | '群聊' | '线下' | '关联线下' | '遇见' | '朋友圈' | '日记'
 
 export type MemoryTriggerType = 'always' | 'keyword'
 
@@ -83,6 +83,7 @@ export const MEMORY_SCENE_FILTER_OPTIONS: ReadonlyArray<{
   label: string
 }> = [
   { id: '私聊', label: '私聊' },
+  { id: '日记', label: '日记' },
   { id: '群聊', label: '群聊' },
   { id: '朋友圈', label: '朋友圈' },
   { id: '遇见', label: '遇见应用' },

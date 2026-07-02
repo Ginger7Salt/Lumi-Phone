@@ -4,6 +4,7 @@ import {
   WB_ITEM_GEN_DEFAULT_CHARS,
   WB_ITEM_GEN_MAX_CHARS,
   WB_ITEM_GEN_MIN_CHARS,
+  WB_ITEM_GEN_TARGET_STORAGE_KEY,
   clampWbItemGenTargetChars,
 } from './worldBookItemGenConstants'
 
@@ -19,13 +20,33 @@ export function WorldBookItemGenLengthModal({ open, onClose, onConfirm }: Props)
   const [draft, setDraft] = useState(String(WB_ITEM_GEN_DEFAULT_CHARS))
 
   useEffect(() => {
-    if (open) setDraft(String(WB_ITEM_GEN_DEFAULT_CHARS))
+    if (!open) return
+    try {
+      const saved = sessionStorage.getItem(WB_ITEM_GEN_TARGET_STORAGE_KEY)
+      const parsed = Number(String(saved ?? '').replace(/\s/g, ''))
+      if (Number.isFinite(parsed) && parsed >= WB_ITEM_GEN_MIN_CHARS) {
+        setDraft(String(clampWbItemGenTargetChars(parsed)))
+        return
+      }
+    } catch {
+      /* ignore */
+    }
+    setDraft(String(WB_ITEM_GEN_DEFAULT_CHARS))
   }, [open])
 
   if (!open) return null
 
   const parsed = Number(draft.replace(/\s/g, ''))
   const fromInput = clampWbItemGenTargetChars(Number.isFinite(parsed) ? parsed : WB_ITEM_GEN_DEFAULT_CHARS)
+
+  const confirmWith = (targetChineseChars: number) => {
+    try {
+      sessionStorage.setItem(WB_ITEM_GEN_TARGET_STORAGE_KEY, String(targetChineseChars))
+    } catch {
+      /* ignore */
+    }
+    onConfirm(targetChineseChars)
+  }
 
   return (
     <div
@@ -76,7 +97,7 @@ export function WorldBookItemGenLengthModal({ open, onClose, onConfirm }: Props)
           <button
             type="button"
             onClick={() => {
-              onConfirm(WB_ITEM_GEN_DEFAULT_CHARS)
+              confirmWith(WB_ITEM_GEN_DEFAULT_CHARS)
             }}
             className="order-2 flex-1 rounded-[12px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-2.5 text-[13px] text-[#111] transition-colors hover:bg-[#f0f0f0]"
           >
@@ -84,7 +105,7 @@ export function WorldBookItemGenLengthModal({ open, onClose, onConfirm }: Props)
           </button>
           <button
             type="button"
-            onClick={() => onConfirm(fromInput)}
+            onClick={() => confirmWith(fromInput)}
             className="order-1 flex-1 rounded-[12px] bg-[#111] px-4 py-2.5 text-[13px] font-medium text-white transition-colors hover:bg-[#000] sm:order-3"
           >
             按填写字数生成

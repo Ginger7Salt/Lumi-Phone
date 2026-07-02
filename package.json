@@ -20,6 +20,7 @@
     "react-easy-crop": "^5.5.7",
     "react-router-dom": "^7.14.0",
     "react-textarea-autosize": "^8.5.9",
+    "wechat-emojis": "^1.0.2",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

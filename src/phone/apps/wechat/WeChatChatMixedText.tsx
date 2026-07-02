@@ -5,6 +5,7 @@ import {
   isPhoneLatinTextToken,
   splitPhoneMixedLatinNumText,
 } from '../../phoneMixedLatinNumText'
+import { getWechatClassicEmojiUrlByName } from './stickers/wechatClassicStickerPack'
 
 /** 聊天室英文与数字：Corbel Light（Windows 系统字体，其他平台回退 Corbel / sans-serif） */
 export const WECHAT_CHAT_LATIN_NUM_FONT_FAMILY = '"Corbel Light", Corbel, sans-serif'
@@ -16,14 +17,45 @@ export const WECHAT_CHAT_LATIN_NUM_STYLE: CSSProperties = {
 
 const URL_INLINE_RE = /https?:\/\/[^\s<>"')\]}，。；、]+/gi
 
+const WECHAT_CLASSIC_EMOJI_INLINE_STYLE: CSSProperties = {
+  display: 'inline-block',
+  width: 22,
+  height: 22,
+  verticalAlign: 'text-bottom',
+  objectFit: 'contain',
+}
+
+const WECHAT_CLASSIC_EMOJI_BRACKET_RE = /\[([^\[\]\n]{1,24})\]/g
+
+type TextSegment = { kind: 'url' | 'text'; value: string }
+type MixedSegment = { kind: 'url' | 'text' | 'emoji'; value: string; emojiUrl?: string }
+
+function splitTextWithWechatClassicEmojis(text: string): MixedSegment[] {
+  const emojiMap = getWechatClassicEmojiUrlByName()
+  const out: MixedSegment[] = []
+  let last = 0
+  for (const m of text.matchAll(WECHAT_CLASSIC_EMOJI_BRACKET_RE)) {
+    const idx = m.index ?? 0
+    const name = String(m[1] ?? '').trim()
+    const url = name ? emojiMap.get(name) : undefined
+    if (!url) continue
+    if (idx > last) out.push({ kind: 'text', value: text.slice(last, idx) })
+    out.push({ kind: 'emoji', value: name, emojiUrl: url })
+    last = idx + m[0]!.length
+  }
+  if (last < text.length) out.push({ kind: 'text', value: text.slice(last) })
+  if (!out.length) out.push({ kind: 'text', value: text })
+  return out
+}
+
 const URL_SPAN_STYLE: CSSProperties = {
   ...WECHAT_CHAT_LATIN_NUM_STYLE,
   wordBreak: 'break-all',
   overflowWrap: 'anywhere',
 }
 
-function splitTextAndUrls(text: string): Array<{ kind: 'url' | 'text'; value: string }> {
-  const out: Array<{ kind: 'url' | 'text'; value: string }> = []
+function splitTextAndUrls(text: string): TextSegment[] {
+  const out: TextSegment[] = []
   let last = 0
   for (const m of text.matchAll(URL_INLINE_RE)) {
     const idx = m.index ?? 0
@@ -48,6 +80,23 @@ function renderMixedChunk(chunk: string, keyPrefix: string) {
       )
     }
     return <span key={`${keyPrefix}-${index}`}>{part}</span>
+  })
+}
+
+function renderTextWithClassicEmojis(text: string, keyPrefix: string) {
+  return splitTextWithWechatClassicEmojis(text).map((seg, index) => {
+    if (seg.kind === 'emoji' && seg.emojiUrl) {
+      return (
+        <img
+          key={`${keyPrefix}-wx-${index}`}
+          src={seg.emojiUrl}
+          alt={`[${seg.value}]`}
+          style={WECHAT_CLASSIC_EMOJI_INLINE_STYLE}
+          draggable={false}
+        />
+      )
+    }
+    return <span key={`${keyPrefix}-txt-${index}`}>{renderMixedChunk(seg.value, `${keyPrefix}-${index}`)}</span>
   })
 }
 
@@ -84,7 +133,7 @@ export function WeChatChatMixedText({
               </span>
             )
           }
-          return <span key={`txt-${index}`}>{seg.value}</span>
+          return <span key={`txt-${index}`}>{renderTextWithClassicEmojis(seg.value, `txt-${index}`)}</span>
         })}
       </span>
     )
@@ -99,7 +148,7 @@ export function WeChatChatMixedText({
             </span>
           )
         }
-        return <span key={`txt-${index}`}>{renderMixedChunk(seg.value, `txt-${index}`)}</span>
+        return <span key={`txt-${index}`}>{renderTextWithClassicEmojis(seg.value, `txt-${index}`)}</span>
       })}
     </span>
   )

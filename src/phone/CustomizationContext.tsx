@@ -17,6 +17,7 @@ import {
   DEFAULT_CUSTOMIZATION,
   DEFAULT_PERSONAL_CARD_BG_PATH,
   DEFAULT_PERSONAL_CARD_PROFILE,
+  DEFAULT_WECHAT_CHAT_ROOM_BG,
   PHONE_NUM_FONT_FAMILY,
   DEFAULT_PUBLIC_AVATAR_PATH,
   DEFAULT_WECHAT_MIRROR_PROFILE,
@@ -255,14 +256,20 @@ function normalizeWeChatTheme(parsed: unknown): WeChatTheme {
     if (!b || typeof b !== 'object') return fallback
     const r = b as Partial<WeChatChatRoomBg>
     if (r.mode === 'image') {
+      const imageUrl = migrateLegacyRootPublicUrl(pick(r.imageUrl, fallback.mode === 'image' ? fallback.imageUrl : ''))
       return {
         mode: 'image',
-        imageUrl: migrateLegacyRootPublicUrl(pick(r.imageUrl, fallback.mode === 'image' ? fallback.imageUrl : '')),
+        imageUrl,
         fallbackColor: pick(r.fallbackColor, fallback.mode === 'image' ? fallback.fallbackColor : '#EDEDED'),
       }
     }
     if (r.mode === 'solid') {
-      return { mode: 'solid', color: pick(r.color, fallback.mode === 'solid' ? fallback.color : '#EDEDED') }
+      const color = pick(r.color, fallback.mode === 'solid' ? fallback.color : '#EDEDED')
+      // 迁移：旧版默认纯灰底 → 简约灰蓝配套的默认聊天壁纸
+      if (color === '#EDEDED' || color === '#ededed') {
+        return { ...DEFAULT_WECHAT_CHAT_ROOM_BG }
+      }
+      return { mode: 'solid', color }
     }
     return fallback
   }

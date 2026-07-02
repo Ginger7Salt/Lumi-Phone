@@ -3,6 +3,7 @@ import { BookOpen, ChevronDown, Link2, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiConfig } from '../../api/types'
 import { generateWorldBookItemContent } from './ai'
+import { approximateChineseTextLength } from './worldBookItemGenConstants'
 import { LoreEntryEditorSheet } from './LoreEntryEditorSheet'
 import { PlatinumSwitch } from './PlatinumSwitch'
 import type { Character, PlayerIdentity, WorldBook, WorldBookItem } from './types'
@@ -633,6 +634,11 @@ export function WorldBooksEditor({
                 content: sync.content,
                 userPlaceholderBindings: sync.bindings,
               })
+              if (approximateChineseTextLength(sync.content) < Math.floor(targetChineseChars * 0.55)) {
+                window.alert(
+                  `生成结果约 ${approximateChineseTextLength(sync.content)} 字，低于目标 ${targetChineseChars} 字。可能是模型或线路截断，请点「编辑」查看全文后重试，或换更稳定的聊天模型。`,
+                )
+              }
             } finally {
               setGeneratingKey('')
             }

@@ -1,4 +1,8 @@
 import type { PulsePersistedRoot } from './pulseTypes'
+import { phoneNumStyle } from '../../types'
+
+/** 微博数字字体（与全站 --phone-num-font 一致） */
+export const PULSE_NUM_STYLE = phoneNumStyle
 
 export const LUMI_PULSE_KV_KEY = 'lumi-pulse-persist-v1'
 
@@ -39,10 +43,22 @@ export const PULSE_LIKE_SPRING = {
   mass: 0.6,
 }
 
+/** Tab 切换物理弹性 */
+export const PULSE_TAB_SPRING = {
+  type: 'spring' as const,
+  stiffness: 460,
+  damping: 32,
+  mass: 0.75,
+}
+
 export const PULSE_STAGGER = {
   staggerChildren: 0.05,
   delayChildren: 0.04,
 }
+
+/** 个人主页封面图（Unsplash 宽幅风景） */
+export const PULSE_DEFAULT_COVER =
+  'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=900&q=80&auto=format&fit=crop'
 
 export const DEFAULT_PULSE_ROOT: PulsePersistedRoot = {
   version: 1,

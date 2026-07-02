@@ -1,7 +1,8 @@
 import { motion } from 'framer-motion'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { Pressable } from '../../components/Pressable'
+import { PulseWeiboFacePicker } from './components/PulseWeiboFacePicker'
 import { PULSE_COLORS, PULSE_MODAL_SPRING } from './constants'
 import { usePulseStore } from './usePulseStore'
 
@@ -19,7 +20,13 @@ export function PublishEditor({
   onPublished: () => void
 }) {
   const [text, setText] = useState('')
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const publishPost = usePulseStore((s) => s.publishPost)
+
+  const insertFace = (token: string) => {
+    setText((prev) => `${prev}${token}`)
+    textareaRef.current?.focus()
+  }
 
   const submit = () => {
     const content = text.trim()
@@ -55,15 +62,19 @@ export function PublishEditor({
       </header>
       <div className="flex flex-1 flex-col px-4 pt-5">
         <textarea
+          ref={textareaRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="此刻想说…"
           className="min-h-[40vh] w-full flex-1 resize-none bg-transparent font-serif text-[17px] leading-relaxed text-[#1C1C1E] outline-none placeholder:text-neutral-300"
           autoFocus
         />
-        <p className="pb-4 text-[11px] text-neutral-400" style={{ color: PULSE_COLORS.muted }}>
-          脉冲 · 以衬线体记录每一次呼吸
-        </p>
+        <div className="flex items-center gap-2 pb-4">
+          <PulseWeiboFacePicker onPick={insertFace} />
+          <p className="text-[11px] text-neutral-400" style={{ color: PULSE_COLORS.muted }}>
+            支持微博专属表情 · [doge][允悲] 等
+          </p>
+        </div>
       </div>
     </motion.div>
   )

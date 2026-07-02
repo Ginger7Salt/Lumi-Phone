@@ -725,6 +725,59 @@ export type WeChatMusicSyncPayload =
   | WeChatMusicSyncAcceptPayload
   | WeChatMusicSyncDeclinePayload
 
+/** 小游戏邀约 / 回应卡片（持久化于 chatMessages.miniGameInvite） */
+export type WeChatMiniGameMatchResult = 'player_win' | 'char_win' | 'draw'
+
+export type WeChatMiniGameInvitePayload = {
+  kind: 'game_invite'
+  inviteId: string
+  gameType: string
+  gameTitle: string
+  reactionEnabled: boolean
+  /** 用户发起邀约：角色接受/拒绝 */
+  charResponded?: 'accepted' | 'declined'
+  /** 角色发起邀约：用户接受/拒绝 */
+  userResponded?: 'accepted' | 'declined'
+  /** 角色邀约卡附带的口语收束（写入 transcript） */
+  replyText?: string
+  /** 角色邀约五子棋时可预置对局配置 */
+  gomokuSession?: WeChatGomokuSessionPayload
+  matchResult?: WeChatMiniGameMatchResult
+}
+
+/** 五子棋对局预生成配置（角色接受邀约时由模型输出，开局复用） */
+export type WeChatGomokuSessionPayload = {
+  difficulty: number
+  thinkDelayMinMs: number
+  thinkDelayMaxMs: number
+  gameStartLines: string[]
+  bank: Record<string, string[]>
+}
+
+export type WeChatMiniGameAcceptPayload = {
+  kind: 'game_accept'
+  inviteId: string
+  replyText: string
+  gameType: string
+  gameTitle: string
+  reactionEnabled: boolean
+  gomokuSession?: WeChatGomokuSessionPayload
+  matchResult?: WeChatMiniGameMatchResult
+}
+
+export type WeChatMiniGameDeclinePayload = {
+  kind: 'game_decline'
+  inviteId: string
+  replyText: string
+  gameType: string
+  gameTitle: string
+}
+
+export type WeChatMiniGamePayload =
+  | WeChatMiniGameInvitePayload
+  | WeChatMiniGameAcceptPayload
+  | WeChatMiniGameDeclinePayload
+
 export type WeChatLocationCoordSpace = 'world' | 'wgs84'
 
 export type WeChatLocationCharacterAnchor = 'psyche' | 'world_pin' | 'manual' | 'unknown'
@@ -941,6 +994,8 @@ export type WeChatChatMessage = {
   voice?: WeChatVoicePayload
   /** 同频共听邀约 / 接受 / 拒绝卡片 */
   musicSync?: WeChatMusicSyncPayload
+  /** 小游戏邀约 / 接受 / 拒绝卡片 */
+  miniGameInvite?: WeChatMiniGamePayload
   /** 听一听评论分享卡片 */
   listenCommentShare?: WeChatListenCommentSharePayload
   listenProfileShare?: WeChatListenProfileSharePayload
