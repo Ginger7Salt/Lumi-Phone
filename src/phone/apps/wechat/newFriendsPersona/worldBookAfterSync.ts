@@ -22,7 +22,7 @@ import {
   buildWorldBookAfterPatchRowsFromSingleCharacter,
   syncAutoSummaryEpilogueToLastMemoryTrace,
 } from '../memoryTracePublisher'
-import { buildEpilogueExtensionArchiveToneRules } from './epilogueExtensionToneRules'
+import { buildEpilogueExtensionArchiveToneRules, sanitizeEpilogueExtensionNewContent } from './epilogueExtensionToneRules'
 
 export type WorldBookAfterSyncSource = 'auto_summary' | 'per_round'
 
@@ -64,6 +64,7 @@ function buildWorldBookAfterSyncSystemPrompt(): string {
 - **应更新**：条目仍写「冷漠/疏离」但近几轮已明显缓和；称呼、边界、内心分量出现**可核对**的渐变或跃迁；关系阶段（同事→暧昧等）有实质推进。
 - **勿更新**：单轮嘴硬/玩笑/情绪波动，尚不足以改写长期快照；与当前条目仍兼容的细微语气变化。
 - **勿凑数**：无实质变化则 patches 为 []。
+- **勿极端化**：禁止把普通亲近/查岗玩笑写成宿命、绝对排他、交手机示弱、日常顺从等偏执献身稿；{{char}} 须保持独立个体。
 - 优先更新「对 {{user}} 的当前态度」；其它条目仅在材料中有明确对应事实时更新。
 - newContent 须仍为第三人称档案体「尾声延展」语义；指角色本人用 {{char}}，指玩家用 {{user}}；禁止第一人称台词。
 - 仅可修改上文已列出的 worldBookId/itemId；禁止编造 id。
@@ -93,6 +94,7 @@ function buildWorldBookAfterPerRoundSystemPrompt(): string {
 - **应更新**：条目仍写「冷漠/疏离」但本轮已明显缓和；称呼、边界、内心分量出现**可核对**的渐变或跃迁；关系阶段有实质推进。
 - **勿更新**：单轮嘴硬/玩笑/情绪波动，尚不足以改写长期快照；与当前条目仍兼容的细微语气变化。
 - **勿凑数**：无实质变化则 patches 为 []。
+- **勿极端化**：禁止把普通亲近/查岗玩笑写成宿命、绝对排他、交手机示弱、日常顺从等偏执献身稿；{{char}} 须保持独立个体。
 - 勿根据「以往可能发生过」臆造；仅依据用户给出的本轮正文。
 - newContent 须仍为第三人称档案体「尾声延展」语义；指角色本人用 {{char}}，指玩家用 {{user}}；禁止第一人称台词。
 - 仅可修改上文已列出的 worldBookId/itemId；禁止编造 id。
@@ -486,7 +488,9 @@ function normalizePatchFromSummaryJson(raw: unknown): WorldBookAfterPatch | null
   const o = raw as Record<string, unknown>
   const worldBookId = String(o.worldBookId ?? o.world_book_id ?? '').trim()
   const itemId = String(o.itemId ?? o.item_id ?? '').trim()
-  const newContent = String(o.newContent ?? o.new_content ?? '').trim()
+  const newContent = sanitizeEpilogueExtensionNewContent(
+    String(o.newContent ?? o.new_content ?? '').trim(),
+  )
   const characterId = String(o.characterId ?? o.character_id ?? '').trim() || undefined
   if (!worldBookId || !itemId || !newContent) return null
   return { characterId, worldBookId, itemId, newContent }

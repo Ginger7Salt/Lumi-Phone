@@ -440,6 +440,7 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
         replyBias,
         includeThinkingChain: activeRow.showThinkingChain === true,
         includeForwardHistoryCard: activeRow.forwardHistoryCardEnabled === true,
+        includePulseDmScreenshot: activeRow.pulseDmScreenshotEnabled === true,
         includeProfileImageChange: activeRow.profileImageChangeEnabled === true,
         includeInternetMemeLexicon: activeRow.internetMemeLexiconEnabled === true,
         currentTimeMs: gameNowForRound,

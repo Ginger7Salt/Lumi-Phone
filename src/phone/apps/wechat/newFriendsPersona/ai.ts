@@ -1,5 +1,8 @@
 import { buildPersonaAiHealthyToneRules } from './personaAiGeneratePrompt'
-import { PERSONA_AI_AFFECTION_GUIDE_EPILOGUE_NAME } from './personaAiWorldBooks'
+import {
+  PERSONA_AI_AFFECTION_GUIDE_EPILOGUE_NAME,
+  PERSONA_AI_NPC_ROSTER_ENTRY_NAME,
+} from './personaAiWorldBooks'
 import type { Character, PlayerIdentity, WorldBook, WorldBookItem } from './types'
 import { genderLabelZh } from './utils'
 import { formatWorldBookItemLineForPrompt, worldBookPronounGuideAnnotation } from './worldBookPronounGuide'
@@ -903,7 +906,12 @@ export async function openAiCompatibleChatLenient(
 export async function openAiCompatibleChat(
   cfg: ApiConfig,
   messages: OpenAiCompatibleMessage[],
-  options?: { temperature?: number; max_tokens?: number; response_format?: 'json_object' },
+  options?: {
+    temperature?: number
+    max_tokens?: number
+    response_format?: 'json_object'
+    signal?: AbortSignal
+  },
 ): Promise<string> {
   // 文本链路也兼容 Gemini 原生 generateContent（避免 `contents is required`）
   if (isGeminiGenerateContentUrl(cfg.apiUrl)) {
@@ -939,6 +947,7 @@ export async function openAiCompatibleChat(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: options?.signal,
     })
     const data: unknown = await readFetchJsonBody(resp)
     if (!resp.ok) {
@@ -971,6 +980,7 @@ export async function openAiCompatibleChat(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal: options?.signal,
   })
   const data: unknown = await readFetchJsonBody(resp)
   if (!resp.ok) {
@@ -1195,38 +1205,50 @@ export async function generateWorldBookItemContent(params: {
       : ''
 
   const userChatMannerExtra =
-    !forId && /对你现在|当前对你的态度/.test(params.worldBook.name) && /称呼|聊天分寸/.test(params.item.name)
-      ? `【本条特殊要求】本条目**只写** {{char}} 对 {{user}} 的称呼、回消息节奏、emoji/语音偏好、会不会主动找话题等**专属聊天分寸**；勿重复 vol08「口语与口头禅」里的通用口语习惯。\n`
+    !forId &&
+    (/对你现在/.test(params.item.name) ||
+      (/当前对你的态度/.test(params.worldBook.name) && /称呼|聊天分寸/.test(params.item.name)))
+      ? `【本条特殊要求】「对你现在」须写清对 {{user}} 的称呼、回消息节奏、相处边界与心里分量；心里分量必须与档案关系设定一致。若关系为低投入/不咋在意，禁止写成潜在好感、嘴硬心软或暗中关注。勿重复「能力与日常」里的通用口语习惯。\n`
       : ''
 
   const generalSpeechExtra =
-    !forId && /口语与口头禅|口语习惯|口头禅/.test(params.item.name)
-      ? `【本条特殊要求】本条目写 {{char}} **本人**的通用口语习惯、口头禅、用词节奏与语气（对谁都差不多）；须含 2–4 条可直接引用的引语示例（英文半角双引号）。**禁止**写对 {{user}} 的专属称呼、回消息节奏、暧昧分寸或「只对 TA 怎样说话」——那些只属于 vol10「对你现在」里「对 {{user}} 的称呼与聊天分寸」。\n`
+    !forId && /能力与日常|口语与口头禅|口语习惯|口头禅/.test(params.item.name)
+      ? `【本条特殊要求】本条目写 {{char}} **本人**的通用口语习惯、口头禅、用词节奏与语气；须含 2–4 条可直接引用的引语示例（英文半角双引号）。**禁止**写对 {{user}} 的专属称呼/回消息分寸——那些只属于「对你现在」。\n`
       : ''
 
   const intimateSpeechExtra =
-    !forId && /亲密口语习惯/.test(params.item.name)
-      ? `【本条特殊要求】本条目写 {{char}} 与**对方**亲密场景下**说出口的原话**（非 vol08 日常通用口语，非 vol10 对 {{user}} 的微信聊天分寸）。须 **4–6 组**「情境 + 引语」示例，情境指恋人时写 **对方**，禁止男人/女人；格式如：被抱住时会低声说 "别闹"、睡前困极了会嘟囔 "再待一会儿"；引语用英文半角双引号。清水档案禁止露骨性描写；若角色档案本身为成人向，可写情欲向口语但须符合人设。\n`
+    !forId && /亲密与恋爱观|亲密口语习惯/.test(params.item.name)
+      ? `【本条特殊要求】「亲密与恋爱观」写一般亲密观与恋爱反差（指恋人写「对方」）；若含亲密口语，须「情境 + 引语」示例。非对 {{user}} 的微信聊天分寸。清水档案禁止露骨。\n`
       : ''
 
   const orientationOriginExtra =
-    !forId && /取向与自我认同|性取向由来/.test(params.item.name)
-      ? `【本条特殊要求】本条目只写 {{char}} 对**自我**性取向/浪漫吸引的**当下稳定**认同与由来（历史、主标签）。**禁止**因觉得 {{user}} 好看、颜值服气、审美欣赏，就写「开始怀疑自己的取向」「对 {{user}} 心动所以动摇」——审美欣赏 ≠ 恋爱 ≠ 取向变化；对 {{user}} 的颜值评价应写在 vol10「内心的真实分量」，不要写在本条。若本条目属尾声延展层（UI 勾选了取向「可变」），**「可变」仅指条目层级**，正文仍写稳定认同，**禁止**写「取向可能会变/还在摸索/不确定」。\n`
+    !forId &&
+    (/取向认同的当前快照|取向与自我认同|性取向由来/.test(params.item.name) ||
+      (/性格内核/.test(params.item.name) && params.item.priority !== 'after'))
+      ? `【本条特殊要求】${/取向认同|取向与自我|性取向由来/.test(params.item.name) ? '本条为取向尾声快照：' : '若本条含取向段落：'}只写 {{char}} 对**自我**性取向的**当下稳定**认同与由来。审美欣赏 ≠ 恋爱 ≠ 取向变化；对 {{user}} 的颜值评价应写在「对你现在」。若本条目为尾声延展，「可变」仅指可更新快照，正文仍写稳定认同。\n`
       : ''
 
   const affectionGuideExtra =
     !forId && params.item.name === PERSONA_AI_AFFECTION_GUIDE_EPILOGUE_NAME
-      ? `【本条特殊要求】本条目是给 {{user}} 的**行为侧写**（第三人称攻略体，非游戏 UI、非选项列表）：须写清 {{user}} 做什么加好感、什么是雷区、宜什么节奏；须贴合 core.values / core.flaws 与当前关系起点。**核心**：好感可累积——只要 {{user}} 持续真诚加分，{{char}} **就有可能**对 {{user}} 心动、喜欢甚至想交往；初始关系只是起点，禁止写死「只能当朋友/永不可能恋爱」；禁止跪舔速成、套路 PUA、打破第四墙提及「玩家」。\n`
+      ? `【本条特殊要求】须含对 {{user}} 的称呼、相处边界与心里分量侧写；分量强度须贴合关系设定。低投入/不咋在意时禁止写成好感萌芽。可写雷区与维持现状的分寸；禁止无依据抬成可攻略心动开局；禁止跪舔速成、套路 PUA、提及「玩家」。\n`
+      : ''
+
+  const npcRosterExtra =
+    !forId &&
+    (params.item.name === PERSONA_AI_NPC_ROSTER_ENTRY_NAME || /周边NPC|NPC简|关联人物|周边人物/.test(params.item.name))
+      ? `【本条特殊要求】「周边NPC」写 3–5 个围绕 {{char}} 的**具名**配角简档：每人含姓名、与 {{char}} 关系、一两句性格与近况。禁止写 {{user}}；禁止写成完整人设或重复「人际与秘密」的态度长文；中性朴实。\n`
       : ''
 
   const vol05DesireExtra =
-    !forId && /DESIRE|欲念与底线/.test(params.worldBook.name)
-      ? `【本条特殊要求】vol05 欲念与底线条目须**直白描绘**（黄文义：具体写身体/动作/反应，禁止隐喻与清水化）；语气符合档案亲密种子；指恋人/亲密对象一律写 **对方**，禁止男人/女人；**禁止**超雄、暴力压制、羞辱驯服、ALPHA 狼性。若目标字数≥120，须写 **3–5 组** 具体情境+说出口的原话示例（英文半角双引号），不要只写一句概括或单个例子就结束。\n`
+    !forId &&
+    (/亲密与恋爱观/.test(params.item.name) || /DESIRE|欲念与底线/.test(params.worldBook.name))
+      ? `【本条特殊要求】亲密向正文可直白描绘（若档案为成人向）；指恋人一律写 **对方**，禁止男人/女人；禁止超雄 caricature。\n`
       : ''
 
   const vol07ContrastExtra =
-    !forId && /CONTRAST|恋爱镜像反差/.test(params.worldBook.name)
-      ? `【本条特殊要求】vol07 恋爱反差条目指恋人/亲密对象时一律写 **对方**，禁止男人/女人；勿把泛化恋人写成 {{user}} 或预设性别。\n`
+    !forId &&
+    (/亲密与恋爱观/.test(params.item.name) || /CONTRAST|恋爱镜像反差/.test(params.worldBook.name))
+      ? `【本条特殊要求】恋爱反差模板指恋人时一律写 **对方**，禁止男人/女人；勿把泛化恋人写成 {{user}}。\n`
       : ''
 
   if (!cfg || !cfg.apiUrl || !cfg.apiKey) throw new Error('未配置 AI API')
@@ -1252,7 +1274,7 @@ export async function generateWorldBookItemContent(params: {
     { role: 'system', content: systemContent },
     {
       role: 'user',
-      content: `${baseHint}${pronounWriterNote}${npcBlock}${context}${coherenceBlock}${wbgBlock}${styleBlock}${attitudeBookExtra}${userChatMannerExtra}${generalSpeechExtra}${intimateSpeechExtra}${orientationOriginExtra}${affectionGuideExtra}${vol05DesireExtra}${vol07ContrastExtra}${lengthHardRule}请生成本条目的正文内容。`,
+      content: `${baseHint}${pronounWriterNote}${npcBlock}${context}${coherenceBlock}${wbgBlock}${styleBlock}${attitudeBookExtra}${userChatMannerExtra}${generalSpeechExtra}${intimateSpeechExtra}${orientationOriginExtra}${affectionGuideExtra}${npcRosterExtra}${vol05DesireExtra}${vol07ContrastExtra}${lengthHardRule}请生成本条目的正文内容。`,
     },
   ]
   let body = sanitizeWorldBookGeneratedBody(await openAiCompatibleChat(cfg, messages, { max_tokens: maxTokens }))

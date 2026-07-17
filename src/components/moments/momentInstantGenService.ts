@@ -58,9 +58,10 @@ async function generateImages(
   prompts: string[],
   settings: MomentsImageGenSettings,
   character?: Character | null,
-): Promise<string[]> {
-  if (!settings.enabled || !prompts.length) return []
+): Promise<{ urls: string[]; prompts: string[] }> {
+  if (!settings.enabled || !prompts.length) return { urls: [], prompts: [] }
   const urls: string[] = []
+  const kept: string[] = []
   for (const prompt of prompts.slice(0, MAX_MOMENT_IMAGES)) {
     try {
       const url = await generateMomentsImage(
@@ -72,12 +73,15 @@ async function generateImages(
           height: 512,
         }),
       )
-      if (url) urls.push(url)
+      if (url) {
+        urls.push(url)
+        kept.push(prompt)
+      }
     } catch {
       // skip failed image
     }
   }
-  return urls
+  return { urls, prompts: kept }
 }
 
 function filterInteractionsByBoundPeers(
@@ -155,6 +159,7 @@ export async function publishInstantCharacterMoment(
   }
 
   let imageUrls: string[] = []
+  let keptImagePrompts: string[] = []
   let attachedMusic = undefined as Awaited<ReturnType<typeof resolveCharacterMomentAttachedMusic>> | undefined
 
   if (config.postType === 'music') {
@@ -167,7 +172,9 @@ export async function publishInstantCharacterMoment(
     const needsImages = postType === 'image' || postType === 'mixed'
     if (needsImages && imageGenReady && imagePrompts.length) {
       params.onProgress?.('imaging')
-      imageUrls = await generateImages(imagePrompts, params.imageGenSettings, character)
+      const generated = await generateImages(imagePrompts, params.imageGenSettings, character)
+      imageUrls = generated.urls
+      keptImagePrompts = generated.prompts
     }
 
     if (needsImages && !imageUrls.length) {
@@ -217,6 +224,7 @@ export async function publishInstantCharacterMoment(
     postType,
     content,
     imageUrls: postType === 'text' || postType === 'music' ? [] : imageUrls,
+    imagePrompts: postType === 'text' || postType === 'music' ? undefined : keptImagePrompts,
     attachedMusic,
     location: aiDraft.location,
     privacy: aiDraft.privacy,

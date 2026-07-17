@@ -1,5 +1,5 @@
 import { ArrowLeft, User, UserRound } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Pressable } from '../../../components/Pressable'
 import { phoneNumStyle } from '../../../types'
 import { AppearanceRefSettingsPanel } from '../appearanceRef/AppearanceRefSettingsPanel'
@@ -19,6 +19,7 @@ import {
   isRoundTriggerCustomized,
   parseStoredImageRoundCountRange,
 } from '../wechatMediaSendFrequency'
+import { CommitOnReleaseRangeInput } from './CommitOnReleaseRangeInput'
 
 type ImageGenTab = 'probability' | 'appearance' | 'style'
 type RefSubTab = 'character' | 'user'
@@ -46,34 +47,43 @@ function ImageTriggerPercentControl({
   onChange: (percent: number) => void
   onResetDefault: () => void
 }) {
-  const display = displayRoundTriggerPercent(stored, 'image')
-  const customized = isRoundTriggerCustomized(stored)
+  const committed = displayRoundTriggerPercent(stored, 'image')
+  const customizedStored = isRoundTriggerCustomized(stored)
+  const [uiValue, setUiValue] = useState(committed)
+  const [dragging, setDragging] = useState(false)
+
+  useEffect(() => {
+    setUiValue(committed)
+  }, [committed])
+
+  const showCustom = dragging || customizedStored
 
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
         <span className="text-[14px] font-medium text-black">
-          {customized ? (
-            <ChatSettingsNum>{display}%</ChatSettingsNum>
+          {showCustom ? (
+            <ChatSettingsNum>{uiValue}%</ChatSettingsNum>
           ) : (
             <>
               默认 <ChatSettingsNum>{IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%</ChatSettingsNum>（不发图）
             </>
           )}
         </span>
-        {customized ? (
+        {customizedStored && !dragging ? (
           <button type="button" onClick={onResetDefault} className="shrink-0 text-[12px] text-[#576b95]">
             恢复默认
           </button>
         ) : null}
       </div>
-      <input
-        type="range"
+      <CommitOnReleaseRangeInput
         min={0}
         max={100}
         step={1}
-        value={display}
-        onChange={(e) => onChange(Number(e.target.value))}
+        value={committed}
+        onDraftChange={setUiValue}
+        onDragStateChange={setDragging}
+        onCommit={onChange}
         className="mt-2 w-full accent-black"
         aria-label="AI 配图每轮触发概率"
       />
@@ -102,13 +112,31 @@ function ImageRoundCountRangeControl({
 }) {
   const range = parseStoredImageRoundCountRange(minStored, maxStored)
   const customized = isImageRoundCountRangeCustomized(minStored, maxStored)
+  const [uiMin, setUiMin] = useState(range.min)
+  const [uiMax, setUiMax] = useState(range.max)
+  const [draggingMin, setDraggingMin] = useState(false)
+  const [draggingMax, setDraggingMax] = useState(false)
+
+  useEffect(() => {
+    setUiMin(range.min)
+  }, [range.min])
+
+  useEffect(() => {
+    setUiMax(range.max)
+  }, [range.max])
+
+  const showCustom = customized || draggingMin || draggingMax
+  const labelMin = draggingMin ? uiMin : range.min
+  const labelMax = draggingMax ? uiMax : range.max
 
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
         <span className="text-[14px] font-medium text-black">
-          {customized ? (
-            <ChatSettingsNum>{formatImageRoundCountRangeLabel(range)}</ChatSettingsNum>
+          {showCustom ? (
+            <ChatSettingsNum>
+              {uiMin}～{uiMax} 张
+            </ChatSettingsNum>
           ) : (
             <>
               默认{' '}
@@ -119,7 +147,7 @@ function ImageRoundCountRangeControl({
             </>
           )}
         </span>
-        {customized ? (
+        {customized && !draggingMin && !draggingMax ? (
           <button type="button" onClick={onResetDefault} className="shrink-0 text-[12px] text-[#576b95]">
             恢复默认
           </button>
@@ -128,17 +156,20 @@ function ImageRoundCountRangeControl({
       <div className="mt-3">
         <div className="flex items-center justify-between text-[12px] text-[#8e8e8e]">
           <span>最少张数</span>
-          <ChatSettingsNum>{range.min} 张</ChatSettingsNum>
+          <ChatSettingsNum>{labelMin} 张</ChatSettingsNum>
         </div>
-        <input
-          type="range"
+        <CommitOnReleaseRangeInput
           min={IMAGE_ROUND_COUNT_MIN_LIMIT}
           max={IMAGE_ROUND_COUNT_MAX_LIMIT}
           step={1}
           value={range.min}
-          onChange={(e) => {
-            const min = clampImageRoundCount(Number(e.target.value))
-            onChange(min, Math.max(min, range.max))
+          onDraftChange={setUiMin}
+          onDragStateChange={setDraggingMin}
+          onCommit={(raw) => {
+            const min = clampImageRoundCount(raw)
+            const max = Math.max(min, uiMax)
+            setUiMin(min)
+            onChange(min, max)
           }}
           className="mt-1 w-full accent-black"
           aria-label="AI 配图每次最少张数"
@@ -147,17 +178,20 @@ function ImageRoundCountRangeControl({
       <div className="mt-3">
         <div className="flex items-center justify-between text-[12px] text-[#8e8e8e]">
           <span>最多张数</span>
-          <ChatSettingsNum>{range.max} 张</ChatSettingsNum>
+          <ChatSettingsNum>{labelMax} 张</ChatSettingsNum>
         </div>
-        <input
-          type="range"
+        <CommitOnReleaseRangeInput
           min={IMAGE_ROUND_COUNT_MIN_LIMIT}
           max={IMAGE_ROUND_COUNT_MAX_LIMIT}
           step={1}
           value={range.max}
-          onChange={(e) => {
-            const max = clampImageRoundCount(Number(e.target.value))
-            onChange(Math.min(range.min, max), max)
+          onDraftChange={setUiMax}
+          onDragStateChange={setDraggingMax}
+          onCommit={(raw) => {
+            const max = clampImageRoundCount(raw)
+            const min = Math.min(uiMin, max)
+            setUiMax(max)
+            onChange(min, max)
           }}
           className="mt-1 w-full accent-black"
           aria-label="AI 配图每次最多张数"

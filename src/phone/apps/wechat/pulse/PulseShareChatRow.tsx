@@ -19,6 +19,7 @@ type Props = {
   chatOtherAvatarRankBadge?: 'owner' | 'admin' | null
   chatSelfAvatarRankBadge?: 'owner' | 'admin' | null
   groupRankShowBesideNickname?: boolean
+  onOpen?: () => void
 }
 
 export function PulseShareChatRow({
@@ -34,9 +35,10 @@ export function PulseShareChatRow({
   chatOtherAvatarRankBadge = null,
   chatSelfAvatarRankBadge: _chatSelfAvatarRankBadge = null,
   groupRankShowBesideNickname = true,
+  onOpen,
 }: Props) {
   const avatarPx = 40
-  const card = <PulseShareMessageCard data={data} />
+  const card = <PulseShareMessageCard data={data} onOpen={onOpen} />
   const showAvatarVisual = showAvatar && showAvatarColumn
   const reserveAvatarGutter = showAvatar
   const rankBeside = groupRankShowBesideNickname !== false

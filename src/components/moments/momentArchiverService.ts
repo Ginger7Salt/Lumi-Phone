@@ -13,10 +13,15 @@ import {
   momentMemoryIdForMomentInteractor,
   summarizeInteractorOwnMomentActions,
 } from './momentMemoryContentBuilder'
+import { resolveMomentPostStoryPublishAnchor } from './momentPostStoryTime'
 import { extractMomentMemoryKeywords } from './momentMemoryKeywordAi'
 import { enrichMomentAttachedMusic } from './momentAttachedMusic'
 import type { MomentsContactDirectory } from './momentsContactDirectory'
-import { isMomentMemoryArchiveSuppressed, MOMENT_MEMORY_ARCHIVE_SUPPRESSED_EVENT } from '../../phone/apps/wechat/memory/momentMemoryArchiveSuppression'
+import {
+  isMomentMemoryArchiveSuppressed,
+  MOMENT_MEMORY_ARCHIVE_SUPPRESSED_EVENT,
+  suppressMomentMemoryArchive,
+} from '../../phone/apps/wechat/memory/momentMemoryArchiveSuppression'
 
 const ARCHIVE_DEBOUNCE_MS = 5000
 
@@ -107,6 +112,10 @@ async function flushCharacterMomentArchive(job: CharacterMomentArchiveJob): Prom
   const interactionNow = job.now ?? Date.now()
   const archivedAt = Date.now()
 
+  const publisherStoryAnchor = await resolveMomentPostStoryPublishAnchor({
+    characterId: publisherCharacterId,
+    systemPublishedAt: moment.timestamp,
+  })
   const built = buildMomentMemoryPayload({
     moment,
     now: interactionNow,
@@ -114,6 +123,8 @@ async function flushCharacterMomentArchive(job: CharacterMomentArchiveJob): Prom
     playerDisplayName: job.playerDisplayName,
     publisherCharacterId,
     publisherDisplayName,
+    publishLines: publisherStoryAnchor.publishLines,
+    storyPublishLabel: publisherStoryAnchor.storyPublishLabel,
   })
   const { payload, memoryContent, interactionRows } = built
 
@@ -149,6 +160,9 @@ async function flushCharacterMomentArchive(job: CharacterMomentArchiveJob): Prom
     momentMemoryRole: 'publisher',
     momentLinkedInteractorCharIds: interactorCharIds.length ? interactorCharIds : undefined,
     momentPayload: { ...payload, publishedAt },
+    ...(publisherStoryAnchor.storyPublishLabel
+      ? { storyTimeLabel: publisherStoryAnchor.storyPublishLabel }
+      : {}),
     ...(job.wechatAccountId?.trim()
       ? { sourceWechatAccountId: job.wechatAccountId.trim() }
       : {}),
@@ -169,6 +183,10 @@ async function flushCharacterMomentArchive(job: CharacterMomentArchiveJob): Prom
   await Promise.all(
     interactorCharIds.map(async (interactorCharId) => {
       const ownSummary = summarizeInteractorOwnMomentActions(moment, interactorCharId, interactionNow)
+      const interactorStoryAnchor = await resolveMomentPostStoryPublishAnchor({
+        characterId: interactorCharId,
+        systemPublishedAt: moment.timestamp,
+      })
       const interactorBody = buildInteractorMomentMemoryNaturalContent({
         moment,
         publisherDisplayName,
@@ -176,6 +194,7 @@ async function flushCharacterMomentArchive(job: CharacterMomentArchiveJob): Prom
         rows: interactionRows,
         locationLabel,
         now: interactionNow,
+        publishLines: interactorStoryAnchor.publishLines,
       })
       const interactorKeywords = mergeInteractorMomentMemoryKeywords(
         keywords,
@@ -206,7 +225,14 @@ async function flushCharacterMomentArchive(job: CharacterMomentArchiveJob): Prom
           publisherCharacterId,
           publisherDisplayName,
           ownInteractionSummary: ownSummary,
+          ...(interactorStoryAnchor.storyPublishLabel
+            ? { storyPublishLabel: interactorStoryAnchor.storyPublishLabel }
+            : {}),
+          systemPublishedAt: moment.timestamp,
         },
+        ...(interactorStoryAnchor.storyPublishLabel
+          ? { storyTimeLabel: interactorStoryAnchor.storyPublishLabel }
+          : {}),
         ...(job.wechatAccountId?.trim()
           ? { sourceWechatAccountId: job.wechatAccountId.trim() }
           : {}),
@@ -260,6 +286,25 @@ export function cancelCharacterMomentArchive(momentId: string): void {
   const prev = pendingArchives.get(momentId)
   if (prev) window.clearTimeout(prev.timer)
   pendingArchives.delete(momentId)
+}
+
+/** 删除角色朋友圈时：取消待归档、禁止再归档，并清除发布者/互动者相关记忆 */
+export async function deleteCharacterMomentMemoriesForMoment(momentId: string): Promise<void> {
+  const id = momentId.trim()
+  if (!id) return
+  cancelCharacterMomentArchive(id)
+  await suppressMomentMemoryArchive(id)
+  const publisherPrefix = momentMemoryIdForMoment(id)
+  const all = await personaDb.listAllCharacterMemories()
+  await Promise.all(
+    all.map(async (m) => {
+      const linked =
+        m.momentSourceMomentId === id ||
+        m.id === publisherPrefix ||
+        m.id.startsWith(`${publisherPrefix}::`)
+      if (linked) await personaDb.deleteCharacterMemory(m.id)
+    }),
+  )
 }
 
 if (typeof window !== 'undefined') {

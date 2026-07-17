@@ -24,15 +24,19 @@ function selectRecentAiRoundWindowSorted<T>(
   countAiRound: (item: T) => boolean,
   retainAiRounds: number,
 ): T[] {
-  if (!items.length) return []
+  if (!items.length || retainAiRounds <= 0) return []
   let aiCount = 0
-  let splitIdx = items.length
+  /** 不足 N 轮时取全部；够 N 轮时切到最旧一记 AI 前的用户输入 */
+  let splitIdx = 0
   for (let i = items.length - 1; i >= 0; i--) {
-    if (countAiRound(items[i]!)) aiCount++
-    if (aiCount >= retainAiRounds) {
-      splitIdx = i
-      break
+    if (!countAiRound(items[i]!)) continue
+    aiCount++
+    if (aiCount < retainAiRounds) continue
+    splitIdx = i
+    while (splitIdx > 0 && !countAiRound(items[splitIdx - 1]!)) {
+      splitIdx--
     }
+    break
   }
   return items.slice(splitIdx)
 }

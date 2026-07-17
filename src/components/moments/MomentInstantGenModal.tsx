@@ -114,8 +114,9 @@ export function MomentInstantGenModal({
   const [contentType, setContentType] = useState<InstantGenContentTypeChoice>('auto')
   const [customContentDirection, setCustomContentDirection] = useState('')
   const [textLengthTarget, setTextLengthTarget] = useState(INSTANT_GEN_TEXT_LENGTH_DEFAULT)
-  const [includeRecentChat, setIncludeRecentChat] = useState(true)
-  const [includeOfflinePlots, setIncludeOfflinePlots] = useState(true)
+  const [includeRecentChat, setIncludeRecentChat] = useState(false)
+  const [includeOfflinePlots, setIncludeOfflinePlots] = useState(false)
+  const [includeLongTermMemory, setIncludeLongTermMemory] = useState(false)
   const [stage, setStage] = useState<InstantGenPublishStage | 'idle'>('idle')
   const [batchIndex, setBatchIndex] = useState(0)
   const [batchTotal, setBatchTotal] = useState(0)
@@ -279,6 +280,7 @@ export function MomentInstantGenModal({
         textLengthTarget: clampInstantGenTextLength(textLengthTarget),
         includeRecentChat,
         includeOfflinePlots,
+        includeLongTermMemory,
       }
 
       try {
@@ -326,6 +328,7 @@ export function MomentInstantGenModal({
     imageGenSettings,
     includeOfflinePlots,
     includeRecentChat,
+    includeLongTermMemory,
     momentContacts,
     onClose,
     onPublished,
@@ -598,19 +601,27 @@ export function MomentInstantGenModal({
 
                   <section>
                     <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9CA3AF]">
-                      Context Sync
+                      参考内容（可多选）
                     </p>
                     <div className="mt-3 space-y-2">
                       <MinimalCheckbox
                         checked={includeRecentChat}
                         onChange={setIncludeRecentChat}
-                        label="提取最近 20 条对话记忆"
+                        label="最近 20 条对话记录"
                       />
                       <MinimalCheckbox
                         checked={includeOfflinePlots}
                         onChange={setIncludeOfflinePlots}
-                        label="提取未总结的线下剧情"
+                        label="未总结的线下剧情"
                       />
+                      <MinimalCheckbox
+                        checked={includeLongTermMemory}
+                        onChange={setIncludeLongTermMemory}
+                        label="长期记忆"
+                      />
+                      <p className="text-[11px] leading-relaxed text-[#9CA3AF]">
+                        都不勾选时，只按角色人设发自己的日常（也可写和其他朋友的日常），不会默认围着你转。勾选后才会把对应内容当参考。
+                      </p>
                     </div>
                   </section>
 

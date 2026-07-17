@@ -157,7 +157,7 @@ export function MiniPlayerPopover({
                 <button
                   type="button"
                   aria-label="隐藏悬浮球"
-                  title="隐藏悬浮球（音乐继续播放）"
+                  title="隐藏悬浮球（音乐继续播放；刷新后不会再自动出现，进听一听后才恢复）"
                   onClick={(e) => {
                     e.stopPropagation()
                     dismissFloatingOrb()

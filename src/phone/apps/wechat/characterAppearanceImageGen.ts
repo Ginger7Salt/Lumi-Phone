@@ -36,6 +36,59 @@ export function extractCharacterGenderHintForImageGen(gender: Gender | undefined
   return ''
 }
 
+function danbooruGenderTag(gender: Gender | undefined | null): '1boy' | '1girl' | null {
+  if (gender === 'male') return '1boy'
+  if (gender === 'female') return '1girl'
+  return null
+}
+
+function wrongDanbooruGenderTag(gender: Gender | undefined | null): '1boy' | '1girl' | null {
+  if (gender === 'male') return '1girl'
+  if (gender === 'female') return '1boy'
+  return null
+}
+
+/**
+ * 朋友圈 / 角色媒体生图：按档案性别改写 prompt 里被 LLM 写反的 1boy/1girl、young man/woman 等。
+ * 有本人参考图时也必须执行，否则 API 会优先服从错误性别 tag。
+ */
+export function enforceCharacterMediaImagePromptGender(
+  prompt: string,
+  gender: Gender | undefined | null,
+): string {
+  if (gender !== 'male' && gender !== 'female') return prompt.trim()
+  let s = prompt.trim()
+  if (!s) return s
+
+  const correct = danbooruGenderTag(gender)!
+  const wrong = wrongDanbooruGenderTag(gender)!
+  const correctEn = gender === 'female' ? 'young woman' : 'young man'
+  const wrongEn = gender === 'female' ? 'young man' : 'young woman'
+  const correctSex = gender === 'female' ? 'female' : 'male'
+  const wrongSex = gender === 'female' ? 'male' : 'female'
+
+  s = s.replace(new RegExp(`\\b${wrong}\\b\\s*,?\\s*(reference\\s+character)\\b`, 'gi'), `${correct}, $1`)
+  s = s.replace(new RegExp(`\\b(reference\\s+character)\\b\\s*,?\\s*\\b${wrong}\\b`, 'gi'), `$1, ${correct}`)
+  s = s.replace(new RegExp(`\\b${wrong}\\b`, 'gi'), correct)
+  s = s.replace(new RegExp(`\\b${wrongEn.replace(' ', '\\s+')}\\b`, 'gi'), correctEn)
+  s = s.replace(new RegExp(`\\bon\\s+${wrongSex}\\s+lips\\b`, 'gi'), 'on lips')
+  s = s.replace(new RegExp(`\\b${wrongSex}\\s+lips\\b`, 'gi'), 'lips')
+  s = s.replace(new RegExp(`,\\s*\\b${wrongSex}\\b\\s*,`, 'gi'), `, ${correctSex},`)
+  s = s.replace(new RegExp(`^\\b${wrongSex}\\b\\s*,`, 'gi'), `${correctSex},`)
+  s = s.replace(new RegExp(`,\\s*\\b${wrongSex}\\b\\s*$`, 'gi'), `, ${correctSex}`)
+
+  if (/\breference\s+character\b/i.test(s) && !new RegExp(`\\b${correct}\\b`, 'i').test(s)) {
+    s = `${correct}, ${extractCharacterGenderHintForImageGen(gender)}, ${s}`
+  } else if (
+    !new RegExp(`\\b${correct}\\b`, 'i').test(s) &&
+    /\b(person|portrait|selfie|face|lipstick|leaning|wearing)\b/i.test(s)
+  ) {
+    s = `${correct}, ${correctEn}, ${s}`
+  }
+
+  return s.replace(/\s*,\s*,+/g, ', ').replace(/^,\s*/, '').replace(/\s+/g, ' ').trim()
+}
+
 /** @deprecated 使用 resolveCharacterAppearanceRefUrls */
 export function resolveCharacterAppearanceRefUrl(character: Character | null | undefined): string {
   return resolveCharacterAppearanceRefUrls(character)[0] ?? ''
@@ -190,7 +243,8 @@ export function buildCharacterMediaImageGenParams(opts: {
   const promptForApi = !hasReferenceConfigured
     ? replaceReferenceCharacterPlaceholder(rawPrompt, buildNoRefCharacterSubjectTags(opts.character))
     : rawPrompt
-  const prompt = sanitizeCharacterMediaImagePrompt(normalizeCharacterImageGenPromptForApi(promptForApi))
+  const genderCorrected = enforceCharacterMediaImagePromptGender(promptForApi, opts.character?.gender)
+  const prompt = sanitizeCharacterMediaImagePrompt(normalizeCharacterImageGenPromptForApi(genderCorrected))
   const lockAppearance = isCharacterMediaAppearanceLockPrompt(prompt)
   const attachIdentityReference =
     refUploadSupported && hasReferenceConfigured && isCharacterMediaReferenceImagePrompt(prompt)
@@ -217,6 +271,8 @@ export function buildCharacterMediaImageGenParams(opts: {
         )
       : null
 
+  const genderHint = extractCharacterGenderHintForImageGen(opts.character?.gender) || undefined
+
   return {
     prompt,
     settings: opts.settings,
@@ -234,10 +290,8 @@ export function buildCharacterMediaImageGenParams(opts: {
       !hasReferenceConfigured || !refUploadSupported
         ? extractCharacterAppearanceHint(opts.character) || undefined
         : undefined,
-    characterGenderHint:
-      attachIdentityReference && hasReferenceConfigured
-        ? extractCharacterGenderHintForImageGen(opts.character?.gender)
-        : undefined,
+    // 档案有明确性别时一律附带（不再仅限自拍），避免第三人称构图写成对面性别
+    characterGenderHint: genderHint,
     referenceStyleOnly: attachStyleReference || undefined,
   }
 }

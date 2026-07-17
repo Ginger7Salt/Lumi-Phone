@@ -51,12 +51,20 @@ export async function formatRecentAiRoundsPrivateChatReferenceBlock(params: {
 export async function formatRecentAiRoundsPrivateChatByCharacter(params: {
   characterId: string
   maxChars?: number
+  /** 按 AI 回复轮数计；含其间用户消息。0 表示不取。 */
+  retainAiRounds?: number
 }): Promise<string> {
   const cid = params.characterId.trim()
   if (!cid) return ''
+  const retainAiRounds = Math.max(
+    0,
+    Math.floor(params.retainAiRounds ?? MEMORY_RECENT_AI_ROUNDS_REFERENCE),
+  )
+  if (retainAiRounds <= 0) return ''
   const rows = await personaDb.listWeChatChatMessagesRecentByCharacter({ characterId: cid, limit: 240 })
   const window = selectRecentWeChatMessagesAiRoundWindow(
     rows.filter((m) => !isMeetImportedWeChatMessageId(m.id)),
+    retainAiRounds,
   )
   if (!window.length) return ''
   const lines: string[] = []
@@ -67,7 +75,7 @@ export async function formatRecentAiRoundsPrivateChatByCharacter(params: {
   if (!lines.length) return ''
   const body = clipBodyFromStart(lines.join('\n'), Math.floor(params.maxChars ?? RECENT_REF_CHAR_CAP))
   return (
-    `【最近私聊原文参考（最近 ${MEMORY_RECENT_AI_ROUNDS_REFERENCE} 轮角色回复及其间用户输入；可能已写入长期记忆，仅供承接口吻，**非**待总结游标材料）】\n` +
+    `【最近私聊原文参考（最近 ${retainAiRounds} 轮角色回复及其间用户输入；可能已写入长期记忆，仅供承接口吻，**非**待总结游标材料）】\n` +
     `${body}`
   )
 }
@@ -78,8 +86,14 @@ function formatRecentOfflinePlotsAiRoundsBody(params: {
   rootName: string
   peerLabel: string
   maxChars?: number
+  retainAiRounds?: number
 }): string {
-  const window = selectRecentDatingPlotsAiRoundWindow(params.plots)
+  const retainAiRounds = Math.max(
+    0,
+    Math.floor(params.retainAiRounds ?? MEMORY_RECENT_AI_ROUNDS_REFERENCE),
+  )
+  if (retainAiRounds <= 0) return ''
+  const window = selectRecentDatingPlotsAiRoundWindow(params.plots, retainAiRounds)
   if (!window.length) return ''
   const body = buildOfflinePlotsFullText({
     plots: window,
@@ -91,7 +105,7 @@ function formatRecentOfflinePlotsAiRoundsBody(params: {
   }).trim()
   if (!body) return ''
   return (
-    `【最近线下剧情参考（最近 ${MEMORY_RECENT_AI_ROUNDS_REFERENCE} 轮 AI 剧情及其间玩家输入；可能已写入长期记忆，仅供承接口吻，**非**待总结游标材料）】\n\n` +
+    `【最近线下剧情参考（最近 ${retainAiRounds} 轮 AI 剧情及其间玩家输入；可能已写入长期记忆，仅供承接口吻，**非**待总结游标材料）】\n\n` +
     body
   )
 }
@@ -103,6 +117,7 @@ export async function formatRecentOfflinePlotsAiRoundsReference(
   maxChars?: number,
   /** 与当前 UI / 本轮 generate 同源的快照；传入时不再读 KV，避免删改后仍注入旧稿。 */
   plotsSnapshot?: import('../unifiedMemoryAutoSummary').DatingPlotSnapshotItem[] | null,
+  retainAiRounds?: number,
 ): Promise<string> {
   const cid = characterId?.trim()
   if (!cid) return ''
@@ -121,6 +136,7 @@ export async function formatRecentOfflinePlotsAiRoundsReference(
       rootName: (ctx.archiveOwner?.name ?? '').trim() || '主角',
       peerLabel,
       maxChars,
+      retainAiRounds,
     })
   } catch {
     return ''

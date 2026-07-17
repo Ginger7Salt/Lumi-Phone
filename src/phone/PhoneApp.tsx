@@ -39,6 +39,10 @@ import { LUMI_SYS_FIRST_BOOT_KEY } from './apps/dataArchive/constants'
 import { LoreArchiveApp } from './apps/loreArchive/LoreArchiveApp'
 import { RecycleBinApp } from './apps/recycleBin/RecycleBinApp'
 import { BackgroundNotifyApp } from './apps/backgroundNotify/BackgroundNotifyApp'
+import { EvolutionApp } from './apps/evolution/EvolutionApp'
+import { EvolutionUpdatePushModal } from './apps/evolution/EvolutionUpdatePushModal'
+import { getLatestEvolutionRecord } from './apps/evolution/evolutionLogData'
+import { shouldOfferEvolutionPush } from './apps/evolution/evolutionPushStorage'
 import { personaDb } from './apps/wechat/newFriendsPersona/idb'
 import { WeChatApp } from './apps/wechat/WeChatApp'
 import { LumiMeetApp } from './apps/lumiMeet/LumiMeetApp'
@@ -138,6 +142,7 @@ export function PhoneApp() {
   const [sessionKickedNotice, setSessionKickedNotice] = useState<string | null>(() => readSessionKickedNotice())
   const [authVerifyError, setAuthVerifyError] = useState<string | null>(null)
   const [authChecking, setAuthChecking] = useState(false)
+  const [showEvolutionPush, setShowEvolutionPush] = useState(false)
   const openVerifiedRef = useRef(localDevBypassAuth || readAuthVerified())
   /** 本次页面加载是否已做过开屏后的唯一一次账号检测（刷新页面会重置） */
   const sessionBootAuthDoneRef = useRef(false)
@@ -364,6 +369,29 @@ export function PhoneApp() {
   const userAuthStatusOnly =
     !!userAuthStatus && !isUserActivated(userAuthStatus)
 
+  const canOfferEvolutionPush =
+    !showSplash &&
+    !showEntryNotice &&
+    !showAccountStatusChecking &&
+    !showUserAuthModal &&
+    !showInfoCorrectionModal &&
+    route.name === 'home' &&
+    (localDevBypassAuth ||
+      (userAuthReady && !!userAuthStatus && isUserActivated(userAuthStatus)))
+
+  useEffect(() => {
+    if (!canOfferEvolutionPush) {
+      setShowEvolutionPush(false)
+      return
+    }
+    const version = getLatestEvolutionRecord().version
+    if (!shouldOfferEvolutionPush(version)) {
+      setShowEvolutionPush(false)
+      return
+    }
+    setShowEvolutionPush(true)
+  }, [canOfferEvolutionPush])
+
   const handleRetryAuthVerify = useCallback(() => {
     openVerifiedRef.current = false
     setAuthVerifyError(null)
@@ -514,6 +542,8 @@ export function PhoneApp() {
                   <BackgroundNotifyApp onBack={goHome} />
                 ) : route.id === 'sandbox' ? (
                   <SandboxApp onBack={goHome} />
+                ) : route.id === 'evolution' ? (
+                  <EvolutionApp onBack={goHome} />
                 ) : route.id === 'takeout' ? (
                   <LumiTasteApp onBack={goHome} />
                 ) : (
@@ -535,6 +565,11 @@ export function PhoneApp() {
           onConfirm={handleNoticeConfirm}
         />
         <AccountStatusCheckingOverlay open={showAccountStatusChecking} />
+        <EvolutionUpdatePushModal
+          open={showEvolutionPush}
+          onClose={() => setShowEvolutionPush(false)}
+          onOpenEvolution={() => openApp('evolution')}
+        />
         <UserSystemAuthModal
           open={showUserAuthModal}
           statusOnly={userAuthStatusOnly}

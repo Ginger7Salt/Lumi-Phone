@@ -65,6 +65,8 @@ export function RedPacketChatRow({
     ms: 500,
     moveThresholdPx: 10,
     onLongPress: () => handleLongPress(),
+    // 触控短按走 pointer；比 click 更稳（避免 capture 后 click 丢失）
+    onTap: onLongPress ? () => onOpen() : undefined,
   })
 
   const messengerStyle = resolveMessengerBubbleStyle(bubble)
@@ -94,10 +96,13 @@ export function RedPacketChatRow({
         }}
         onClick={(e) => {
           e.stopPropagation()
-          if (!selected) onOpen()
+          // 有长按时短按已由 onTap 处理，避免 click 再开一次
+          if (onLongPress) return
+          onOpen()
         }}
       >
         <RedPacketBubble
+          messageId={_id}
           data={data}
           isSelf={isSelf}
           messengerStyle={messengerStyle}
@@ -114,7 +119,7 @@ export function RedPacketChatRow({
         ) : null}
       </div>
     ),
-    [bind, bubbleRadius, data, isSelf, messengerStyle, onOpen, pressing, replyPreview, selected],
+    [bind, bubbleRadius, data, isSelf, messengerStyle, onLongPress, onOpen, pressing, replyPreview, selected],
   )
 
   const showAvatarVisual = showAvatar && showAvatarColumn

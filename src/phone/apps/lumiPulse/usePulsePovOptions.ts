@@ -6,6 +6,8 @@ import type { Character } from '../wechat/newFriendsPersona/types'
 import { isPersonaRosterMainCharacter } from '../wechat/newFriendsPersona/personaRoster/personaRosterTypes'
 import { DEFAULT_WORLD_BACKGROUND_ID } from '../wechat/newFriendsPersona/worldBackgroundConstants'
 import { loadAccountsBundle } from '../wechat/wechatAccountPersistence'
+import { getCharacterLinkedPlayerIdentityIds } from '../wechat/wechatCharacterPlayerIdentity'
+import { pulseCharacterWeiboNickname } from './pulseMentionExpr'
 import type { PulsePovOption } from './pulseTypes'
 import { toCharPovId } from './pulseTypes'
 
@@ -63,9 +65,11 @@ export function usePulsePovOptions() {
         povId: toCharPovId(id),
         kind: 'char',
         rawId: id,
-        label: ch.name?.trim() || '未命名',
+        label: pulseCharacterWeiboNickname(ch),
         worldName: worldNameByBgId[bgId] ?? '现代都市',
+        identity: ch.identity?.trim() || undefined,
         avatarUrl: ch.avatarUrl?.trim(),
+        linkedPlayerIdentityIds: getCharacterLinkedPlayerIdentityIds(ch),
       })
     }
     return rows

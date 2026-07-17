@@ -18,6 +18,7 @@ export const LUMI_UNIFIED_STYLE_ATMOSPHERE_BOOK = `
 【氛围】至多 1 句环境且须影响下一步动作；不写连续景物/感官堆叠。
 
 【写作禁令｜详见 system 扫描词】「一+微量」；模糊副词糊墙；形容词+空话壳；工业糖精/霸总桥段；文末抽象升华。**禁词与同构仿写以 system 文末全表为准。**
+【禁止 MBTI 出戏】旁白、对白、内心 OS 中禁止写出 ENFP/INFJ 等四字母、禁止「快乐修勾」「INFJ 清冷感」等类型学套话；气质只通过具体言行体现。
 </writing_style:线下剧情统一文风与氛围册>
 `.trim()
 

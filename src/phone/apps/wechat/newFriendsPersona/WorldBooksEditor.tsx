@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookOpen, ChevronDown, Link2, Trash2 } from 'lucide-react'
+import { BookOpen, ChevronDown, Link2, RotateCcw, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiConfig } from '../../api/types'
 import { generateWorldBookItemContent } from './ai'
@@ -31,6 +31,11 @@ import { ensureMeetVol10EpilogueIfNeeded, hasMeetCharacterWechatLinked } from '.
 import { hasMeetVol10GraduatedEpilogue } from '../../lumiMeet/meetNineDimensionWorldBooks'
 import { isMeetSyncedCharacter } from '../../lumiMeet/meetUserProfileSnapshot'
 import { personaDb } from './idb'
+import {
+  countWorldBookAfterResettable,
+  resetWorldBookAfterItemToInitial,
+  resetWorldBookAfterToInitial,
+} from './worldBookAfterPatch'
 
 const BG_PAGE = 'linear-gradient(180deg, #fafaf9 0%, #f5f5f4 48%, #f4f4f5 100%)'
 
@@ -53,6 +58,7 @@ export function WorldBooksEditor({
 }) {
   const [sheetEntry, setSheetEntry] = useState<null | { wbId: string; itemId: string }>(null)
   const [confirmDelete, setConfirmDelete] = useState<null | { kind: 'wb' | 'item'; wbId: string; itemId?: string; title: string }>(null)
+  const [confirmResetEpilogue, setConfirmResetEpilogue] = useState(false)
   const [generatingKey, setGeneratingKey] = useState<string>('')
   const [wbItemGenPicker, setWbItemGenPicker] = useState<null | { wbId: string; itemId: string }>(null)
   const [archiveGuideOpen, setArchiveGuideOpen] = useState(false)
@@ -293,11 +299,70 @@ export function WorldBooksEditor({
           ? w
           : {
               ...w,
-              items: (w.items ?? []).map((it) => (it.id === itemId ? { ...it, ...patch, updatedAt: Date.now() } : it)),
+              items: (w.items ?? []).map((it) => {
+                if (it.id !== itemId) return it
+                const next: WorldBookItem = { ...it, ...patch, updatedAt: Date.now() }
+                const nextPriority = next.priority
+                if (nextPriority === 'after') {
+                  const hadInitial = String(it.contentInitial ?? '').trim().length > 0
+                  if (!hadInitial) {
+                    const before = String(it.content ?? '').trim()
+                    const after = String(next.content ?? '').trim()
+                    if (patch.content !== undefined && before && before !== after) {
+                      // 首次改写：冻结改写前为出厂稿
+                      next.contentInitial = it.content
+                    } else if (after && !String(next.contentInitial ?? '').trim()) {
+                      // 首次写入正文：当前即出厂稿
+                      next.contentInitial = next.content
+                    }
+                  }
+                }
+                return next
+              }),
             },
       ),
     )
   }
+
+  const epilogueResettableCount = useMemo(
+    () => (forPlayerIdentity ? 0 : countWorldBookAfterResettable(character)),
+    [character, forPlayerIdentity],
+  )
+
+  const handleResetEpilogue = useCallback(() => {
+    if (forPlayerIdentity) return
+    if (!confirmResetEpilogue) {
+      setConfirmResetEpilogue(true)
+      window.setTimeout(() => setConfirmResetEpilogue(false), 4000)
+      return
+    }
+    setConfirmResetEpilogue(false)
+    const n = countWorldBookAfterResettable(character)
+    const next = resetWorldBookAfterToInitial(character)
+    if (!next) {
+      setAlignUserToast(
+        '没有可重置的尾声条目。新生成的人设会自带出厂稿；旧档在尾声被自动更新一次后，也会把更新前正文记为起点。',
+      )
+      window.setTimeout(() => setAlignUserToast(null), 5200)
+      return
+    }
+    onChange(next)
+    setAlignUserToast(`已将 ${n} 条尾声延展恢复为最初内容，可重新开始对话。`)
+    window.setTimeout(() => setAlignUserToast(null), 4200)
+  }, [character, confirmResetEpilogue, forPlayerIdentity, onChange])
+
+  const handleResetSheetEpilogueItem = useCallback(() => {
+    if (!sheetEntry || forPlayerIdentity) return
+    const next = resetWorldBookAfterItemToInitial(character, sheetEntry.wbId, sheetEntry.itemId)
+    if (!next) {
+      setAlignUserToast('本条尚无出厂稿，或已是最初内容。')
+      window.setTimeout(() => setAlignUserToast(null), 3600)
+      return
+    }
+    onChange(next)
+    setAlignUserToast('已恢复本条尾声为最初内容。')
+    window.setTimeout(() => setAlignUserToast(null), 3600)
+  }, [character, forPlayerIdentity, onChange, sheetEntry])
 
   const removeWorldBook = (wbId: string) => {
     setWorldBooks((books) => books.filter((w) => w.id !== wbId))
@@ -348,46 +413,65 @@ export function WorldBooksEditor({
     <div className="relative min-h-[min(100vh,860px)] pb-36" style={{ background: BG_PAGE }}>
       <div className="px-5 pt-8 pb-4">
         <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-stone-400">Lore Archive</p>
-        <div className="mt-2 flex items-start justify-between gap-3">
-          <h2 className="min-w-0 flex-1 text-[20px] font-semibold tracking-tight text-stone-900">世界书档案室</h2>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+        <h2 className="mt-2 text-[22px] font-semibold tracking-tight text-stone-900">世界书档案室</h2>
+        <p className="mt-2 text-[13px] leading-relaxed text-stone-500">
+          {forPlayerIdentity
+            ? '刻画玩家本人侧设定；与通讯录人设档案无关。'
+            : '双层法则：序言介入为基底，尾声延展为关系快照；轻触条目即可雕琢。'}
+        </p>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={alignUserBusy || userPlaceholderSummary.slotCount === 0}
+            onClick={runAlignUserPlaceholders}
+            title={
+              userPlaceholderSummary.slotCount === 0
+                ? '当前档案世界书中没有 {{user}} 表达式'
+                : worldBookUserInsertContext
+                  ? `未绑定的 {{user}} 将绑到当前账号「${worldBookUserInsertContext.displayName}」；已有绑定不变；旧式长表达式按原文迁出`
+                  : '请先在当前微信账号下选择扮演身份'
+            }
+            className="inline-flex items-center gap-1.5 rounded-full border border-stone-200/90 bg-white/90 px-3 py-1.5 text-[12px] font-medium text-stone-600 shadow-sm transition hover:border-stone-300 hover:bg-white active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <Link2 className="size-3.5 shrink-0 text-stone-500" strokeWidth={2} />
+            {alignUserBusy ? '对齐中…' : '对齐 {{user}}'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setArchiveGuideOpen((v) => !v)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-stone-200/90 bg-white/90 px-3 py-1.5 text-[12px] font-medium text-stone-600 shadow-sm transition hover:border-stone-300 hover:bg-white active:scale-[0.98]"
+            aria-expanded={archiveGuideOpen}
+          >
+            <BookOpen className="size-3.5 shrink-0 text-stone-500" strokeWidth={2} />
+            编辑说明
+          </button>
+          {!forPlayerIdentity ? (
             <button
               type="button"
-              disabled={alignUserBusy || userPlaceholderSummary.slotCount === 0}
-              onClick={runAlignUserPlaceholders}
-              title={
-                userPlaceholderSummary.slotCount === 0
-                  ? '当前档案世界书中没有 {{user}} 表达式'
-                  : worldBookUserInsertContext
-                    ? `未绑定的 {{user}} 将绑到当前账号「${worldBookUserInsertContext.displayName}」；已有绑定不变；旧式长表达式按原文迁出`
-                    : '请先在当前微信账号下选择扮演身份'
-              }
-              className="flex items-center gap-1 rounded-full border border-stone-200/90 bg-white/80 px-3 py-1.5 text-[12px] font-medium text-stone-600 shadow-sm backdrop-blur-sm transition hover:border-stone-300 hover:bg-white active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+              onClick={handleResetEpilogue}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium shadow-sm transition active:scale-[0.98] ${
+                confirmResetEpilogue
+                  ? 'border-amber-400/80 bg-amber-50 text-amber-900'
+                  : 'border-stone-200/90 bg-white/90 text-stone-600 hover:border-stone-300 hover:bg-white'
+              }`}
+              title="将所有尾声延展条目恢复为人设最初落定的关系快照"
             >
-              <Link2 className="size-3.5 text-stone-500" strokeWidth={2} />
-              {alignUserBusy ? '对齐中…' : '对齐 {{user}}'}
+              <RotateCcw className="size-3.5 shrink-0" strokeWidth={2} />
+              {confirmResetEpilogue
+                ? '再点确认'
+                : epilogueResettableCount > 0
+                  ? `重置尾声 · ${epilogueResettableCount}`
+                  : '重置尾声'}
             </button>
-            <button
-              type="button"
-              onClick={() => setArchiveGuideOpen((v) => !v)}
-              className="group flex items-center gap-1 rounded-full border border-stone-200/90 bg-white/80 px-3 py-1.5 text-[12px] font-medium text-stone-600 shadow-sm backdrop-blur-sm transition hover:border-stone-300 hover:bg-white active:scale-[0.98]"
-              aria-expanded={archiveGuideOpen}
-            >
-              <BookOpen className="size-3.5 text-stone-500 group-hover:text-stone-700" strokeWidth={2} />
-              编辑说明
-            </button>
-          </div>
+          ) : null}
         </div>
+
         {alignUserToast ? (
           <p className="mt-3 rounded-xl border border-stone-200/90 bg-white/95 px-3 py-2 text-[12px] leading-relaxed text-stone-600 shadow-sm">
             {alignUserToast}
           </p>
         ) : null}
-        <p className="mt-2 max-w-[min(100%,22rem)] text-[13px] leading-relaxed text-stone-500">
-          {forPlayerIdentity
-            ? '刻画玩家本人侧设定；与通讯录人设档案无关。'
-            : '双层法则：序言介入为基底，尾声延展为关系快照；轻触条目即可雕琢。'}
-        </p>
         <AnimatePresence initial={false}>
           {archiveGuideOpen && (
             <motion.div
@@ -415,7 +499,7 @@ export function WorldBooksEditor({
                     <li>想删掉一整段占位符时，光标挪到那段里（或紧挨在段尾后面）按一次退格或 Delete，整段表达式会一块儿删掉，不用慢慢抠字母。</li>
                     <li>关掉某一卷或某一条的开关，那一段就不会混进提示词里。</li>
                     <li>
-                      右上角<strong className="text-stone-800">{'「对齐 {{user}}」'}</strong>
+                      标题下方<strong className="text-stone-800">{'「对齐 {{user}}」'}</strong>
                       ：未绑定的槽位绑到<strong className="text-stone-800">当前微信账号与扮演身份</strong>；已有绑定不变；旧式长表达式按原文迁出。
                     </li>
                   </ul>
@@ -446,11 +530,15 @@ export function WorldBooksEditor({
                     <li>要删占位符同上：光标放在这段里或紧贴在整段末尾后面，按一次退格或 Delete，整段表达式一起没。</li>
                     <li>某一卷或某一条关掉开关，那一段就不会进提示词，放心试错。</li>
                     <li>
-                      右上角<strong className="text-stone-800">{'「对齐 {{user}}」'}</strong>
+                      标题下方<strong className="text-stone-800">{'「对齐 {{user}}」'}</strong>
                       ：未绑定的 <code className="rounded bg-stone-100 px-1 text-[12px]">{`{{user}}`}</code>{' '}
                       绑到<strong className="text-stone-800">当前登录账号的扮演身份</strong>；旧式{' '}
                       <code className="rounded bg-stone-100 px-1 text-[12px]">{`{{user:…}}`}</code>{' '}
                       按原文迁出；<strong className="text-stone-800">已绑好的槽位不会改</strong>。多账号请切换后再点一次对齐。
+                    </li>
+                    <li>
+                      标题下方<strong className="text-stone-800">「重置尾声」</strong>
+                      ：一键把所有「尾声延展」条目恢复为人设最初落定的正文（对话推进后被自动改写的态度/称呼/边界等）。想重开与角色的关系线时用；需点两次确认。序言介入条目不受影响。
                     </li>
                   </ul>
                 )}
@@ -595,6 +683,7 @@ export function WorldBooksEditor({
           itemId={sheetEntry.itemId}
           onPatchItem={updateItem}
           onDeleteItem={removeItem}
+          onResetToInitial={forPlayerIdentity ? undefined : handleResetSheetEpilogueItem}
           forPlayerIdentity={forPlayerIdentity}
           networkPeersForInsert={networkPeersForInsert}
           canUseAi={canUseAi}

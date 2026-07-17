@@ -18,6 +18,10 @@ import { MomentsCoverEditorSheet } from './MomentsCoverEditorSheet'
 import { MomentsFeed } from './MomentsFeed'
 import { MomentsCover } from './MomentsCover'
 import type { MomentComment, MomentItemModel } from './mockMoments'
+import {
+  buildMomentImagePromptPatch,
+  buildMomentImageReplacePatch,
+} from './momentImagePatch'
 import { runMomentCommentReplyPipeline } from './momentCommentReplyPipeline'
 import {
   ELICIT_REPLY_ALREADY_PENDING_MESSAGE,
@@ -82,6 +86,7 @@ import {
   filterMentionedCharactersByAudience,
 } from './momentMentionUtils'
 import { scheduleMomentInteractionMemoryArchive } from './momentInteractionMemoryBridge'
+import { deleteCharacterMomentMemoriesForMoment } from './momentArchiverService'
 import { deleteUserMomentDistributionForMoment } from './userMomentDistributionArchiveService'
 import {
   appendVisitorFootprintInteractions,
@@ -823,13 +828,16 @@ export function WeChatMomentsPage({
   const handleTogglePin = useCallback(
     async (momentId: string) => {
       const existing = userMoments.find((m) => m.id === momentId)
-      if (!existing?.isUserAuthored) return
+      if (!existing) return
+      if (!existing.isUserAuthored && !existing.authorCharacterId?.trim()) return
       const nextPinned = !existing.isPinned
       setUserMoments((prev) =>
         prev.map((m) => (m.id === momentId ? { ...m, isPinned: nextPinned } : m)),
       )
       await patchUserMoment(currentAccountId, momentId, { isPinned: nextPinned })
-      archiveCharacterMoment({ ...existing, isPinned: nextPinned })
+      if (existing.isUserAuthored || existing.authorCharacterId?.trim()) {
+        archiveCharacterMoment({ ...existing, isPinned: nextPinned })
+      }
     },
     [archiveCharacterMoment, currentAccountId, userMoments],
   )
@@ -837,10 +845,15 @@ export function WeChatMomentsPage({
   const handleDeleteMoment = useCallback(
     async (momentId: string) => {
       const existing = userMoments.find((m) => m.id === momentId)
-      if (!existing?.isUserAuthored) return
+      if (!existing) return
+      if (!existing.isUserAuthored && !existing.authorCharacterId?.trim()) return
       const next = await deleteUserMoment(currentAccountId, momentId)
       setUserMoments(next)
-      await deleteUserMomentDistributionForMoment({ accountId: currentAccountId, momentId })
+      if (existing.isUserAuthored) {
+        await deleteUserMomentDistributionForMoment({ accountId: currentAccountId, momentId })
+      } else {
+        await deleteCharacterMomentMemoriesForMoment(momentId)
+      }
       if (detailMomentId === momentId) {
         setDetailMomentId(null)
         setSubView('feed')
@@ -882,6 +895,30 @@ export function WeChatMomentsPage({
       archiveCharacterMoment(item)
     },
     [archiveCharacterMoment, currentAccountId],
+  )
+
+  const handleReplaceMomentImage = useCallback(
+    async (momentId: string, index: number, next: { url: string; prompt: string }) => {
+      if (!currentAccountId) throw new Error('未选择微信账号')
+      const existing = userMoments.find((m) => m.id === momentId)
+      if (!existing) throw new Error('动态不存在')
+      const patch = buildMomentImageReplacePatch(existing, index, next)
+      const list = await patchUserMoment(currentAccountId, momentId, patch)
+      setUserMoments(list)
+    },
+    [currentAccountId, userMoments],
+  )
+
+  const handleSaveMomentImagePrompt = useCallback(
+    async (momentId: string, index: number, prompt: string) => {
+      if (!currentAccountId) throw new Error('未选择微信账号')
+      const existing = userMoments.find((m) => m.id === momentId)
+      if (!existing) throw new Error('动态不存在')
+      const patch = buildMomentImagePromptPatch(existing, index, prompt)
+      const list = await patchUserMoment(currentAccountId, momentId, patch)
+      setUserMoments(list)
+    },
+    [currentAccountId, userMoments],
   )
 
   useEffect(() => {
@@ -972,6 +1009,8 @@ export function WeChatMomentsPage({
               onTogglePin={handleTogglePin}
               onDelete={handleDeleteMoment}
               onRevealPendingInteractions={handleRevealPendingInteractions}
+              onReplaceMomentImage={handleReplaceMomentImage}
+              onSaveMomentImagePrompt={handleSaveMomentImagePrompt}
               onOpenParticipantProfile={onOpenParticipantProfile}
             />
           </MomentsContentBackdrop>
@@ -1046,6 +1085,8 @@ export function WeChatMomentsPage({
               onTogglePin={handleTogglePin}
               onDelete={handleDeleteMoment}
               onRevealPendingInteractions={handleRevealPendingInteractions}
+              onReplaceMomentImage={handleReplaceMomentImage}
+              onSaveMomentImagePrompt={handleSaveMomentImagePrompt}
               onOpenParticipantProfile={onOpenParticipantProfile}
             />
           ) : (

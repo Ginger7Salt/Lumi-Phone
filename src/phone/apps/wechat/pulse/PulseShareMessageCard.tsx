@@ -10,15 +10,24 @@ const CARD_MOTION = {
 type Props = {
   data: WeChatPulseSharePayload
   compact?: boolean
+  onOpen?: () => void
 }
 
-export function PulseShareMessageCard({ data, compact = false }: Props) {
+export function PulseShareMessageCard({ data, compact = false, onOpen }: Props) {
   const summary = data.excerpt?.trim() || data.content.trim()
   const clipped = summary.length > 96 ? `${summary.slice(0, 96)}…` : summary
+  const hint = '点击查看微博动态'
 
   return (
-    <motion.div
-      className={`overflow-hidden rounded-[12px] border-[0.5px] border-gray-200 bg-[#F9FAFB] text-left shadow-[0_2px_15px_rgba(0,0,0,0.03)] ${
+    <motion.button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpen?.()
+      }}
+      aria-label={hint}
+      title={hint}
+      className={`overflow-hidden rounded-[12px] border-[0.5px] border-gray-200 bg-[#F9FAFB] text-left shadow-[0_2px_15px_rgba(0,0,0,0.03)] transition-transform active:scale-[0.98] ${
         compact ? 'w-full' : 'w-[min(280px,calc(100vw-120px))]'
       }`}
       style={{ borderLeft: '2px solid #9CA3AF' }}
@@ -33,7 +42,10 @@ export function PulseShareMessageCard({ data, compact = false }: Props) {
         {data.trendingTitle ? (
           <p className="mt-2 text-[10px] tracking-[0.06em] text-neutral-400">{data.trendingTitle}</p>
         ) : null}
+        {onOpen ? (
+          <p className="mt-2 text-[10px] font-medium tracking-[0.04em] text-neutral-400">点击查看动态 →</p>
+        ) : null}
       </div>
-    </motion.div>
+    </motion.button>
   )
 }

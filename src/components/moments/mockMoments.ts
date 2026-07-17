@@ -25,6 +25,8 @@ export type MomentItemModel = {
   authorAvatar: string
   content: string
   images?: string[]
+  /** 与 images 对齐的生图提示词（重新生成时用；旧数据可缺省） */
+  imagePrompts?: string[]
   /** 附带的单曲分享（听一听） */
   attachedMusic?: MomentAttachedMusic
   location?: string

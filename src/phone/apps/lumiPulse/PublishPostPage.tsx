@@ -1,9 +1,10 @@
-import { AnimatePresence, motion } from 'framer-motion'
 import { Loader2, MapPin } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { Pressable } from '../../components/Pressable'
-import { PULSE_MODAL_SPRING } from './constants'
+import { useCurrentApiConfig } from '../api/ApiSettingsContext'
+import { PULSE_COLORS } from './constants'
 import { usePublishKeyboardInset } from './hooks/usePublishKeyboardInset'
 import { PublishAiImageModal } from './components/publish/PublishAiImageModal'
 import { PublishFacePickerSheet } from './components/publish/PublishFacePickerSheet'
@@ -15,32 +16,73 @@ import {
   PublishMentionSheet,
   type PublishMentionCandidate,
 } from './components/publish/PublishMentionSheet'
-import { PublishRichEditor } from './components/publish/PublishRichEditor'
+import {
+  PublishRichEditor,
+  type PublishRichEditorHandle,
+} from './components/publish/PublishRichEditor'
 import { PublishUrlImageModal } from './components/publish/PublishUrlImageModal'
+import { PublishVisibilitySheet } from './components/publish/PublishVisibilitySheet'
+import { rewritePlainMentionsToPulseExpr } from './pulseMentionExpr'
+import { schedulePlayerPostEngagementAfterPublish } from './pulsePlayerPostEngagement'
+import { schedulePlayerPostCharacterEngagementAfterPublish } from './pulsePlayerPostCharacterEngagement'
+import {
+  normalizePulsePostVisibility,
+  type PulseVisibilityCandidate,
+} from './pulsePostVisibility'
 import { filesToPulseImageDataUrls, MAX_PULSE_POST_IMAGES } from './pulsePublishImages'
-import { insertAtTextareaCursor } from './pulseWeiboRichText'
+import type { PulsePost } from './pulseTypes'
+import { pulsePostReadyImageUrls } from './pulseTypes'
+import { usePulseMentionDirectory } from './usePulseMentionDirectory'
+import { usePulsePlayerAccount } from './usePulsePlayerAccount'
 import { usePulseStore } from './usePulseStore'
 
-type PublishPhase = 'edit' | 'publishing' | 'exit'
+type PublishPhase = 'edit' | 'publishing'
 
 export function PublishPostPage({
   authorPovId,
   authorName,
   authorAvatarUrl,
   mentionCandidates,
+  visibilityCandidates,
+  editPost,
   onClose,
   onPublished,
+  onToast,
+  suppressAutoFocus = false,
 }: {
   authorPovId: string
   authorName: string
   authorAvatarUrl?: string
   mentionCandidates?: PublishMentionCandidate[]
+  /** 绑定当前身份的角色，供「谁可以看」 */
+  visibilityCandidates?: PulseVisibilityCandidate[]
+  /** 传入则为编辑模式 */
+  editPost?: PulsePost | null
   onClose: () => void
   onPublished: () => void
+  onToast?: (msg: string) => void
+  /** 玩法引导打开时勿自动聚焦输入框，避免键盘挡住指引 */
+  suppressAutoFocus?: boolean
 }) {
-  const [text, setText] = useState('')
-  const [images, setImages] = useState<string[]>([])
-  const [locationLabel, setLocationLabel] = useState<string | undefined>()
+  const isEditing = Boolean(editPost?.id)
+  const initialVis = normalizePulsePostVisibility({
+    visibility: editPost?.visibility,
+    visibleToCharPovIds: editPost?.visibleToCharPovIds,
+  })
+
+  const [text, setText] = useState(() => editPost?.content ?? '')
+  const [images, setImages] = useState<string[]>(() =>
+    editPost ? pulsePostReadyImageUrls(editPost) : [],
+  )
+  const [locationLabel, setLocationLabel] = useState<string | undefined>(
+    () => editPost?.locationLabel,
+  )
+  const [visibilityMode, setVisibilityMode] = useState<'public' | 'partial'>(
+    () => initialVis.visibility,
+  )
+  const [visibleToCharPovIds, setVisibleToCharPovIds] = useState<string[]>(
+    () => initialVis.visibleToCharPovIds ?? [],
+  )
   const [addingImages, setAddingImages] = useState(false)
   const [phase, setPhase] = useState<PublishPhase>('edit')
 
@@ -50,28 +92,131 @@ export function PublishPostPage({
   const [imagePickerOpen, setImagePickerOpen] = useState(false)
   const [aiModalOpen, setAiModalOpen] = useState(false)
   const [urlModalOpen, setUrlModalOpen] = useState(false)
+  const [visibilityOpen, setVisibilityOpen] = useState(false)
+  const [composerFocused, setComposerFocused] = useState(false)
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const editorRef = useRef<PublishRichEditorHandle>(null)
+  const pendingInsertRef = useRef<{ text: string; offset?: number } | null>(null)
+  const focusTrapRef = useRef<HTMLButtonElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const dismissedRef = useRef(false)
+  const onPublishedRef = useRef(onPublished)
+  const onCloseRef = useRef(onClose)
+  onPublishedRef.current = onPublished
+  onCloseRef.current = onClose
+
   const publishPost = usePulseStore((s) => s.publishPost)
-  const { composerRef, keyboardPadPx } = usePublishKeyboardInset(phase === 'edit')
+  const updatePost = usePulseStore((s) => s.updatePost)
+  const apiConfig = useCurrentApiConfig('chatCard')
+  const { displayName: playerDisplayName, identityRealName } = usePulsePlayerAccount()
+  const mentionDirectory = usePulseMentionDirectory()
+  const sheetOpen =
+    mentionOpen ||
+    locationOpen ||
+    emojiOpen ||
+    imagePickerOpen ||
+    aiModalOpen ||
+    urlModalOpen ||
+    visibilityOpen
+  const { composerRef, keyboardPadPx } = usePublishKeyboardInset(
+    phase === 'edit' && composerFocused && !sheetOpen,
+  )
 
   const canPublish = text.trim().length > 0 || images.length > 0
   const mentions = useMemo(() => mentionCandidates ?? [], [mentionCandidates])
+  const visCandidates = useMemo(() => visibilityCandidates ?? [], [visibilityCandidates])
 
-  const applyInsert = (insert: string) => {
-    const el = textareaRef.current
-    const { next, cursor } = insertAtTextareaCursor(text, insert, el)
-    setText(next)
-    requestAnimationFrame(() => {
-      el?.focus()
-      el?.setSelectionRange(cursor, cursor)
-    })
+  const closeAllSheets = () => {
+    setMentionOpen(false)
+    setLocationOpen(false)
+    setEmojiOpen(false)
+    setImagePickerOpen(false)
+    setAiModalOpen(false)
+    setUrlModalOpen(false)
+    setVisibilityOpen(false)
   }
+
+  const blurComposer = useCallback(() => {
+    editorRef.current?.blur()
+    const active = document.activeElement
+    if (active instanceof HTMLElement) active.blur()
+    // iOS：先聚焦隐藏按钮再 blur，确保软键盘真正收起
+    focusTrapRef.current?.focus({ preventScroll: true })
+    requestAnimationFrame(() => focusTrapRef.current?.blur())
+  }, [])
+
+  useEffect(() => {
+    if (!suppressAutoFocus) return
+    blurComposer()
+    const t = window.setTimeout(blurComposer, 80)
+    return () => window.clearTimeout(t)
+  }, [suppressAutoFocus, blurComposer])
+
+  /** 立刻卸掉本页：禁止 exit 动画 / 残留 fixed 遮罩挡列表滑动 */
+  const dismissPublished = () => {
+    if (dismissedRef.current) return
+    dismissedRef.current = true
+    blurComposer()
+    closeAllSheets()
+    onPublishedRef.current()
+  }
+
+  const dismissCancelled = () => {
+    if (dismissedRef.current) return
+    dismissedRef.current = true
+    blurComposer()
+    closeAllSheets()
+    onCloseRef.current()
+  }
+
+  useEffect(() => {
+    return () => {
+      const active = document.activeElement
+      if (active instanceof HTMLElement) active.blur()
+    }
+  }, [])
+
+  const flushPendingInsert = useCallback(() => {
+    const pending = pendingInsertRef.current
+    if (!pending) return
+    pendingInsertRef.current = null
+    editorRef.current?.focus()
+    editorRef.current?.insertToken(pending.text, pending.offset)
+  }, [])
+
+  const applyInsert = useCallback(
+    (insert: string, cursorOffsetInInsert?: number) => {
+      if (sheetOpen) {
+        pendingInsertRef.current = { text: insert, offset: cursorOffsetInInsert }
+        return
+      }
+      editorRef.current?.focus()
+      editorRef.current?.insertToken(insert, cursorOffsetInInsert)
+    },
+    [sheetOpen],
+  )
+
+  useEffect(() => {
+    if (sheetOpen) return
+    flushPendingInsert()
+  }, [sheetOpen, flushPendingInsert])
+
+  const openSheet = useCallback(
+    (open: () => void) => {
+      blurComposer()
+      open()
+    },
+    [blurComposer],
+  )
 
   const openImagePicker = () => {
     if (addingImages || images.length >= MAX_PULSE_POST_IMAGES || phase !== 'edit') return
-    setImagePickerOpen(true)
+    openSheet(() => setImagePickerOpen(true))
+  }
+
+  const openVisibilitySheet = () => {
+    if (phase !== 'edit') return
+    openSheet(() => setVisibilityOpen(true))
   }
 
   const pickLocalImages = () => {
@@ -106,31 +251,87 @@ export function PublishPostPage({
 
   const submit = () => {
     if (!canPublish || phase !== 'edit' || addingImages) return
-    const content = text.trim()
-    setPhase('publishing')
-    publishPost({
-      authorPovId,
-      authorName,
-      authorAvatarUrl,
-      content,
-      imageUrls: images.length ? images : undefined,
-      locationLabel,
+    if (visibilityMode === 'partial' && !visibleToCharPovIds.length) {
+      onToast?.('请至少选择一位可见角色，或改为全部可见')
+      setVisibilityOpen(true)
+      return
+    }
+    const content = rewritePlainMentionsToPulseExpr(text.trim(), mentionDirectory)
+    const vis = normalizePulsePostVisibility({
+      visibility: visibilityMode,
+      visibleToCharPovIds,
     })
-    window.setTimeout(() => setPhase('exit'), 1000)
+    closeAllSheets()
+    setPhase('publishing')
+
+    try {
+      if (isEditing && editPost) {
+        const ok = updatePost(editPost.id, {
+          content,
+          imageUrls: images.length ? images : null,
+          locationLabel: locationLabel ?? null,
+          visibility: vis.visibility,
+          visibleToCharPovIds: vis.visibleToCharPovIds,
+        })
+        if (!ok) {
+          setPhase('edit')
+          onToast?.('保存失败，请重试')
+          return
+        }
+        onToast?.('已保存')
+        dismissPublished()
+        return
+      }
+
+      const postId = publishPost({
+        authorPovId,
+        authorName,
+        authorAvatarUrl,
+        content,
+        imageUrls: images.length ? images : undefined,
+        locationLabel,
+        visibility: vis.visibility,
+        visibleToCharPovIds: vis.visibleToCharPovIds,
+        playerMentionAliases: [playerDisplayName].filter(Boolean),
+      })
+      if (postId) {
+        try {
+          schedulePlayerPostEngagementAfterPublish({
+            postId,
+            apiConfig,
+            playerRealName: identityRealName?.trim() || undefined,
+            playerWeiboNickname: authorName,
+            onToast,
+          })
+          schedulePlayerPostCharacterEngagementAfterPublish({
+            postId,
+            apiConfig,
+            playerDisplayName: authorName,
+            onToast,
+          })
+        } catch {
+          // 互动调度失败不挡关闭发帖页
+        }
+      }
+      dismissPublished()
+    } catch {
+      setPhase('edit')
+      onToast?.(isEditing ? '保存失败，请重试' : '发布失败，请重试')
+    }
   }
 
-  const handleExitComplete = () => {
-    if (phase === 'exit') onPublished()
-  }
+  /**
+   * portal 到 body：避开手机壳 transform 下 fixed 错位/残留挡触摸。
+   * sheet 不做 AnimatePresence exit，关闭即卸，避免透明遮罩粘住。
+   */
+  if (typeof document === 'undefined') return null
 
-  return (
-    <motion.div
-      className="fixed inset-0 z-[1250] flex flex-col bg-white"
-      initial={{ opacity: 0, y: 24 }}
-      animate={phase === 'exit' ? { opacity: 0, y: '100vh' } : { opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: '100vh' }}
-      transition={phase === 'exit' ? { duration: 0.55, ease: [0.32, 0.72, 0, 1] } : PULSE_MODAL_SPRING}
-      onAnimationComplete={handleExitComplete}
+  return createPortal(
+    <div
+      className={`fixed inset-0 z-[1250] flex flex-col bg-white ${
+        phase !== 'edit' ? 'pointer-events-none' : ''
+      }`}
+      data-pulse-publish-overlay="1"
     >
       <input
         ref={fileInputRef}
@@ -143,29 +344,45 @@ export function PublishPostPage({
           e.target.value = ''
         }}
       />
+      <button
+        ref={focusTrapRef}
+        type="button"
+        tabIndex={-1}
+        aria-hidden
+        className="pointer-events-none fixed opacity-0"
+        style={{ width: 1, height: 1, left: -9999 }}
+      />
 
       <header
-        className="flex shrink-0 items-center justify-between bg-white/90 px-5 py-3 backdrop-blur-xl"
+        className="flex shrink-0 items-center justify-between bg-white px-5 py-3"
         style={{ paddingTop: 'max(10px, env(safe-area-inset-top, 0px))' }}
       >
         <Pressable
           type="button"
-          onClick={onClose}
+          onClick={dismissCancelled}
           disabled={phase !== 'edit'}
           className="text-[13px] text-neutral-400 disabled:opacity-40"
         >
           取消
         </Pressable>
-        <span className="text-[11px] uppercase tracking-[0.28em] text-neutral-300">Publish</span>
+        <span className="text-[11px] uppercase tracking-[0.28em] text-neutral-300">
+          {isEditing ? 'Edit' : 'Publish'}
+        </span>
         <Pressable
           type="button"
-          disabled={!canPublish || phase !== 'edit' || addingImages}
           onClick={submit}
-          className={`text-[13px] transition-colors duration-300 ${
+          disabled={!canPublish || phase !== 'edit' || addingImages}
+          className={`rounded-full px-3.5 py-1.5 text-[13px] transition-colors duration-300 ${
             canPublish && phase === 'edit'
-              ? 'font-semibold text-[#1C1C1E]'
+              ? 'font-semibold text-white shadow-[0_2px_10px_rgba(229,152,155,0.35)]'
               : 'font-normal text-neutral-300'
           }`}
+          style={
+            canPublish && phase === 'edit'
+              ? { backgroundColor: PULSE_COLORS.dustyRose }
+              : undefined
+          }
+          data-pulse-coach="publish-submit"
         >
           {phase === 'publishing' ? (
             <Loader2
@@ -173,6 +390,8 @@ export function PublishPostPage({
               style={{ color: '#D4AF37' }}
               strokeWidth={2}
             />
+          ) : isEditing ? (
+            '保存'
           ) : (
             '发布'
           )}
@@ -181,27 +400,38 @@ export function PublishPostPage({
 
       <div
         ref={composerRef}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         style={{
           paddingBottom: `calc(16px + env(safe-area-inset-bottom, 0px) + ${keyboardPadPx}px)`,
+          touchAction: 'pan-y',
+          WebkitOverflowScrolling: 'touch',
         }}
       >
-        <PublishRichEditor
-          value={text}
-          onChange={setText}
-          textareaRef={textareaRef}
-          autoFocus
-        />
+        <div data-pulse-coach="publish-editor">
+          <PublishRichEditor
+            ref={editorRef}
+            value={text}
+            onChange={setText}
+            editable={!sheetOpen}
+            onFocusChange={setComposerFocused}
+            autoFocus={!suppressAutoFocus}
+          />
+        </div>
 
         {phase === 'edit' ? (
-          <PublishFloatingToolbox
-            onOpenEmoji={() => setEmojiOpen(true)}
-            onImage={openImagePicker}
-            onHashtag={() => applyInsert('#')}
-            onMention={() => setMentionOpen(true)}
-            onLocation={() => setLocationOpen(true)}
-            imageDisabled={addingImages || images.length >= MAX_PULSE_POST_IMAGES}
-          />
+          <div data-pulse-coach="publish-toolbox">
+            <PublishFloatingToolbox
+              onDismissKeyboard={blurComposer}
+              onOpenEmoji={() => openSheet(() => setEmojiOpen(true))}
+              onImage={openImagePicker}
+              onHashtag={() => applyInsert('##', 1)}
+              onMention={() => openSheet(() => setMentionOpen(true))}
+              onLocation={() => openSheet(() => setLocationOpen(true))}
+              onVisibility={openVisibilitySheet}
+              visibilityPartial={visibilityMode === 'partial'}
+              imageDisabled={addingImages || images.length >= MAX_PULSE_POST_IMAGES}
+            />
+          </div>
         ) : null}
 
         <PublishMediaMatrix
@@ -211,77 +441,95 @@ export function PublishPostPage({
         />
 
         {locationLabel ? (
-          <div className="flex items-center gap-1.5 px-6 pb-4 text-[11px] text-neutral-400">
+          <div className="flex items-center gap-1.5 px-6 pb-2 text-[11px] text-neutral-400">
             <MapPin className="size-3.5 shrink-0" strokeWidth={1.5} />
             <span>{locationLabel}</span>
           </div>
         ) : null}
       </div>
 
-      <AnimatePresence>
-        {mentionOpen ? (
-          <PublishMentionSheet
-            candidates={mentions}
-            onPick={(name) => {
-              applyInsert(`@${name} `)
-              setMentionOpen(false)
-            }}
-            onClose={() => setMentionOpen(false)}
-          />
-        ) : null}
-        {emojiOpen ? (
-          <PublishFacePickerSheet
-            onPick={(token) => {
-              applyInsert(token)
-              requestAnimationFrame(() => textareaRef.current?.focus())
-            }}
-            onClose={() => setEmojiOpen(false)}
-          />
-        ) : null}
-        {locationOpen ? (
-          <PublishLocationSheet
-            selected={locationLabel}
-            onPick={(label) => {
-              setLocationLabel(label)
-              setLocationOpen(false)
-            }}
-            onClear={() => {
-              setLocationLabel(undefined)
-              setLocationOpen(false)
-            }}
-            onClose={() => setLocationOpen(false)}
-          />
-        ) : null}
-        {imagePickerOpen ? (
-          <PublishImagePickerSheet
-            onPickLocal={pickLocalImages}
-            onPickUrl={() => {
-              setImagePickerOpen(false)
-              setUrlModalOpen(true)
-            }}
-            onPickAi={() => {
-              setImagePickerOpen(false)
-              setAiModalOpen(true)
-            }}
-            onClose={() => setImagePickerOpen(false)}
-          />
-        ) : null}
-        {aiModalOpen ? (
-          <PublishAiImageModal
-            onClose={() => setAiModalOpen(false)}
-            onGenerated={(url) => appendImage(url)}
-          />
-        ) : null}
-        {urlModalOpen ? (
-          <PublishUrlImageModal
-            onClose={() => setUrlModalOpen(false)}
-            onSubmit={(url) => {
-              appendImage(url)
-              setUrlModalOpen(false)
-            }}
-          />
-        ) : null}
-      </AnimatePresence>
-    </motion.div>
+      {/* 无 AnimatePresence：exit 动画会留下挡触摸的 fixed 遮罩 */}
+      {mentionOpen ? (
+        <PublishMentionSheet
+          candidates={mentions}
+          onPick={(row) => {
+            // 编辑器展示微博昵称；发布时 rewritePlainMentionsToPulseExpr 再写成表达式
+            applyInsert(`@${row.name} `)
+            setMentionOpen(false)
+          }}
+          onClose={() => setMentionOpen(false)}
+        />
+      ) : null}
+      {emojiOpen ? (
+        <PublishFacePickerSheet
+          onPick={(token) => {
+            setEmojiOpen(false)
+            applyInsert(token)
+          }}
+          onClose={() => setEmojiOpen(false)}
+        />
+      ) : null}
+      {locationOpen ? (
+        <PublishLocationSheet
+          selected={locationLabel}
+          onPick={(label) => {
+            setLocationLabel(label)
+            setLocationOpen(false)
+          }}
+          onClear={() => {
+            setLocationLabel(undefined)
+            setLocationOpen(false)
+          }}
+          onClose={() => setLocationOpen(false)}
+        />
+      ) : null}
+      {imagePickerOpen ? (
+        <PublishImagePickerSheet
+          onPickLocal={pickLocalImages}
+          onPickUrl={() => {
+            setImagePickerOpen(false)
+            setUrlModalOpen(true)
+          }}
+          onPickAi={() => {
+            setImagePickerOpen(false)
+            setAiModalOpen(true)
+          }}
+          onClose={() => setImagePickerOpen(false)}
+        />
+      ) : null}
+      {aiModalOpen ? (
+        <PublishAiImageModal
+          onClose={() => setAiModalOpen(false)}
+          onGenerated={(url) => appendImage(url)}
+        />
+      ) : null}
+      {urlModalOpen ? (
+        <PublishUrlImageModal
+          onClose={() => setUrlModalOpen(false)}
+          onSubmit={(url) => {
+            appendImage(url)
+            setUrlModalOpen(false)
+          }}
+        />
+      ) : null}
+      {visibilityOpen ? (
+        <PublishVisibilitySheet
+          mode={visibilityMode}
+          selectedPovIds={visibleToCharPovIds}
+          candidates={visCandidates}
+          onChangeMode={(mode) => {
+            setVisibilityMode(mode)
+            if (mode === 'public') setVisibleToCharPovIds([])
+          }}
+          onTogglePov={(povId) => {
+            setVisibleToCharPovIds((prev) =>
+              prev.includes(povId) ? prev.filter((id) => id !== povId) : [...prev, povId],
+            )
+          }}
+          onClose={() => setVisibilityOpen(false)}
+        />
+      ) : null}
+    </div>,
+    document.body,
   )
 }

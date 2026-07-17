@@ -9,9 +9,30 @@ import {
 import {
   embedTextWithLocalModel,
   embedTextsWithLocalModel,
+  isLocalEmbeddingModelReady,
   testLocalEmbeddingConnection,
 } from './localEmbeddingClient'
 import { DEFAULT_LOCAL_EMBEDDING_MODEL, normalizeLocalEmbeddingModelId } from './memoryEmbeddingConstants'
+
+/** 自动模式下：本地尚未就绪时优先走 API，避免 GitHub Pages 等环境卡死在模型下载 */
+const AUTO_LOCAL_EMBED_TIMEOUT_MS = 12_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      (v) => {
+        if (timer !== undefined) clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        if (timer !== undefined) clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
 
 export { DEFAULT_LOCAL_EMBEDDING_MODEL }
 
@@ -91,6 +112,7 @@ export async function fetchEmbeddingVectorsUnified(
   if (!trimmed.length) return []
   const mode = resolveMemoryEmbeddingProviderMode(settings)
   const localModelId = resolveLocalEmbeddingModelId(settings)
+  const apiReady = Boolean(resolveEmbeddingApiCredentials(settings, chatFallback ?? null))
 
   if (mode === 'local') {
     return embedWithLocal(trimmed, localModelId)
@@ -99,11 +121,36 @@ export async function fetchEmbeddingVectorsUnified(
     return embedWithApi(settings, chatFallback, trimmed, modelOverride)
   }
 
-  try {
-    return await embedWithLocal(trimmed, localModelId)
-  } catch {
-    return embedWithApi(settings, chatFallback, trimmed, modelOverride)
+  // auto：本地已就绪 → 本地；否则有 API 就先 API（避免未就绪时卡在 CDN 下载导致永远进不了聊天模型）
+  const localReady = isLocalEmbeddingModelReady(localModelId)
+  if (localReady) {
+    try {
+      return await withTimeout(
+        embedWithLocal(trimmed, localModelId),
+        AUTO_LOCAL_EMBED_TIMEOUT_MS,
+        'local_embedding_timeout',
+      )
+    } catch {
+      if (apiReady) return embedWithApi(settings, chatFallback, trimmed, modelOverride)
+      throw new Error('本地向量超时且未配置向量 API')
+    }
   }
+  if (apiReady) {
+    try {
+      return await embedWithApi(settings, chatFallback, trimmed, modelOverride)
+    } catch {
+      return withTimeout(
+        embedWithLocal(trimmed, localModelId),
+        AUTO_LOCAL_EMBED_TIMEOUT_MS,
+        'local_embedding_timeout',
+      )
+    }
+  }
+  return withTimeout(
+    embedWithLocal(trimmed, localModelId),
+    AUTO_LOCAL_EMBED_TIMEOUT_MS,
+    'local_embedding_timeout',
+  )
 }
 
 export async function fetchEmbeddingVectorUnified(

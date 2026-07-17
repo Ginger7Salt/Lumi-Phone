@@ -42,15 +42,18 @@ function mkItem(
     nickname,
     realName,
   })
+  const content = esc(body)
+  const priority = opts?.priority ?? 'before'
   return {
     id: `meet-wb-${npcId}-${volKey}-item${String(index).padStart(2, '0')}`,
     name,
     enabled: opts?.enabled ?? true,
-    priority: opts?.priority ?? 'before',
+    priority,
     keywords: `遇见 ${nickname}`,
-    content: esc(body),
+    content,
     updatedAt: now,
     collapsed: false,
+    ...(priority === 'after' && content.trim() ? { contentInitial: content } : {}),
   }
 }
 

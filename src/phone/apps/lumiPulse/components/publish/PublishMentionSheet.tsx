@@ -3,9 +3,13 @@ import { X } from 'lucide-react'
 
 import { Pressable } from '../../../../components/Pressable'
 import { PULSE_SHEET_SPRING } from '../../constants'
+import type { PulsePovId } from '../../pulseTypes'
 
 export type PublishMentionCandidate = {
+  /** 展示用微博昵称 */
   name: string
+  /** 有则发布时写入 `@{{char|player:id}}` 表达式 */
+  povId?: PulsePovId
   avatarUrl?: string
   subtitle?: string
 }
@@ -16,7 +20,7 @@ export function PublishMentionSheet({
   onClose,
 }: {
   candidates: PublishMentionCandidate[]
-  onPick: (name: string) => void
+  onPick: (candidate: PublishMentionCandidate) => void
   onClose: () => void
 }) {
   return (
@@ -48,9 +52,9 @@ export function PublishMentionSheet({
           {candidates.length ? (
             candidates.map((row) => (
               <Pressable
-                key={row.name}
+                key={row.povId || row.name}
                 type="button"
-                onClick={() => onPick(row.name)}
+                onClick={() => onPick(row)}
                 className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left active:bg-[#F5F5F4]"
               >
                 <div className="size-10 shrink-0 overflow-hidden rounded-full bg-[#F0F0EF]">

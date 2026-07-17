@@ -1,14 +1,18 @@
 import type { LucideIcon } from 'lucide-react'
 
 import { Pressable } from '../../../components/Pressable'
-import { PULSE_COLORS } from '../constants'
+import { PulseNumericText } from './PulseNum'
+
+function formatUnreadLabel(count: number): string {
+  return count > 99 ? '99+' : String(Math.max(0, Math.floor(count)))
+}
 
 export function NotificationCell({
   label,
   Icon,
   tintBg,
   iconColor,
-  unread,
+  unreadCount = 0,
   active,
   onPress,
 }: {
@@ -16,10 +20,12 @@ export function NotificationCell({
   Icon: LucideIcon
   tintBg: string
   iconColor: string
-  unread?: boolean
+  /** 未读条数；>0 显示数字红点 */
+  unreadCount?: number
   active?: boolean
   onPress?: () => void
 }) {
+  const unread = Math.max(0, Math.floor(unreadCount))
   return (
     <Pressable
       type="button"
@@ -33,11 +39,17 @@ export function NotificationCell({
         style={{ backgroundColor: tintBg }}
       >
         <Icon className="size-5" strokeWidth={1.4} style={{ color: iconColor }} />
-        {unread ? (
+        {unread > 0 ? (
           <span
-            className="absolute right-0 top-0 size-2 rounded-full ring-2 ring-white"
-            style={{ backgroundColor: PULSE_COLORS.dustyRose }}
-          />
+            className="absolute -right-1 -top-1 flex h-[16px] min-w-[16px] items-center justify-center rounded-full px-[4px] text-[9px] font-bold leading-none text-white ring-[1.5px] ring-white"
+            style={{ background: '#fa5151' }}
+            aria-label={`${unread} 条未读`}
+          >
+            <PulseNumericText
+              text={formatUnreadLabel(unread)}
+              className="text-[9px] font-bold leading-none text-white"
+            />
+          </span>
         ) : null}
       </div>
       <span className="text-[12px] text-[#1C1C1E]">{label}</span>

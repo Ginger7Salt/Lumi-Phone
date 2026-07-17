@@ -19,7 +19,12 @@ import { DiscoverListenTogetherApp } from './discoverListen/DiscoverListenTogeth
 import { LISTEN_TOGETHER_NAVIGATE_EVENT } from './discoverListen/listenTogetherNavigation'
 import { LISTEN_TOGETHER_SHARE_TO_MOMENTS_EVENT } from './discoverListen/listenTogetherMomentShareNavigation'
 import { JubenshaHallApp } from './jubensha'
-import { LUMI_PULSE_NAVIGATE_EVENT } from '../phone/apps/lumiPulse/lumiPulseNavigation'
+import {
+  consumePendingPulseOpenWeibo,
+  LUMI_PULSE_NAVIGATE_EVENT,
+  peekPulseReturnToChat,
+  requestPulseReturnToChat,
+} from '../phone/apps/lumiPulse/lumiPulseNavigation'
 import { WeChatDiscoverLumiPulseApp } from '../phone/apps/lumiPulse/WeChatDiscoverLumiPulseApp'
 import { useMomentsInteractionUnreadCount } from './moments/MomentsNoticeRuntime'
 import { MomentsSerifNumericText } from './moments/ArchiveTimelineDateColumn'
@@ -111,7 +116,11 @@ export function WeChatDiscoverInstagram({
     return () => window.removeEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigate)
   }, [])
   useEffect(() => {
-    const onNavigateWeibo = () => setActiveView('weibo')
+    if (consumePendingPulseOpenWeibo()) setActiveView('weibo')
+    const onNavigateWeibo = () => {
+      consumePendingPulseOpenWeibo()
+      setActiveView('weibo')
+    }
     window.addEventListener(LUMI_PULSE_NAVIGATE_EVENT, onNavigateWeibo)
     return () => window.removeEventListener(LUMI_PULSE_NAVIGATE_EVENT, onNavigateWeibo)
   }, [])
@@ -167,7 +176,10 @@ export function WeChatDiscoverInstagram({
     return (
       <WeChatDiscoverLumiPulseApp
         className={`h-full min-h-0 ${className}`}
-        onBack={() => setActiveView('list')}
+        onBack={() => {
+          setActiveView('list')
+          if (peekPulseReturnToChat()) requestPulseReturnToChat()
+        }}
       />
     )
   }

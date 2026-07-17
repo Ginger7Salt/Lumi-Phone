@@ -150,6 +150,18 @@ export function IconBackgroundNotify(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+/** 系统演进录：打开的卷宗 + 上行演进折线 */
+export function IconEvolution(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M12 5.8c-1.55-1-3.55-1.45-5.5-.85v12.1c1.95-.6 3.95-.15 5.5.85 1.55-1 3.55-1.45 5.5-.85V4.95c-1.95-.6-3.95-.15-5.5.85z" />
+      <path d="M12 5.8v12.1" opacity="0.35" />
+      <path d="M14.15 14.35 15.7 12.1l1.45 1.15 1.85-3.15" opacity="0.55" />
+      <circle cx="18.95" cy="10" r="0.85" opacity="0.7" />
+    </svg>
+  )
+}
+
 const map = {
   wechat: IconWeChat,
   takeout: IconTakeout,
@@ -163,6 +175,7 @@ const map = {
   backgroundNotify: IconBackgroundNotify,
   sandbox: IconSandbox,
   appearance: IconAppearance,
+  evolution: IconEvolution,
 } as const
 
 export function AppLineIcon({

@@ -1,5 +1,6 @@
 import type { WeChatContactRow } from '../../../../components/WeChatContactsInstagram'
 import type { CharacterMemory } from '../newFriendsPersona/types'
+import { resolveMemoryDisplayTimeLabel } from './dualNarrativeTime'
 import type { WechatAccountsBundle } from '../wechatAccountTypes'
 import {
   parseGroupIdFromMemoryBucketCharacterId,
@@ -62,6 +63,7 @@ export function memorySceneTagsFromRow(m: CharacterMemory): MemorySceneTag[] {
   const tags: MemorySceneTag[] = []
   if (isDiary) tags.push('日记')
   if (parsed.hasMomentTag || m.memoryScope === 'moment') tags.push('朋友圈')
+  if (parsed.hasPulseTag || m.memoryScope === 'pulse') tags.push('微博')
   if (parsed.hasMeetTag || m.memoryScope === 'meet') tags.push('遇见')
   if (parsed.hasOnlineTag) tags.push('私聊')
   if (parsed.hasGroupChatTag || m.memoryScope === 'group') tags.push('群聊')
@@ -91,6 +93,12 @@ export function resolveMemoryEntryTimestamp(m: CharacterMemory): number {
   const base = updatedAt || createdAt
   if (m.memoryScope === 'moment') {
     const publishedAt = m.momentPayload?.publishedAt
+    if (typeof publishedAt === 'number' && Number.isFinite(publishedAt) && publishedAt > 0) {
+      return Math.max(base, publishedAt)
+    }
+  }
+  if (m.memoryScope === 'pulse') {
+    const publishedAt = m.pulsePayload?.publishedAt
     if (typeof publishedAt === 'number' && Number.isFinite(publishedAt) && publishedAt > 0) {
       return Math.max(base, publishedAt)
     }
@@ -145,6 +153,11 @@ export function characterMemoryToMemoryEntry(
     triggerKeywords:
       m.memoryTriggerMode === 'keyword' ? flattenMemoryTriggerKeywords(m) : undefined,
     timestamp: resolveMemoryEntryTimestamp(m),
+    storyTimeLabel: resolveMemoryDisplayTimeLabel({
+      storyTimeLabel: m.storyTimeLabel,
+      content: parsed.body,
+      pulseStoryPublishLabel: m.pulsePayload?.storyPublishLabel,
+    }),
     ...(gid ? { groupId: gid, groupDisplayName: lookup.groupNameById.get(gid) } : {}),
     ...(m.sourceWechatAccountId?.trim() ? { sourceWechatAccountId: m.sourceWechatAccountId.trim() } : {}),
     memoryScope: m.memoryScope,
@@ -165,6 +178,7 @@ export function memoryTagsToPrefixFlags(tags: MemorySceneTag[]): ParsedMemoryWit
     hasOfflineTag: set.has('线下'),
     hasLinkedOfflineTag: set.has('关联线下'),
     hasMomentTag: set.has('朋友圈'),
+    hasPulseTag: set.has('微博'),
     body: '',
   }
 }
@@ -188,7 +202,9 @@ export function memoryEntryToPersistPayload(
   const scope =
     entry.tags.includes('朋友圈') || raw?.memoryScope === 'moment'
       ? 'moment'
-      : entry.tags.includes('群聊') || raw?.memoryScope === 'group'
+      : entry.tags.includes('微博') || raw?.memoryScope === 'pulse'
+        ? 'pulse'
+        : entry.tags.includes('群聊') || raw?.memoryScope === 'group'
       ? 'group'
       : entry.tags.includes('关联线下') || raw?.memoryScope === 'linked'
         ? 'linked'

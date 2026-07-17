@@ -32,6 +32,16 @@ type MomentDetailPageProps = {
   onRevealPendingInteractions?: (
     momentId: string,
   ) => void | Promise<void | MomentRevealPendingResult>
+  onReplaceMomentImage?: (
+    momentId: string,
+    index: number,
+    next: { url: string; prompt: string },
+  ) => void | Promise<void>
+  onSaveMomentImagePrompt?: (
+    momentId: string,
+    index: number,
+    prompt: string,
+  ) => void | Promise<void>
   allowSubjectPin?: boolean
   onOpenParticipantProfile?: OnOpenMomentParticipantProfile
   subjectCharacterId?: string
@@ -57,6 +67,8 @@ export function MomentDetailPage({
   onTogglePin,
   onDelete,
   onRevealPendingInteractions,
+  onReplaceMomentImage,
+  onSaveMomentImagePrompt,
   allowSubjectPin,
   onOpenParticipantProfile,
   subjectCharacterId,
@@ -122,6 +134,8 @@ export function MomentDetailPage({
                 onTogglePin={onTogglePin}
                 onDelete={onDelete}
                 onRevealPendingInteractions={onRevealPendingInteractions}
+                onReplaceMomentImage={onReplaceMomentImage}
+                onSaveMomentImagePrompt={onSaveMomentImagePrompt}
                 allowSubjectPin={allowSubjectPin}
                 onOpenParticipantProfile={onOpenParticipantProfile}
                 subjectCharacterId={subjectCharacterId}

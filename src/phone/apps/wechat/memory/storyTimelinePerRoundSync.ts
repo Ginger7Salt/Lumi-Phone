@@ -73,7 +73,7 @@ export async function writePerRoundStoryTimelineWithSeparateAttempt(params: {
   timelineScope: StoryTimelineEventScope
   inlineDelta?: StoryTimelineSummaryDelta | null
   fallback: Omit<StoryTimelineSummaryFallbackParams, 'chatFallback'>
-  persistOpts?: { plotId?: string | null; recordedAtMs?: number }
+  persistOpts?: { plotId?: string | null; recordedAtMs?: number; conversationKey?: string | null }
   advanceCursors?: () => Promise<void>
   notifyOnFailure?: boolean
 }): Promise<boolean> {

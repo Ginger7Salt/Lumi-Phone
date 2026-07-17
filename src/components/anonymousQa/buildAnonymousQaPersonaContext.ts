@@ -79,8 +79,32 @@ export async function buildAnonymousQaPersonaPromptPack(params: {
   relevanceHaystack: string
   /** 朋友圈等场景：跳过向量 embedding，避免无关 503 与延迟 */
   disableMemoryVectorRecall?: boolean
+  /**
+   * 默认 true。为 false 时不注入未总结私聊·群聊 / 遇见记忆。
+   * 若同时传入 includeChatMemoryContext（旧参数），未单独指定时与之对齐。
+   */
+  includeUnsummarizedChat?: boolean
+  /** 默认 true。为 false 时不注入长期记忆块 */
+  includeLongTermMemory?: boolean
+  /**
+   * @deprecated 请用 includeUnsummarizedChat + includeLongTermMemory。
+   * 若未传上述两项，则两者都跟随本开关（默认 true）。
+   */
+  includeChatMemoryContext?: boolean
+  /** 默认 true。为 false 时不注入线下约会剧情块 */
+  includeOfflineDatingPlots?: boolean
 }): Promise<AnonymousQaPersonaPromptPack> {
   const cid = params.characterId.trim()
+  const legacyChat = params.includeChatMemoryContext
+  const includeUnsummarized =
+    params.includeUnsummarizedChat !== undefined
+      ? params.includeUnsummarizedChat
+      : legacyChat !== false
+  const includeLongTerm =
+    params.includeLongTermMemory !== undefined
+      ? params.includeLongTermMemory
+      : legacyChat !== false
+  const includeOfflinePlots = params.includeOfflineDatingPlots !== false
   const empty: AnonymousQaPersonaPromptPack = {
     character: null,
     playerIdentity: null,
@@ -131,25 +155,31 @@ export async function buildAnonymousQaPersonaPromptPack(params: {
 
   const [offlineDatingPlotsContext, meetEncounterMemoriesContext, unsMeet, unsPrivateRaw, unsGroup] =
     await Promise.all([
-      loadOfflineDatingPlotsPromptBlock(cid, character?.name ?? null),
-      fromMeet ? loadMeetEncounterMemoriesPromptBlock(cid) : Promise.resolve(''),
-      fromMeet
+      includeOfflinePlots
+        ? loadOfflineDatingPlotsPromptBlock(cid, character?.name ?? null)
+        : Promise.resolve(''),
+      includeUnsummarized && fromMeet ? loadMeetEncounterMemoriesPromptBlock(cid) : Promise.resolve(''),
+      includeUnsummarized && fromMeet
         ? formatUnsummarizedMeetChatBlock({ characterId: cid, maxMessages: 120, maxChars: 3200 }).then((s) =>
             s.trim(),
           )
         : Promise.resolve(''),
-      formatUnsummarizedPrivateChatBlock({
-        conversationKey,
-        maxMessages: 100,
-        maxChars: 3200,
-      }).then((s) => s.trim()),
-      buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt({
-        npcCharacterId: cid,
-        sessionPlayerIdentityId: sessionPid,
-        boundPlayerIdentityId: digestBoundPid,
-        maxMessagesPerGroup: 50,
-        charCap: 4200,
-      }).then((s) => s.trim()),
+      includeUnsummarized
+        ? formatUnsummarizedPrivateChatBlock({
+            conversationKey,
+            maxMessages: 100,
+            maxChars: 3200,
+          }).then((s) => s.trim())
+        : Promise.resolve(''),
+      includeUnsummarized
+        ? buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt({
+            npcCharacterId: cid,
+            sessionPlayerIdentityId: sessionPid,
+            boundPlayerIdentityId: digestBoundPid,
+            maxMessagesPerGroup: 50,
+            charCap: 4200,
+          }).then((s) => s.trim())
+        : Promise.resolve(''),
     ])
 
   const scopeForWrap = lineScope ?? normalizeMemoryPromptLineScope(acc || null, sessionPid)
@@ -168,16 +198,18 @@ export async function buildAnonymousQaPersonaPromptPack(params: {
   ])
 
   let longTermMemoryNotes = ''
-  try {
-    longTermMemoryNotes = (
-      await formatCharacterMemoriesForPromptInjection(cid, hay, {
-        apiConfig: apiOk,
-        lineScope: (lineScope ?? scopeForWrap) ?? undefined,
-        disableVector: params.disableMemoryVectorRecall === true,
-      })
-    ).trim()
-  } catch {
-    longTermMemoryNotes = ''
+  if (includeLongTerm) {
+    try {
+      longTermMemoryNotes = (
+        await formatCharacterMemoriesForPromptInjection(cid, hay, {
+          apiConfig: apiOk,
+          lineScope: (lineScope ?? scopeForWrap) ?? undefined,
+          disableVector: params.disableMemoryVectorRecall === true,
+        })
+      ).trim()
+    } catch {
+      longTermMemoryNotes = ''
+    }
   }
 
   return {

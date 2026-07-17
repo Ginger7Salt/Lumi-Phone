@@ -47,6 +47,8 @@ export async function persistStoryTimelineFromSummaryDelta(
   opts?: {
     plotId?: string | null
     recordedAtMs?: number
+    /** 私聊/群聊会话键：用于把剧情时间回写到近期消息 */
+    conversationKey?: string | null
   },
 ): Promise<void> {
   const cid = characterId.trim()
@@ -86,6 +88,19 @@ export async function persistStoryTimelineFromSummaryDelta(
     await personaDb.appendStoryTimelinePlotRow(plotRow)
     if (scope === 'offline' || scope === 'linked') {
       await advanceDatingPlotSummaryCursorIfNeeded(cid, plotRow.recordedAt)
+    }
+  }
+
+  // 私聊/群聊：把本轮剧情时间回写到会话近期消息（系统落库时间保持不变）
+  if ((scope === 'private' || scope === 'group') && opts?.conversationKey?.trim()) {
+    try {
+      const { stampConversationMessagesWithStoryTime } = await import('./stampChatMessagesStoryTime')
+      await stampConversationMessagesWithStoryTime({
+        conversationKey: opts.conversationKey.trim(),
+        delta: enforcedDelta,
+      })
+    } catch {
+      /* ignore */
     }
   }
 }

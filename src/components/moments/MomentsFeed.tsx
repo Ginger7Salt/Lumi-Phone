@@ -30,6 +30,16 @@ type MomentsFeedProps = {
   onRevealPendingInteractions?: (
     momentId: string,
   ) => void | Promise<void | MomentRevealPendingResult>
+  onReplaceMomentImage?: (
+    momentId: string,
+    index: number,
+    next: { url: string; prompt: string },
+  ) => void | Promise<void>
+  onSaveMomentImagePrompt?: (
+    momentId: string,
+    index: number,
+    prompt: string,
+  ) => void | Promise<void>
   onOpenParticipantProfile?: OnOpenMomentParticipantProfile
 }
 
@@ -50,6 +60,8 @@ export function MomentsFeed({
   onTogglePin,
   onDelete,
   onRevealPendingInteractions,
+  onReplaceMomentImage,
+  onSaveMomentImagePrompt,
   onOpenParticipantProfile,
 }: MomentsFeedProps) {
   const now = useMomentInteractionClock(5000)
@@ -92,6 +104,8 @@ export function MomentsFeed({
             onTogglePin={onTogglePin}
             onDelete={onDelete}
             onRevealPendingInteractions={onRevealPendingInteractions}
+            onReplaceMomentImage={onReplaceMomentImage}
+            onSaveMomentImagePrompt={onSaveMomentImagePrompt}
             onOpenParticipantProfile={onOpenParticipantProfile}
           />
         </motion.div>

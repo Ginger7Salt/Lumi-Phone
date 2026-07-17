@@ -22,7 +22,9 @@ export type UseChatQueueOptions<TMsg, TJob extends ChatQueueJob<TMsg>> = {
 }
 
 /**
- * 对方消息出队引擎：回调经 ref 持有，effect 不因父组件重绘而反复清 timer。
+ * 对方消息出队引擎：回调经 ref 持有，避免父组件重绘反复清 timer。
+ * 每条露出后在 timeout 内自行续排下一条，不依赖 pendingQueue 浅比较；
+ * 调度 effect 也不在依赖变更时清掉正在跑的 timer（仅卸载时清理）。
  */
 export function useChatQueue<TMsg, TJob extends ChatQueueJob<TMsg>>({
   pendingQueue,
@@ -60,19 +62,17 @@ export function useChatQueue<TMsg, TJob extends ChatQueueJob<TMsg>>({
     return computeRevealDelayMs(job.msg as Parameters<typeof computeRevealDelayMs>[0])
   }, [])
 
-  const processOneJob = useCallback((): 'continue' | 'done' => {
+  const processOneJob = useCallback((): 'continue' | 'await-delay' | 'empty' => {
     const job = jobsRef.current.shift()
     if (!job) {
       syncPendingQueueRef.current()
       onQueueActiveRef.current?.(false)
-      return 'done'
+      return 'empty'
     }
     if (!isJobLiveRef.current(job)) {
       persistOnlyRef.current(job)
-      if (jobsRef.current.length === 0) {
-        syncPendingQueueRef.current()
-        onQueueActiveRef.current?.(false)
-      }
+      syncPendingQueueRef.current()
+      if (jobsRef.current.length === 0) onQueueActiveRef.current?.(false)
       return 'continue'
     }
     if (job.revealCallbackOnly) {
@@ -83,26 +83,21 @@ export function useChatQueue<TMsg, TJob extends ChatQueueJob<TMsg>>({
     }
     processRevealRef.current(job)
     syncPendingQueueRef.current()
-    if (jobsRef.current.length === 0) onQueueActiveRef.current?.(false)
-    return 'done'
+    if (jobsRef.current.length === 0) {
+      onQueueActiveRef.current?.(false)
+      return 'empty'
+    }
+    return 'await-delay'
   }, [jobsRef])
 
-  const pendingHeadId =
-    pendingQueue[0] && typeof pendingQueue[0] === 'object' && pendingQueue[0] !== null && 'id' in pendingQueue[0]
-      ? String((pendingQueue[0] as { id: string }).id)
-      : null
+  const scheduleDrainRef = useRef<() => void>(() => {})
 
-  useEffect(() => {
-    if (timerRef.current != null) {
-      window.clearTimeout(timerRef.current)
-      timerRef.current = null
-    }
-
+  const scheduleDrain = useCallback(() => {
+    if (timerRef.current != null) return
     if (jobsRef.current.length === 0) {
       processingRef.current = false
       return
     }
-
     if (processingRef.current) return
 
     const head = jobsRef.current[0]
@@ -111,19 +106,38 @@ export function useChatQueue<TMsg, TJob extends ChatQueueJob<TMsg>>({
     onQueueActiveRef.current?.(true)
     const delay = resolveDelay(head)
     processingRef.current = true
-
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null
       processingRef.current = false
       let steps = 0
-      while (steps < 8) {
+      while (steps < 12) {
         const result = processOneJob()
         steps += 1
-        if (result !== 'continue') break
-        if (jobsRef.current.length === 0) break
+        if (result === 'continue') continue
+        if (result === 'await-delay') {
+          scheduleDrainRef.current()
+          return
+        }
+        return
       }
+      if (jobsRef.current.length > 0) scheduleDrainRef.current()
     }, delay)
+  }, [jobsRef, processOneJob, resolveDelay, timerRef])
 
+  scheduleDrainRef.current = scheduleDrain
+
+  const pendingHeadId =
+    pendingQueue[0] && typeof pendingQueue[0] === 'object' && pendingQueue[0] !== null && 'id' in pendingQueue[0]
+      ? String((pendingQueue[0] as { id: string }).id)
+      : null
+
+  // 仅在队列指纹变化时尝试启动；不要清掉已在跑的 timer（否则会中断逐条露出）
+  useEffect(() => {
+    scheduleDrain()
+  }, [pendingQueue.length, pendingHeadId, scheduleDrain])
+
+  // 仅卸载时清 timer
+  useEffect(() => {
     return () => {
       if (timerRef.current != null) {
         window.clearTimeout(timerRef.current)
@@ -131,11 +145,12 @@ export function useChatQueue<TMsg, TJob extends ChatQueueJob<TMsg>>({
       }
       processingRef.current = false
     }
-  }, [pendingQueue.length, pendingHeadId, jobsRef, timerRef, processOneJob, resolveDelay])
+  }, [timerRef])
 
   const kick = useCallback(() => {
     if (timerRef.current != null || jobsRef.current.length === 0) return
     syncPendingQueueRef.current()
+    scheduleDrainRef.current()
   }, [jobsRef, timerRef])
 
   return { kick }

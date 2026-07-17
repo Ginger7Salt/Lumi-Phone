@@ -71,8 +71,12 @@ function formatCharCharEdge(
   const tail = tailParts.join(' ')
   const involvesFocus = r.fromCharacterId === focusId || r.toCharacterId === focusId
   const focusTag = involvesFocus ? ' · **与你直接相关**' : ''
-  const oneWayNote = !mutual && focusIsFrom ? ' · **单方面认识（对方不知）**' : ''
-  return `- ${a} —「${rel}」→ ${b}${callBit}${tail ? ` ${tail}` : ''}${focusTag}${oneWayNote}`
+  const directionTag = mutual
+    ? ' · **双向**'
+    : focusIsFrom
+      ? ' · **单向（对方不知/未回关系）**'
+      : ' · **单向（仅对方侧）**'
+  return `- ${a} —「${rel}」→ ${b}${callBit}${tail ? ` ${tail}` : ''}${focusTag}${directionTag}`
 }
 
 function relToTraceCharEdge(

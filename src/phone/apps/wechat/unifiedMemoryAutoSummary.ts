@@ -82,6 +82,7 @@ import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtil
 import { writePerRoundStoryTimelineWithSeparateAttempt } from './memory/storyTimelinePerRoundSync'
 import { dispatchStoryTimelinePerRoundSyncResult } from './memory/storyTimelinePerRoundResultEvents'
 import { persistStoryTimelineFromSummaryDelta, loadStoryTimelineOpenAnchorsBlockForSummary } from './memory/storyTimelinePersist'
+import { dualNarrativeStoryFieldsFromDelta } from './memory/dualNarrativeTime'
 import {
   buildDatingStoryTimelineFallbackMaterial,
   buildUnifiedStoryTimelineFallbackMaterial,
@@ -814,10 +815,12 @@ export async function applyUnifiedMemoryFromParsedSummary(
       memorySupplementKeywords: summary.primary.memorySupplementKeywords,
       content: summary.primary.content,
     })
-    if (summary.primary.rowTitle || resolvedRowKeywords.length > 0) {
+    const storyForBody = dualNarrativeStoryFieldsFromDelta(summary.primary.timeline)
+    if (summary.primary.rowTitle || resolvedRowKeywords.length > 0 || storyForBody.storyTimeLabel) {
       primaryBody = formatOnlineMemorySummaryStorageBody(primaryBody, {
         rowTitle: summary.primary.rowTitle,
         rowKeywords: resolvedRowKeywords,
+        storyTimeLabel: storyForBody.storyTimeLabel,
       }).slice(0, 4000)
     }
   }
@@ -940,6 +943,9 @@ export async function applyUnifiedMemoryFromParsedSummary(
         memoryTriggerEmotionNeed: summary.primary.memoryTriggerEmotionNeed,
         memorySupplementKeywords: summary.primary.memorySupplementKeywords,
       })
+    const storyFields = dualNarrativeStoryFieldsFromDelta(
+      timelineDelta ?? summary.primary.timeline,
+    )
     await personaDb.upsertCharacterMemory({
       id: `mem-${now}-${Math.random().toString(36).slice(2, 9)}`,
       characterId: cid,
@@ -960,6 +966,9 @@ export async function applyUnifiedMemoryFromParsedSummary(
       memoryTriggerPrecise: summary.primary.memoryTriggerPrecise,
       memoryTriggerEmotionNeed: summary.primary.memoryTriggerEmotionNeed,
       memoryKeywords: kwBackup,
+      ...(storyFields.storyDay ? { storyDay: storyFields.storyDay } : {}),
+      ...(storyFields.storyTime ? { storyTime: storyFields.storyTime } : {}),
+      ...(storyFields.storyTimeLabel ? { storyTimeLabel: storyFields.storyTimeLabel } : {}),
     })
   }
 
@@ -972,7 +981,13 @@ export async function applyUnifiedMemoryFromParsedSummary(
         cid,
         timelineDelta,
         resolveStoryTimelineScopeForGather(gather, hadOfflineTag),
-        plotIdForRow ? { plotId: plotIdForRow } : undefined,
+        {
+          ...(plotIdForRow ? { plotId: plotIdForRow } : {}),
+          ...(gather.conversationKey?.trim()
+            ? { conversationKey: gather.conversationKey.trim() }
+            : {}),
+          recordedAtMs: now,
+        },
       )
       timelinePersisted = true
     }
@@ -2043,6 +2058,10 @@ export async function finalizePerRoundMemoryAfterAiReply(params: {
         materialBlock: fallbackMaterial,
         peerCharacterId: params.characterId,
         latestRoundBody: latestLines,
+      },
+      persistOpts: {
+        conversationKey: params.conversationKey || gather.conversationKey,
+        recordedAtMs: Date.now(),
       },
       advanceCursors: advanceTimelineCursors,
       notifyOnFailure: true,

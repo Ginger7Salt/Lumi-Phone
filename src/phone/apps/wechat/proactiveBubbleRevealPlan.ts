@@ -22,8 +22,27 @@ import {
 } from './miniGame/wechatCharacterMiniGameInviteAi'
 import { emitTasteOrderPlaced } from '../takeout/tasteOrderBridge'
 import {
+  applyPulseCommentDirective,
+  isPulseCommentDirectiveArtifactLine,
+  parsePulseCommentDirective,
+  stripPulseCommentDirectivesFromBubbles,
+} from './pulse/pulseShareAiDirective'
+import {
+  applyPulseFollowDirective,
+  isPulseFollowDirectiveArtifactLine,
+  parsePulseFollowDirective,
+  stripPulseFollowDirectivesFromBubbles,
+} from './pulse/pulseFollowAiDirective'
+import {
+  isPulseDmScreenshotDirectiveArtifactLine,
+  parsePulseDmScreenshotPlaceholderId,
+  preparePulseDmScreenshotPlaceholders,
+  PULSE_DM_SCREENSHOT_TRANSCRIPT,
+  stripPulseDmScreenshotDirectivesFromBubbles,
+  takePulseDmScreenshotCachedImage,
+} from './pulse/pulseDmScreenshotAiDirective'
+import {
   buildCharacterTakeoutOrderBundle,
-  isTakeoutOrderDirectiveArtifactLine,
   parseTakeoutOrderDirective,
   takeoutOrderContentFallback,
 } from './takeout/takeoutOrderShareAiDirective'
@@ -64,18 +83,12 @@ export type ProactiveTakeoutContext = {
   defaultRecipientName: string
   /** @deprecated */
   userLabel?: string
-}
-
-function flattenProactiveBubbleContent(content: string): string[] {
-  const out: string[] = []
-  const normalizedRawLine = String(content ?? '').trim().replace(/\\n/g, '\n').trim()
-  const parts = normalizedRawLine
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-  if (parts.length > 1) out.push(...parts)
-  else if (normalizedRawLine) out.push(normalizedRawLine)
-  return out
+  /** 当前会话玩家身份（微博关注指令） */
+  playerIdentityId?: string
+  playerDisplayName?: string
+  playerAvatarUrl?: string
+  /** 会话开启「微博私信截图」时才合成图片 */
+  pulseDmScreenshotEnabled?: boolean
 }
 
 async function planProactiveBubbleLineAsync(
@@ -93,11 +106,56 @@ async function planProactiveBubbleLineAsync(
     isCharacterMusicSyncDirectiveArtifactLine(trimmed) ||
     parseCharacterMiniGameInviteDirectiveFromArtifactLine(trimmed) ||
     isCharacterMiniGameInviteDirectiveArtifactLine(trimmed) ||
-    isLocationShareDirectiveArtifactLine(trimmed) ||
-    isTakeoutOrderDirectiveArtifactLine(trimmed)
+    isLocationShareDirectiveArtifactLine(trimmed)
   ) {
     return null
   }
+
+  const pulseCommentDirective = parsePulseCommentDirective(trimmed)
+  if (pulseCommentDirective) {
+    if (takeoutCtx?.characterId?.trim()) {
+      void applyPulseCommentDirective(pulseCommentDirective, {
+        characterId: takeoutCtx.characterId,
+        characterName: takeoutCtx.characterName,
+      }).catch(() => {
+        /* ignore */
+      })
+    }
+    return null
+  }
+  if (isPulseCommentDirectiveArtifactLine(trimmed)) return null
+
+  const pulseFollowDirective = parsePulseFollowDirective(trimmed)
+  if (pulseFollowDirective) {
+    const pid = takeoutCtx?.playerIdentityId?.trim()
+    if (takeoutCtx?.characterId?.trim() && pid && pid !== '__none__') {
+      void applyPulseFollowDirective(pulseFollowDirective, {
+        characterId: takeoutCtx.characterId,
+        characterName: takeoutCtx.characterName,
+        playerIdentityId: pid,
+        playerDisplayName: takeoutCtx.playerDisplayName,
+        playerAvatarUrl: takeoutCtx.playerAvatarUrl,
+      }).catch(() => {
+        /* ignore */
+      })
+    }
+    return null
+  }
+  if (isPulseFollowDirectiveArtifactLine(trimmed)) return null
+
+  const pulseDmShotId = parsePulseDmScreenshotPlaceholderId(trimmed)
+  if (pulseDmShotId) {
+    const payload = takePulseDmScreenshotCachedImage(pulseDmShotId)
+    if (!payload) return null
+    return {
+      id: meta.id,
+      content: PULSE_DM_SCREENSHOT_TRANSCRIPT,
+      thinking: meta.thinking,
+      timestamp: meta.timestamp,
+      images: [{ base64: payload.base64, type: payload.mime }],
+    }
+  }
+  if (isPulseDmScreenshotDirectiveArtifactLine(trimmed)) return null
 
   const takeoutDirective = parseTakeoutOrderDirective(trimmed)
   if (takeoutDirective && takeoutCtx) {
@@ -221,7 +279,42 @@ export async function planProactiveRevealBubblesAsync(
       })
       continue
     }
-    const lines = flattenProactiveBubbleContent(bubble.content)
+    const stripped = stripPulseCommentDirectivesFromBubbles([bubble.content])
+    if (stripped.directives.length && takeoutCtx?.characterId?.trim()) {
+      for (const directive of stripped.directives) {
+        void applyPulseCommentDirective(directive, {
+          characterId: takeoutCtx.characterId,
+          characterName: takeoutCtx.characterName,
+        }).catch(() => {
+          /* ignore */
+        })
+      }
+    }
+    const followStripped = stripPulseFollowDirectivesFromBubbles(stripped.bubbles)
+    if (followStripped.directives.length && takeoutCtx?.characterId?.trim()) {
+      const pid = takeoutCtx.playerIdentityId?.trim()
+      if (pid && pid !== '__none__') {
+        for (const directive of followStripped.directives) {
+          void applyPulseFollowDirective(directive, {
+            characterId: takeoutCtx.characterId,
+            characterName: takeoutCtx.characterName,
+            playerIdentityId: pid,
+            playerDisplayName: takeoutCtx.playerDisplayName,
+            playerAvatarUrl: takeoutCtx.playerAvatarUrl,
+          }).catch(() => {
+            /* ignore */
+          })
+        }
+      }
+    }
+    const dmShotStripped = stripPulseDmScreenshotDirectivesFromBubbles(followStripped.bubbles)
+    const dmShotEnabled = takeoutCtx?.pulseDmScreenshotEnabled === true
+    if (dmShotEnabled && dmShotStripped.pending.length) {
+      await preparePulseDmScreenshotPlaceholders(dmShotStripped.pending)
+    }
+    const lines = dmShotEnabled
+      ? dmShotStripped.bubbles
+      : dmShotStripped.bubbles.filter((ln) => !parsePulseDmScreenshotPlaceholderId(ln))
     if (!lines.length) continue
     for (let i = 0; i < lines.length; i += 1) {
       const planned = await planProactiveBubbleLineAsync(

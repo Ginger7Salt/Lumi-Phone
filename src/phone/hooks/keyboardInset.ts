@@ -91,7 +91,12 @@ export function findFocusedEditableWithin(root: HTMLElement | null | undefined):
   if (!active || !(active instanceof HTMLElement)) return null
   if (!root?.contains(active)) return null
   if (isEditableElement(active)) return active
-  return active.closest('textarea, input:not([type=hidden])') as HTMLElement | null
+  if (active.isContentEditable) return active
+  const nested = active.closest(
+    '[contenteditable="true"], textarea, input:not([type=hidden])',
+  ) as HTMLElement | null
+  if (nested && root.contains(nested)) return nested
+  return null
 }
 
 /** Android 键盘占用高度：实测优先；输入聚焦且 overlay 模式时再保守估算 */

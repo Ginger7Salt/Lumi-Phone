@@ -4,6 +4,9 @@ import { Minus, Terminal, Trash2, X } from 'lucide-react'
 
 import type { ConsoleLog, LogType } from './consoleLogger'
 import { formatTs, logConsole } from './consoleLogger'
+import { composeStoryTimelineCalendarAnchorLabel } from './memory/storyTimelineTypes'
+import { personaDb } from './newFriendsPersona/idb'
+import { useWeChatCurrentTime } from './time/useWeChatCurrentTime'
 import { useConsoleLogs, useConsoleLogger } from './useConsoleLogger'
 
 type Filter = 'all' | LogType
@@ -25,18 +28,34 @@ function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n))
 }
 
+function formatSystemClockLabel(ms: number): string {
+  const d = new Date(ms)
+  const pad2 = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+
 export function WeChatConsoleFloatingPanel({
   open,
   onClose,
+  /** 当前私聊角色：用于读取剧情时间轴锚点 */
+  characterId,
 }: {
   open: boolean
   onClose: () => void
+  characterId?: string | null
 }) {
   const { clear } = useConsoleLogger()
   const all = useConsoleLogs()
   const [filter, setFilter] = useState<Filter>('all')
   const [minimized, setMinimized] = useState(false)
   const [autoScroll, setAutoScroll] = useState(true)
+  const [storyTimeLabel, setStoryTimeLabel] = useState<string>('')
+  const cid = characterId?.trim() || ''
+  const { currentTimeMs, getCurrentTimeMs } = useWeChatCurrentTime({
+    characterId: cid || null,
+    liveTick: open && !minimized,
+  })
+  const systemTimeLabel = formatSystemClockLabel(currentTimeMs)
 
   const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 320, h: 260 })
@@ -89,6 +108,53 @@ export function WeChatConsoleFloatingPanel({
     logConsole('frontend', '控制台浮窗打开')
     return () => logConsole('frontend', '控制台浮窗关闭')
   }, [open])
+
+  useEffect(() => {
+    if (!open || minimized) return
+    let cancelled = false
+    const loadStory = async () => {
+      if (!cid) {
+        if (!cancelled) setStoryTimeLabel('')
+        return
+      }
+      try {
+        const st = await personaDb.getStoryTimelineState(cid)
+        if (cancelled) return
+        const label =
+          composeStoryTimelineCalendarAnchorLabel({
+            story_day: st?.currentStoryDay,
+            story_time: st?.currentStoryTime,
+          }).trim() ||
+          (st?.currentStoryDay?.trim()
+            ? st.currentStoryTime?.trim()
+              ? `${st.currentStoryDay.trim()} ${st.currentStoryTime.trim()}`
+              : st.currentStoryDay.trim()
+            : '')
+        setStoryTimeLabel(label)
+      } catch {
+        if (!cancelled) setStoryTimeLabel('')
+      }
+    }
+    void loadStory()
+    const timer = window.setInterval(() => void loadStory(), 4000)
+    const onStorage = () => void loadStory()
+    window.addEventListener('wechat-storage-changed', onStorage)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      window.removeEventListener('wechat-storage-changed', onStorage)
+    }
+  }, [open, minimized, cid])
+
+  useEffect(() => {
+    if (!open || minimized) return
+    logConsole(
+      'frontend',
+      `双时间｜系统 ${formatSystemClockLabel(getCurrentTimeMs())}｜剧情 ${storyTimeLabel || '（未设定）'}${cid ? `｜角色 ${cid.slice(0, 12)}` : ''}`,
+    )
+    // 仅在打开或剧情标签变化时打一条，避免刷屏
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, minimized, storyTimeLabel, cid])
 
   const beginDrag = useCallback((e: React.PointerEvent) => {
     if (minimized) return
@@ -185,7 +251,7 @@ export function WeChatConsoleFloatingPanel({
 
   return (
     <motion.div
-      className="fixed z-[270] overflow-hidden rounded-[12px] bg-white shadow-[0_4px_12px_rgba(0,0,0,0.10)]"
+      className="fixed z-[270] flex flex-col overflow-hidden rounded-[12px] bg-white shadow-[0_4px_12px_rgba(0,0,0,0.10)]"
       style={{ left: pos.x, top: pos.y, width: size.w, height: size.h }}
       initial={{ opacity: 0, x: 20, y: 20 }}
       animate={{ opacity: 1, x: 0, y: 0 }}
@@ -194,7 +260,7 @@ export function WeChatConsoleFloatingPanel({
     >
       {/* 顶部栏（可拖拽） */}
       <div
-        className="flex h-11 items-center justify-between bg-[#f5f5f5] px-3"
+        className="flex h-11 shrink-0 items-center justify-between bg-[#f5f5f5] px-3"
         onPointerDown={beginDrag}
         onPointerMove={onDragMove}
         onPointerUp={endDrag}
@@ -243,8 +309,28 @@ export function WeChatConsoleFloatingPanel({
         </div>
       </div>
 
+      {/* 双时间：系统墙钟 vs 剧情锚点 */}
+      <div className="shrink-0 border-b border-black/[0.06] bg-[#f8f8f8] px-3 py-1.5 font-mono text-[11px] leading-relaxed text-[#222]">
+        <div className="flex items-start gap-1.5">
+          <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-white" style={{ background: '#555' }}>
+            系统
+          </span>
+          <span className="min-w-0 break-all">{systemTimeLabel}</span>
+        </div>
+        <div className="mt-1 flex items-start gap-1.5">
+          <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-white" style={{ background: '#1a7f4b' }}>
+            剧情
+          </span>
+          <span className="min-w-0 break-all text-[#1a7f4b]">
+            {cid
+              ? storyTimeLabel || '（该角色尚未设定剧情日）'
+              : '（请进入角色私聊后查看）'}
+          </span>
+        </div>
+      </div>
+
       {/* 过滤栏 */}
-      <div className="flex h-9 items-center gap-2 overflow-x-auto px-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex h-9 shrink-0 items-center gap-2 overflow-x-auto px-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
         {filters.map((f) => {
           const active = filter === f.id
           const isErr = f.id === 'error'
@@ -273,7 +359,7 @@ export function WeChatConsoleFloatingPanel({
       {/* 日志区 */}
       <div
         ref={listRef}
-        className="h-[calc(100%-88px)] overflow-y-auto bg-[#fafafa] px-3 py-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        className="min-h-0 flex-1 overflow-y-auto bg-[#fafafa] px-3 py-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         onClick={() => setAutoScroll((v) => !v)}
         style={{ touchAction: 'pan-y' }}
       >

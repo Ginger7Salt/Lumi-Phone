@@ -82,6 +82,7 @@ import {
   writeMemoryCoachSeen,
 } from './memoryCoachTypes'
 import { isUserMomentViewerMemory } from '../../../../components/moments/userMomentDistributionArchiveService'
+import { isUserPulseViewerMemory } from '../../lumiPulse/userPulsePostDistributionArchiveService'
 import { memoryTextMatchesQuery } from './memorySearchFilter'
 
 function stripMemoryPrefixForDisplay(raw: string): string {
@@ -190,6 +191,7 @@ export function MemoryArchivePanel({
       const entries: MemoryEntry[] = []
       for (const m of memories) {
         if (isUserMomentViewerMemory(m)) continue
+        if (isUserPulseViewerMemory(m)) continue
         rawMap.set(m.id, m)
         const base = characterMemoryToMemoryEntry(m, lookup)
         const [sourceLineLabel, userBindingLabels, contentExpanded] = await Promise.all([

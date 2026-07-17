@@ -12,7 +12,7 @@ import {
 import { MEMORY_SCENE_CHIP_CLASS, memorySceneFilterLabel } from './memorySceneChipStyles'
 import type { MemoryUnifiedRosterItem } from './memoryUnifiedSummaryArchive'
 
-const ROSTER_TAG_PRIORITY: MemorySceneTag[] = ['日记', '私聊', '群聊', '朋友圈', '遇见', '线下', '关联线下']
+const ROSTER_TAG_PRIORITY: MemorySceneTag[] = ['日记', '私聊', '群聊', '微博', '朋友圈', '遇见', '线下', '关联线下']
 
 function pickRosterSceneTags(tags: MemorySceneTag[], max = 2): MemorySceneTag[] {
   const set = new Set(tags)

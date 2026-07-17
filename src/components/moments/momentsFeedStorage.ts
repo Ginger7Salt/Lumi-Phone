@@ -140,6 +140,14 @@ function normalizeMoment(raw: unknown): MomentItemModel | null {
     ? o.images.map((x) => (typeof x === 'string' ? x : '')).filter(Boolean)
     : undefined
 
+  const imagePromptsRaw = Array.isArray(o.imagePrompts)
+    ? o.imagePrompts.map((x) => (typeof x === 'string' ? x.trim() : ''))
+    : undefined
+  const imagePrompts =
+    images?.length && imagePromptsRaw?.length
+      ? images.map((_, i) => imagePromptsRaw[i] ?? '')
+      : undefined
+
   const attachedMusic = normalizeMomentAttachedMusic(o.attachedMusic)
 
   return {
@@ -152,6 +160,7 @@ function normalizeMoment(raw: unknown): MomentItemModel | null {
     comments: comments?.length ? comments : undefined,
     interactions: interactions?.length ? interactions : undefined,
     images: images?.length ? images : undefined,
+    imagePrompts: imagePrompts?.some(Boolean) ? imagePrompts : undefined,
     attachedMusic,
     location: normalizeMomentLocation(o.location),
     isUserAuthored: o.isUserAuthored === true,

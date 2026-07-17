@@ -22,6 +22,7 @@ import { MomentVisitorRecordButton, type MomentRevealPendingResult } from './Mom
 import { MomentInteractionGeneratingStrip } from './MomentInteractionGeneratingStrip'
 import { useMomentInteractionGenerationState } from './useMomentInteractionGenerationPending'
 import { MomentImageViewer } from './MomentImageViewer'
+import { regenerateMomentFeedImage } from './momentImageRegen'
 import { MomentMusicCapsule } from './MomentMusicCapsule'
 import { useResolvedMomentImages } from './resolveMomentImageSrc'
 import { requestOpenListenTogetherTrack } from '../discoverListen/listenTogetherTrackNavigation'
@@ -49,6 +50,17 @@ type MomentItemProps = {
   onRevealPendingInteractions?: (
     momentId: string,
   ) => void | Promise<void | MomentRevealPendingResult>
+  /** 大图重新生成 / 编辑提示词后写回 images + imagePrompts */
+  onReplaceMomentImage?: (
+    momentId: string,
+    index: number,
+    next: { url: string; prompt: string },
+  ) => void | Promise<void>
+  onSaveMomentImagePrompt?: (
+    momentId: string,
+    index: number,
+    prompt: string,
+  ) => void | Promise<void>
   /** 个人相册页：允许角色主体置顶自己的动态 */
   allowSubjectPin?: boolean
   /** 详情页：在发布日期旁显示「提到了你」 */
@@ -88,6 +100,8 @@ export function MomentItem({
   onTogglePin,
   onDelete,
   onRevealPendingInteractions,
+  onReplaceMomentImage,
+  onSaveMomentImagePrompt,
   allowSubjectPin = false,
   showMentionLabel = false,
   onOpenParticipantProfile,
@@ -100,6 +114,7 @@ export function MomentItem({
   const [actionOpen, setActionOpen] = useState(false)
   const [likeBurst, setLikeBurst] = useState(false)
   const [imageViewerIndex, setImageViewerIndex] = useState<number | null>(null)
+  const [imageRegenBusy, setImageRegenBusy] = useState(false)
   const likeCloseTimerRef = useRef<number | null>(null)
   const isUserAuthored = !!item.isUserAuthored
   const generationState = useMomentInteractionGenerationState(item.id)
@@ -111,7 +126,9 @@ export function MomentItem({
     now - generationState.outcomeAt < 60_000
 
   const showUserEditMenu = isUserAuthored && onTogglePin && onDelete
-  const showCharacterPinMenu = allowSubjectPin && !isUserAuthored && onTogglePin
+  /** 角色朋友圈：有删除回调时完整编辑菜单；否则仅在 allowSubjectPin 时提供置顶 */
+  const showCharacterEditMenu =
+    !isUserAuthored && !!onTogglePin && (!!onDelete || allowSubjectPin)
   const cleanedContent = sanitizeMomentBodyText(item.content)
   const hasBodyText = cleanedContent.length > 0
   const hasLongText = cleanedContent.length > MOMENT_BODY_COLLAPSE_CHARS
@@ -120,6 +137,11 @@ export function MomentItem({
       ? `${cleanedContent.slice(0, MOMENT_BODY_COLLAPSE_CHARS)}...`
       : cleanedContent
   const images = useResolvedMomentImages(item.images)
+  const imagePrompts = useMemo(
+    () => images.map((_, i) => String(item.imagePrompts?.[i] ?? '').trim()),
+    [images, item.imagePrompts],
+  )
+  const canRegenImages = Boolean(onReplaceMomentImage || onSaveMomentImagePrompt)
   const attachedMusic = item.attachedMusic
   const locationLabel = formatMomentLocationDisplay(item.location)
   const feedComments = !isUserAuthored ? (item.comments ?? []) : undefined
@@ -217,11 +239,12 @@ export function MomentItem({
                   onDelete={() => void onDelete(item.id)}
                 />
               </div>
-            ) : showCharacterPinMenu ? (
+            ) : showCharacterEditMenu ? (
               <UserMomentEditMenu
                 isPinned={item.isPinned}
                 onTogglePin={() => void onTogglePin(item.id)}
-                showDelete={false}
+                onDelete={onDelete ? () => void onDelete(item.id) : undefined}
+                showDelete={!!onDelete}
               />
             ) : !isUserAuthored ? (
               <MomentVisibilityProtocolInspector
@@ -436,7 +459,33 @@ export function MomentItem({
         images={images}
         initialIndex={imageViewerIndex ?? 0}
         allowSave={!isUserAuthored}
+        prompts={imagePrompts}
+        allowImageRegen={canRegenImages}
+        regenerating={imageRegenBusy}
         onClose={() => setImageViewerIndex(null)}
+        onRegenerate={
+          onReplaceMomentImage
+            ? async (index, prompt) => {
+                setImageRegenBusy(true)
+                try {
+                  const url = await regenerateMomentFeedImage({
+                    prompt,
+                    characterId: item.authorCharacterId,
+                  })
+                  await onReplaceMomentImage(item.id, index, { url, prompt })
+                } finally {
+                  setImageRegenBusy(false)
+                }
+              }
+            : undefined
+        }
+        onSavePrompt={
+          onSaveMomentImagePrompt
+            ? async (index, prompt) => {
+                await onSaveMomentImagePrompt(item.id, index, prompt)
+              }
+            : undefined
+        }
       />
     </article>
   )

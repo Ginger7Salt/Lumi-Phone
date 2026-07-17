@@ -1,4 +1,5 @@
 import { isUserMomentViewerMemory } from '../../../../components/moments/userMomentDistributionArchiveService'
+import { isUserPulseViewerMemory } from '../../lumiPulse/userPulsePostDistributionArchiveService'
 import type { CharacterMemory } from '../newFriendsPersona/types'
 import { groupMemoryBucketCharacterId } from '../wechatConversationKey'
 import type { MemoryEntry } from './memoryArchiveTypes'
@@ -40,6 +41,7 @@ export function collectMemoryIdsForArchiveCharacterClear(params: {
 
   for (const m of rawMemories) {
     if (isUserMomentViewerMemory(m)) continue
+    if (isUserPulseViewerMemory(m)) continue
     const storageId = m.characterId.trim()
     if (storageIds.has(storageId)) ids.add(m.id)
   }

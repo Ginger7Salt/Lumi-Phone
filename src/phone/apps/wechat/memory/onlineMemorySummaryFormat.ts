@@ -17,13 +17,15 @@ export type OnlineMemorySummaryKeywordMeta = {
 /** 线上总结入库正文：与线下摘要表一致的标题 / 关键词 / 正文结构。 */
 export function formatOnlineMemorySummaryStorageBody(
   body: string,
-  meta?: { rowTitle?: string; rowKeywords?: string[] },
+  meta?: { rowTitle?: string; rowKeywords?: string[]; storyTimeLabel?: string },
 ): string {
   const lines: string[] = []
   const title = normalizeStoryTimelineRowTitle(meta?.rowTitle)
   const kws = normalizeStoryTimelineRowKeywords(meta?.rowKeywords)
+  const storyTime = String(meta?.storyTimeLabel ?? '').trim()
   const core = String(body ?? '').trim()
   if (title) lines.push(`【摘要标题】${title}`)
+  if (storyTime) lines.push(`【剧情时间】${storyTime}`)
   if (kws.length) lines.push(`【摘要关键词】${kws.join('、')}`)
   if (core) lines.push(`【摘要正文】\n${core}`)
   return (lines.join('\n') || core).slice(0, 4000)

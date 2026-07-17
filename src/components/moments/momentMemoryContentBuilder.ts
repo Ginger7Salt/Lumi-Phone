@@ -153,13 +153,22 @@ export function buildMomentMemoryNaturalContent(params: {
   publisherDisplayName: string
   rows: MomentInteractionArchiveRow[]
   locationLabel: string
+  /** 覆盖默认墙钟「发布时间」行（剧情锚定用） */
+  publishLines?: string[]
 }): string {
   const body = buildMomentMemoryBodyText(params.moment)
   const parts: string[] = [`朋友圈正文：${body}`]
 
-  const publishedLabel = formatMomentPublishedAtAbsolute(params.moment.timestamp)
-  if (publishedLabel) {
-    parts.push(`发布时间：${publishedLabel}`)
+  if (params.publishLines?.length) {
+    for (const line of params.publishLines) {
+      const t = line.trim()
+      if (t) parts.push(t)
+    }
+  } else {
+    const publishedLabel = formatMomentPublishedAtAbsolute(params.moment.timestamp)
+    if (publishedLabel) {
+      parts.push(`发布时间：${publishedLabel}`)
+    }
   }
 
   if (params.locationLabel) {
@@ -181,6 +190,8 @@ export function buildMomentMemoryPayload(params: {
   playerDisplayName: string
   publisherCharacterId: string
   publisherDisplayName: string
+  publishLines?: string[]
+  storyPublishLabel?: string
 }): {
   payload: MomentMemoryPayload
   memoryContent: string
@@ -194,6 +205,7 @@ export function buildMomentMemoryPayload(params: {
     publisherDisplayName: params.publisherDisplayName,
     rows,
     locationLabel,
+    publishLines: params.publishLines,
   })
 
   return {
@@ -202,6 +214,10 @@ export function buildMomentMemoryPayload(params: {
     payload: {
       originalText: buildMomentMemoryBodyText(params.moment) || '（图片动态）',
       publishedAt: params.moment.timestamp,
+      ...(params.storyPublishLabel?.trim()
+        ? { storyPublishLabel: params.storyPublishLabel.trim() }
+        : {}),
+      systemPublishedAt: params.moment.timestamp,
       imagesCount: params.moment.images?.length ?? 0,
       interactionsSnapshot,
       ...(locationLabel ? { location: locationLabel } : {}),
@@ -276,6 +292,7 @@ export function buildInteractorMomentMemoryNaturalContent(params: {
   rows: MomentInteractionArchiveRow[]
   locationLabel: string
   now: number
+  publishLines?: string[]
 }): string {
   const ownSummary = summarizeInteractorOwnMomentActions(
     params.moment,
@@ -287,6 +304,7 @@ export function buildInteractorMomentMemoryNaturalContent(params: {
     publisherDisplayName: params.publisherDisplayName,
     rows: params.rows,
     locationLabel: params.locationLabel,
+    publishLines: params.publishLines,
   })
   const publisherLine = `参与互动的朋友圈（发布者：${params.publisherDisplayName.trim() || '未命名'}）`
   return [publisherLine, base, ownSummary].filter(Boolean).join('\n').slice(0, 3800)
@@ -687,6 +705,8 @@ export function buildUserMomentViewerMemoryContent(params: {
   locationLabel: string
   visibilityLabel: string
   mentionedViewer: boolean
+  /** 覆盖默认墙钟「发布时间」行（剧情锚定用） */
+  publishLines?: string[]
 }): string {
   const userName = params.playerDisplayName.trim() || '用户'
   const body = buildMomentMemoryBodyText(params.moment)
@@ -710,8 +730,15 @@ export function buildUserMomentViewerMemoryContent(params: {
     parts.push('朋友圈正文：（无文字）')
   }
 
-  const publishedLabel = formatMomentPublishedAtAbsolute(params.moment.timestamp)
-  if (publishedLabel) parts.push(`发布时间：${publishedLabel}`)
+  if (params.publishLines?.length) {
+    for (const line of params.publishLines) {
+      const t = line.trim()
+      if (t) parts.push(t)
+    }
+  } else {
+    const publishedLabel = formatMomentPublishedAtAbsolute(params.moment.timestamp)
+    if (publishedLabel) parts.push(`发布时间：${publishedLabel}`)
+  }
   if (params.locationLabel) parts.push(`位置：${params.locationLabel}`)
 
   const interactionBlock = buildMomentInteractionsSnapshot(params.rows)
@@ -729,6 +756,8 @@ export function buildUserMomentViewerMemoryPayload(params: {
   relationships: ReadonlyArray<Relationship>
   visibilityLabel: string
   mentionedViewer: boolean
+  publishLines?: string[]
+  storyPublishLabel?: string
 }): {
   payload: MomentMemoryPayload
   memoryContent: string
@@ -744,6 +773,7 @@ export function buildUserMomentViewerMemoryPayload(params: {
     locationLabel,
     visibilityLabel: params.visibilityLabel,
     mentionedViewer: params.mentionedViewer,
+    publishLines: params.publishLines,
   })
 
   return {
@@ -759,6 +789,10 @@ export function buildUserMomentViewerMemoryPayload(params: {
       visibilityLabel: params.visibilityLabel,
       privacyMode: params.moment.privacy?.mode,
       mentionedViewer: params.mentionedViewer,
+      ...(params.storyPublishLabel?.trim()
+        ? { storyPublishLabel: params.storyPublishLabel.trim() }
+        : {}),
+      systemPublishedAt: params.moment.timestamp,
       ...(locationLabel ? { location: locationLabel } : {}),
     },
   }

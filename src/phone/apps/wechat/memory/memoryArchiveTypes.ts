@@ -4,7 +4,7 @@ import type { MomentMemoryPayload } from '../newFriendsPersona/types'
 /** 三大身份来源：主号微信 / 副号微信 / 遇见 */
 export type MemorySourceIdentity = 'main_wechat' | 'sub_wechat' | 'lumi_meet'
 
-export type MemorySceneTag = '私聊' | '群聊' | '线下' | '关联线下' | '遇见' | '朋友圈' | '日记'
+export type MemorySceneTag = '私聊' | '群聊' | '线下' | '关联线下' | '遇见' | '朋友圈' | '微博' | '日记'
 
 export type MemoryTriggerType = 'always' | 'keyword'
 
@@ -23,6 +23,8 @@ export interface MemoryEntry {
   triggerType: MemoryTriggerType
   triggerKeywords?: string[]
   timestamp: number
+  /** 用户可见剧情时间；有值时卡片角标优先展示，不展示系统墙钟 */
+  storyTimeLabel?: string
   /** 群聊记忆专用 */
   groupId?: string
   groupDisplayName?: string
@@ -86,6 +88,7 @@ export const MEMORY_SCENE_FILTER_OPTIONS: ReadonlyArray<{
   { id: '日记', label: '日记' },
   { id: '群聊', label: '群聊' },
   { id: '朋友圈', label: '朋友圈' },
+  { id: '微博', label: '微博' },
   { id: '遇见', label: '遇见应用' },
   { id: '线下', label: '线下' },
   { id: '关联线下', label: '关联线下' },

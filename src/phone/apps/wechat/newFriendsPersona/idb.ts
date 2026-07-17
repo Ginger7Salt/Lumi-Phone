@@ -1086,6 +1086,21 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     Number.isFinite((m as { systemRecordedAt: number }).systemRecordedAt)
       ? Math.floor((m as { systemRecordedAt: number }).systemRecordedAt)
       : undefined
+  const storyDayRaw = (m as { storyDay?: unknown }).storyDay
+  const storyDay =
+    typeof storyDayRaw === 'string' && storyDayRaw.trim()
+      ? storyDayRaw.trim().slice(0, 64)
+      : undefined
+  const storyTimeRaw = (m as { storyTime?: unknown }).storyTime
+  const storyTime =
+    typeof storyTimeRaw === 'string' && storyTimeRaw.trim()
+      ? storyTimeRaw.trim().slice(0, 64)
+      : undefined
+  const storyTimeLabelRaw = (m as { storyTimeLabel?: unknown }).storyTimeLabel
+  const storyTimeLabel =
+    typeof storyTimeLabelRaw === 'string' && storyTimeLabelRaw.trim()
+      ? storyTimeLabelRaw.trim().slice(0, 120)
+      : undefined
   const isRead = typeof m.isRead === 'boolean' ? m.isRead : false
   const conversationKey =
     typeof m.conversationKey === 'string' && m.conversationKey.trim()
@@ -1635,6 +1650,9 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     recalledBy,
     timestamp,
     ...(systemRecordedAt != null ? { systemRecordedAt } : {}),
+    ...(storyDay ? { storyDay } : {}),
+    ...(storyTime ? { storyTime } : {}),
+    ...(storyTimeLabel ? { storyTimeLabel } : {}),
     isRead,
     conversationKey,
     quiet,
@@ -1732,6 +1750,10 @@ function normalizeChatConversationSettingsRow(input: unknown): ChatConversationS
     forwardHistoryCardEnabled:
       typeof (r as { forwardHistoryCardEnabled?: unknown }).forwardHistoryCardEnabled === 'boolean'
         ? !!(r as { forwardHistoryCardEnabled?: unknown }).forwardHistoryCardEnabled
+        : false,
+    pulseDmScreenshotEnabled:
+      typeof (r as { pulseDmScreenshotEnabled?: unknown }).pulseDmScreenshotEnabled === 'boolean'
+        ? !!(r as { pulseDmScreenshotEnabled?: unknown }).pulseDmScreenshotEnabled
         : false,
     profileImageChangeEnabled:
       typeof (r as { profileImageChangeEnabled?: unknown }).profileImageChangeEnabled === 'boolean'
@@ -2382,7 +2404,8 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
     scopeRaw === 'private' ||
     scopeRaw === 'linked' ||
     scopeRaw === 'meet' ||
-    scopeRaw === 'moment'
+    scopeRaw === 'moment' ||
+    scopeRaw === 'pulse'
       ? scopeRaw
       : undefined
   const linkedFromRaw = (m as { linkedFromCharacterId?: unknown }).linkedFromCharacterId
@@ -2527,6 +2550,84 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
       .slice(0, 32)
     if (!momentLinkedInteractorCharIds.length) momentLinkedInteractorCharIds = undefined
   }
+  const pulseSourcePostIdRaw = (m as { pulseSourcePostId?: unknown }).pulseSourcePostId
+  const pulseSourcePostId =
+    typeof pulseSourcePostIdRaw === 'string' && pulseSourcePostIdRaw.trim()
+      ? pulseSourcePostIdRaw.trim().slice(0, 256)
+      : undefined
+  const pulsePayloadRaw = (m as { pulsePayload?: unknown }).pulsePayload
+  let pulsePayload: CharacterMemory['pulsePayload']
+  if (pulsePayloadRaw && typeof pulsePayloadRaw === 'object' && !Array.isArray(pulsePayloadRaw)) {
+    const pp = pulsePayloadRaw as Record<string, unknown>
+    const originalText = typeof pp.originalText === 'string' ? pp.originalText.trim() : ''
+    const interactionsSnapshot =
+      typeof pp.interactionsSnapshot === 'string' ? pp.interactionsSnapshot.trim() : ''
+    const imagesCount =
+      typeof pp.imagesCount === 'number' && Number.isFinite(pp.imagesCount)
+        ? Math.max(0, Math.min(9, Math.floor(pp.imagesCount)))
+        : 0
+    const likeCount =
+      typeof pp.likeCount === 'number' && Number.isFinite(pp.likeCount)
+        ? Math.max(0, Math.floor(pp.likeCount))
+        : 0
+    const repostCount =
+      typeof pp.repostCount === 'number' && Number.isFinite(pp.repostCount)
+        ? Math.max(0, Math.floor(pp.repostCount))
+        : 0
+    const commentCount =
+      typeof pp.commentCount === 'number' && Number.isFinite(pp.commentCount)
+        ? Math.max(0, Math.floor(pp.commentCount))
+        : 0
+    const publishedAtRaw = pp.publishedAt
+    const publishedAt =
+      typeof publishedAtRaw === 'number' && Number.isFinite(publishedAtRaw) && publishedAtRaw > 0
+        ? Math.floor(publishedAtRaw)
+        : undefined
+    if (originalText || interactionsSnapshot) {
+      const systemPublishedAtRaw = pp.systemPublishedAt
+      const systemPublishedAt =
+        typeof systemPublishedAtRaw === 'number' &&
+        Number.isFinite(systemPublishedAtRaw) &&
+        systemPublishedAtRaw > 0
+          ? Math.floor(systemPublishedAtRaw)
+          : undefined
+      pulsePayload = {
+        originalText: originalText.slice(0, 2000),
+        imagesCount,
+        likeCount,
+        repostCount,
+        commentCount,
+        interactionsSnapshot: interactionsSnapshot.slice(0, 4000),
+        ...(publishedAt ? { publishedAt } : {}),
+        ...(systemPublishedAt ? { systemPublishedAt } : {}),
+        ...(typeof pp.location === 'string' && pp.location.trim()
+          ? { location: pp.location.trim().slice(0, 120) }
+          : {}),
+        ...(typeof pp.trendingTopic === 'string' && pp.trendingTopic.trim()
+          ? { trendingTopic: pp.trendingTopic.trim().slice(0, 64) }
+          : {}),
+        ...(typeof pp.publisherDisplayName === 'string' && pp.publisherDisplayName.trim()
+          ? { publisherDisplayName: pp.publisherDisplayName.trim().slice(0, 64) }
+          : {}),
+        ...(typeof pp.visibilityLabel === 'string' && pp.visibilityLabel.trim()
+          ? { visibilityLabel: pp.visibilityLabel.trim().slice(0, 80) }
+          : {}),
+        ...(typeof pp.storyPublishLabel === 'string' && pp.storyPublishLabel.trim()
+          ? { storyPublishLabel: pp.storyPublishLabel.trim().slice(0, 160) }
+          : {}),
+        ...(typeof pp.mentionedViewer === 'boolean' ? { mentionedViewer: pp.mentionedViewer } : {}),
+      }
+    }
+  }
+  const pulseMemoryRoleRaw = (m as { pulseMemoryRole?: unknown }).pulseMemoryRole
+  const pulseMemoryRole =
+    pulseMemoryRoleRaw === 'publisher' || pulseMemoryRoleRaw === 'viewer'
+      ? pulseMemoryRoleRaw
+      : undefined
+  const pulseUserAuthored =
+    typeof (m as { pulseUserAuthored?: unknown }).pulseUserAuthored === 'boolean'
+      ? !!(m as { pulseUserAuthored?: unknown }).pulseUserAuthored
+      : undefined
   return {
     id: m.id,
     characterId: m.characterId,
@@ -2554,6 +2655,32 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
     ...(momentMemoryRole ? { momentMemoryRole } : {}),
     ...(momentPublisherCharacterId ? { momentPublisherCharacterId } : {}),
     ...(momentLinkedInteractorCharIds?.length ? { momentLinkedInteractorCharIds } : {}),
+    ...(pulseSourcePostId ? { pulseSourcePostId } : {}),
+    ...(pulsePayload ? { pulsePayload } : {}),
+    ...(pulseMemoryRole ? { pulseMemoryRole } : {}),
+    ...(pulseUserAuthored ? { pulseUserAuthored: true } : {}),
+    ...(() => {
+      const storyDayRaw = (m as { storyDay?: unknown }).storyDay
+      const storyDay =
+        typeof storyDayRaw === 'string' && storyDayRaw.trim()
+          ? storyDayRaw.trim().slice(0, 64)
+          : undefined
+      const storyTimeRaw = (m as { storyTime?: unknown }).storyTime
+      const storyTime =
+        typeof storyTimeRaw === 'string' && storyTimeRaw.trim()
+          ? storyTimeRaw.trim().slice(0, 64)
+          : undefined
+      const storyTimeLabelRaw = (m as { storyTimeLabel?: unknown }).storyTimeLabel
+      const storyTimeLabel =
+        typeof storyTimeLabelRaw === 'string' && storyTimeLabelRaw.trim()
+          ? storyTimeLabelRaw.trim().slice(0, 120)
+          : undefined
+      return {
+        ...(storyDay ? { storyDay } : {}),
+        ...(storyTime ? { storyTime } : {}),
+        ...(storyTimeLabel ? { storyTimeLabel } : {}),
+      }
+    })(),
   }
 }
 
@@ -3146,6 +3273,37 @@ export function emitWeChatStorageChanged(): void {
 export function emitWeChatAlbumItemsChanged(): void {
   if (typeof window === 'undefined') return
   window.dispatchEvent(new CustomEvent('wechat-album-items-changed'))
+}
+
+/**
+ * 回收站快照瘦身：去掉大体积 base64 / 语音 DataURL，避免删除单条时卡顿十余秒。
+ * 恢复后文本等结构仍在；配图需重新生成或从原缓存路径找回。
+ */
+function slimWeChatMessageForTrash(msg: WeChatChatMessage): WeChatChatMessage {
+  const images = msg.images?.length
+    ? msg.images.map((img) => ({
+        base64: img.base64?.startsWith('http') || img.base64?.startsWith('blob:') || img.base64?.startsWith('/')
+          ? img.base64
+          : '',
+        type: img.type,
+      }))
+    : undefined
+  let voice = msg.voice
+  if (voice?.audioUrl && voice.audioUrl.length > 512) {
+    const u = voice.audioUrl
+    if (u.startsWith('data:') || u.length > 2048) {
+      voice = { ...voice, audioUrl: undefined }
+    }
+  }
+  const thinking =
+    msg.thinking && msg.thinking.length > 2000 ? msg.thinking.slice(0, 2000) : msg.thinking
+  return {
+    ...msg,
+    ...(images ? { images } : {}),
+    ...(voice ? { voice } : { voice: undefined }),
+    ...(thinking !== undefined ? { thinking } : {}),
+    content: (msg.content ?? '').slice(0, 8000),
+  }
 }
 
 export class PersonaDb {
@@ -4994,7 +5152,7 @@ export class PersonaDb {
     const { notifyPeerTitle, quiet, ...msgRow } = row
     const conversationKey =
       msgRow.conversationKey?.trim() || wechatConversationKey(msgRow.characterId, msgRow.playerIdentityId)
-    const normalized = normalizeWeChatChatMessage({
+    let normalized = normalizeWeChatChatMessage({
       ...msgRow,
       conversationKey,
       systemRecordedAt:
@@ -5003,8 +5161,59 @@ export class PersonaDb {
           : Date.now(),
     })
     if (!normalized) return
+    // 后台双记：系统落库已写入；若无剧情时间则用角色当前剧情锚点预填（用户可见）
+    if (!normalized.storyTimeLabel?.trim()) {
+      try {
+        const st = await this.getStoryTimelineState(normalized.characterId)
+        const day = st?.currentStoryDay?.trim()
+        const time = st?.currentStoryTime?.trim()
+        if (day || time) {
+          const { composeStoryTimelineCalendarAnchorLabel } = await import(
+            '../memory/storyTimelineTypes'
+          )
+          const label =
+            composeStoryTimelineCalendarAnchorLabel({
+              story_day: day,
+              story_time: time,
+            }).trim() || (day && time ? `${day} ${time}` : day || time || '')
+          if (label) {
+            normalized = {
+              ...normalized,
+              ...(day ? { storyDay: day } : {}),
+              ...(time ? { storyTime: time } : {}),
+              storyTimeLabel: label.slice(0, 120),
+            }
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     const tx = db.transaction(CHAT_MSG_STORE, 'readwrite')
-    tx.objectStore(CHAT_MSG_STORE).put(normalized)
+    const store = tx.objectStore(CHAT_MSG_STORE)
+    // 角色红包可能在用户已拆开后才 put：保留已有 opened，避免盖回未领
+    if (normalized.redPacket && !normalized.redPacket.opened) {
+      try {
+        const getReq = store.get(normalized.id)
+        const prevRaw = await new Promise<unknown>((resolve, reject) => {
+          getReq.onsuccess = () => resolve(getReq.result)
+          getReq.onerror = () => reject(getReq.error ?? new Error('get chat msg failed'))
+        })
+        const prevRp =
+          prevRaw && typeof prevRaw === 'object'
+            ? (prevRaw as { redPacket?: { opened?: boolean } }).redPacket
+            : undefined
+        if (prevRp?.opened) {
+          normalized = {
+            ...normalized,
+            redPacket: { ...normalized.redPacket, opened: true },
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    store.put(normalized)
     await txDone(tx)
     db.close()
     const peerForMerge = (() => {
@@ -5088,6 +5297,10 @@ export class PersonaDb {
       | 'isRecalled'
       | 'recallTimestamp'
       | 'recalledBy'
+      | 'storyDay'
+      | 'storyTime'
+      | 'storyTimeLabel'
+      | 'systemRecordedAt'
       >
     > & {
       redPacket?: Partial<WeChatRedPacketPayload>
@@ -5184,33 +5397,65 @@ export class PersonaDb {
   async deleteWeChatChatMessageById(id: string): Promise<void> {
     const tid = id.trim()
     if (!tid) return
+    await this.deleteWeChatChatMessagesByIds([tid])
+  }
+
+  /**
+   * 批量删除微信消息：先尽快从库删除并通知 UI，再异步写入瘦身后的回收站快照。
+   * 避免单条删除时把大图 base64 整包写入回收站导致十几秒卡顿。
+   */
+  async deleteWeChatChatMessagesByIds(ids: readonly string[]): Promise<void> {
+    const unique = [...new Set(ids.map((x) => x.trim()).filter(Boolean))]
+    if (!unique.length) return
+
+    const prevRows: WeChatChatMessage[] = []
     if (!this.isIndexedTrashSuspended()) {
-      const prev = await this.getWeChatChatMessageById(tid)
-      if (prev) {
-        const ck =
-          prev.conversationKey?.trim() || wechatConversationKey(prev.characterId, prev.playerIdentityId)
-        const conv = await this.getChatConversationSettings(ck)
-        const { label, avatarUrl } = await this.resolveWeChatTrashPeerLabelAndAvatar(ck, conv)
-        await this.appendIndexedTrashEntry({
-          kind: 'wechat-message',
-          title: `与「${label}」的聊天消息`,
-          summary: `${prev.content?.slice(0, 48) || '(空)'}`.trim(),
-          peerDisplayName: label,
-          peerAvatarUrl: avatarUrl,
-          payload: { message: prev },
-        })
+      for (const tid of unique) {
+        const prev = await this.getWeChatChatMessageById(tid)
+        if (prev) prevRows.push(prev)
       }
     }
+
     const db = await openDb()
     if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) {
       db.close()
       return
     }
     const tx = db.transaction(CHAT_MSG_STORE, 'readwrite')
-    tx.objectStore(CHAT_MSG_STORE).delete(tid)
+    const store = tx.objectStore(CHAT_MSG_STORE)
+    for (const tid of unique) store.delete(tid)
     await txDone(tx)
     db.close()
     emitWeChatStorageChanged()
+
+    if (this.isIndexedTrashSuspended() || !prevRows.length) return
+
+    // 回收站不阻塞删除体感：瘦身 payload 后后台写入
+    void (async () => {
+      try {
+        const byCk = new Map<string, { label: string; avatarUrl: string }>()
+        for (const prev of prevRows) {
+          const ck =
+            prev.conversationKey?.trim() || wechatConversationKey(prev.characterId, prev.playerIdentityId)
+          let meta = byCk.get(ck)
+          if (!meta) {
+            const conv = await this.getChatConversationSettings(ck)
+            meta = await this.resolveWeChatTrashPeerLabelAndAvatar(ck, conv)
+            byCk.set(ck, meta)
+          }
+          await this.appendIndexedTrashEntry({
+            kind: 'wechat-message',
+            title: `与「${meta.label}」的聊天消息`,
+            summary: `${prev.content?.slice(0, 48) || '(空)'}`.trim(),
+            peerDisplayName: meta.label,
+            peerAvatarUrl: meta.avatarUrl,
+            payload: { message: slimWeChatMessageForTrash(prev) },
+          })
+        }
+      } catch {
+        /* 回收站失败不影响已删除 */
+      }
+    })()
   }
 
   async setWeChatChatMessageFavorite(messageId: string, isFavorite: boolean): Promise<void> {
@@ -5622,14 +5867,50 @@ export class PersonaDb {
     limit: number
     beforeTimestamp?: number
   }): Promise<WeChatChatMessage[]> {
+    const ck = params.conversationKey.trim()
+    const lim = Math.max(1, Math.min(200, Math.floor(params.limit)))
+    const before =
+      typeof params.beforeTimestamp === 'number' && Number.isFinite(params.beforeTimestamp)
+        ? params.beforeTimestamp
+        : undefined
+    if (!ck) return []
+
     const db = await openDb()
     if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) {
       db.close()
       return []
     }
     const tx = db.transaction(CHAT_MSG_STORE, 'readonly')
-    const idx = tx.objectStore(CHAT_MSG_STORE).index('conversationKey')
-    const req = idx.getAll(IDBKeyRange.only(params.conversationKey))
+    const store = tx.objectStore(CHAT_MSG_STORE)
+
+    // 复合索引倒序取尾：聊天室 hydrate 常用 limit 50/200，切勿走 getAll 整会话
+    if (store.indexNames.contains(CHAT_MSG_INDEX_CONV_TS)) {
+      const idx = store.index(CHAT_MSG_INDEX_CONV_TS)
+      const upper = before != null ? Math.max(0, before - 1) : Number.MAX_SAFE_INTEGER
+      const range = IDBKeyRange.bound([ck, 0], [ck, upper])
+      const collected: WeChatChatMessage[] = []
+      await new Promise<void>((resolve, reject) => {
+        const req = idx.openCursor(range, 'prev')
+        req.onsuccess = () => {
+          const cur = req.result
+          if (!cur || collected.length >= lim) {
+            resolve()
+            return
+          }
+          const m = normalizeWeChatChatMessage(cur.value)
+          if (m && m.conversationKey === ck) collected.push(m)
+          cur.continue()
+        }
+        req.onerror = () => reject(req.error ?? new Error('chatMessages recent cursor'))
+      })
+      await txDone(tx)
+      db.close()
+      collected.reverse()
+      return collected
+    }
+
+    const idx = store.index('conversationKey')
+    const req = idx.getAll(IDBKeyRange.only(ck))
     const raw = await new Promise<unknown[]>((resolve, reject) => {
       req.onsuccess = () => resolve((req.result as unknown[]) ?? [])
       req.onerror = () => reject(req.error ?? new Error('chatMessages getAll'))
@@ -5639,16 +5920,17 @@ export class PersonaDb {
     const msgs = raw
       .map((x) => normalizeWeChatChatMessage(x))
       .filter((x): x is WeChatChatMessage => !!x)
-    const before = params.beforeTimestamp
-    const filtered =
-      typeof before === 'number' && Number.isFinite(before)
-        ? msgs.filter((m) => m.timestamp < before)
-        : msgs
-    const lim = Math.max(1, Math.min(200, Math.floor(params.limit)))
+    const filtered = before != null ? msgs.filter((m) => m.timestamp < before) : msgs
     const desc = [...filtered].sort((a, b) => b.timestamp - a.timestamp)
     const tail = desc.slice(0, lim)
     tail.reverse()
     return tail
+  }
+
+  /** 信息列表用：只取该会话最新一条，不拉全量消息 */
+  async peekLatestWeChatChatMessage(conversationKey: string): Promise<WeChatChatMessage | null> {
+    const rows = await this.listWeChatChatMessagesRecent({ conversationKey, limit: 1 })
+    return rows[rows.length - 1] ?? null
   }
 
   /**
@@ -6195,15 +6477,44 @@ export class PersonaDb {
   }
 
   async countUnreadWeChatCharacterMessages(conversationKey: string): Promise<number> {
-    const cursorTs = await this.getWechatReadCursor(conversationKey)
+    const ck = conversationKey.trim()
+    if (!ck) return 0
+    const cursorTs = await this.getWechatReadCursor(ck)
     const db = await openDb()
     if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) {
       db.close()
       return 0
     }
     const tx = db.transaction(CHAT_MSG_STORE, 'readonly')
-    const idx = tx.objectStore(CHAT_MSG_STORE).index('conversationKey')
-    const req = idx.getAll(IDBKeyRange.only(conversationKey))
+    const store = tx.objectStore(CHAT_MSG_STORE)
+
+    // 只扫「已读游标之后」，避免 getAll 整会话进内存
+    if (store.indexNames.contains(CHAT_MSG_INDEX_CONV_TS)) {
+      const idx = store.index(CHAT_MSG_INDEX_CONV_TS)
+      const lower = Math.max(0, cursorTs)
+      const range = IDBKeyRange.bound([ck, lower], [ck, Number.MAX_SAFE_INTEGER])
+      let n = 0
+      await new Promise<void>((resolve, reject) => {
+        const req = idx.openCursor(range, 'next')
+        req.onsuccess = () => {
+          const cur = req.result
+          if (!cur) {
+            resolve()
+            return
+          }
+          const m = normalizeWeChatChatMessage(cur.value)
+          if (m && m.conversationKey === ck && m.type === 'character' && m.timestamp > cursorTs) n += 1
+          cur.continue()
+        }
+        req.onerror = () => reject(req.error ?? new Error('unread cursor'))
+      })
+      await txDone(tx)
+      db.close()
+      return n
+    }
+
+    const idx = store.index('conversationKey')
+    const req = idx.getAll(IDBKeyRange.only(ck))
     const raw = await new Promise<unknown[]>((resolve, reject) => {
       req.onsuccess = () => resolve((req.result as unknown[]) ?? [])
       req.onerror = () => reject(req.error ?? new Error('chatMessages getAll'))
@@ -9123,6 +9434,7 @@ export class PersonaDb {
         | 'notifyEnabled'
         | 'showThinkingChain'
         | 'forwardHistoryCardEnabled'
+        | 'pulseDmScreenshotEnabled'
         | 'profileImageChangeEnabled'
         | 'internetMemeLexiconEnabled'
         | 'isDanmakuMode'
@@ -9181,8 +9493,9 @@ export class PersonaDb {
     }
     const row: ChatConversationSettingsRow = {
       conversationKey: params.conversationKey.trim(),
-      peerCharacterId: params.peerCharacterId.trim(),
-      playerIdentityId: params.playerIdentityId.trim(),
+      peerCharacterId: params.peerCharacterId.trim() || existing?.peerCharacterId?.trim() || '',
+      // 勿用“后来的会话身份”覆盖已有 playerIdentityId，否则索引漂移会导致列表读不到「不显示/置顶」等设置
+      playerIdentityId: existing?.playerIdentityId?.trim() || params.playerIdentityId.trim(),
       isPinned: params.isPinned ?? existing?.isPinned ?? false,
       isMuted: params.isMuted ?? existing?.isMuted ?? false,
       hiddenFromMessageList: params.hiddenFromMessageList ?? existing?.hiddenFromMessageList ?? false,
@@ -9190,6 +9503,8 @@ export class PersonaDb {
       showThinkingChain: params.showThinkingChain ?? existing?.showThinkingChain ?? false,
       forwardHistoryCardEnabled:
         params.forwardHistoryCardEnabled ?? existing?.forwardHistoryCardEnabled ?? false,
+      pulseDmScreenshotEnabled:
+        params.pulseDmScreenshotEnabled ?? existing?.pulseDmScreenshotEnabled ?? false,
       profileImageChangeEnabled:
         params.profileImageChangeEnabled ?? existing?.profileImageChangeEnabled ?? false,
       internetMemeLexiconEnabled:

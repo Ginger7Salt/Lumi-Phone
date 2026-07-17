@@ -471,6 +471,7 @@ function normalizeAppPageStyles(parsed: unknown): CustomizationState['appPageSty
     sandbox: migrateAppPage({ ...def.sandbox, ...record.sandbox }),
     appearance: migrateAppPage(appearanceMerged),
     lumiMeet: migrateAppPage({ ...def.lumiMeet, ...record.lumiMeet }),
+    evolution: migrateAppPage({ ...def.evolution, ...record.evolution }),
   }
 }
 

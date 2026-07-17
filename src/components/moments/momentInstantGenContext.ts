@@ -42,6 +42,9 @@ export async function buildInstantGenRecentContext(params: {
       wechatCtx: params.wechatCtx,
       relevanceHaystack: '朋友圈 即时生成 近期对话',
       disableMemoryVectorRecall: true,
+      includeUnsummarizedChat: true,
+      includeLongTermMemory: false,
+      includeOfflineDatingPlots: false,
     })
     let chatBlock = ''
     if (pack.conversationKey) {
@@ -58,7 +61,7 @@ export async function buildInstantGenRecentContext(params: {
         maxChars: 2400,
       })
     }
-    if (chatBlock.trim()) blocks.push(`【最近 20 条对话记忆】\n${chatBlock.trim()}`)
+    if (chatBlock.trim()) blocks.push(`【最近 20 条对话记录】\n${chatBlock.trim()}`)
   }
 
   if (params.includeOfflinePlots) {
@@ -67,6 +70,9 @@ export async function buildInstantGenRecentContext(params: {
       wechatCtx: params.wechatCtx,
       relevanceHaystack: '线下剧情',
       disableMemoryVectorRecall: true,
+      includeUnsummarizedChat: false,
+      includeLongTermMemory: false,
+      includeOfflineDatingPlots: false,
     }).then((p) => p.character)
     const plots = await loadOfflineDatingPlotsPromptBlock(
       params.characterId,
@@ -75,5 +81,7 @@ export async function buildInstantGenRecentContext(params: {
     if (plots.trim()) blocks.push(`【未总结的线下剧情】\n${plots.trim()}`)
   }
 
-  return blocks.length ? blocks.join('\n\n') : '（暂无可用上下文，请根据人设自由发挥。）'
+  return blocks.length
+    ? blocks.join('\n\n')
+    : '（未勾选最近对话与线下剧情，或暂无可用上下文。）'
 }

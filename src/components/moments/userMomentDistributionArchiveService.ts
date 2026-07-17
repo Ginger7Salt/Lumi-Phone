@@ -22,6 +22,7 @@ import { buildMomentsContactDirectoryWithPersonaNames } from './momentsContactDi
 import { loadMomentRelationships } from './momentRelationshipGraph'
 import { getUserMomentMentionedContacts } from './momentMentionUtils'
 import type { ContactTag, MomentContactRef } from './newMomentTypes'
+import { resolveMomentPostStoryPublishAnchor } from './momentPostStoryTime'
 import { resolveUserMomentAudience } from './userMomentDistributionAudience'
 import {
   clearAllUserMomentDistributionRecords,
@@ -134,6 +135,10 @@ async function flushUserMomentDistributionArchive(job: UserMomentDistributionArc
   for (const viewer of visible) {
     activeViewerIds.add(viewer.charId)
     const mentionedViewer = mentionedIds.has(viewer.charId)
+    const storyAnchor = await resolveMomentPostStoryPublishAnchor({
+      characterId: viewer.charId,
+      systemPublishedAt: moment.timestamp,
+    })
     const built = buildUserMomentViewerMemoryPayload({
       moment,
       now: interactionNow,
@@ -143,6 +148,8 @@ async function flushUserMomentDistributionArchive(job: UserMomentDistributionArc
       relationships,
       visibilityLabel,
       mentionedViewer,
+      publishLines: storyAnchor.publishLines,
+      storyPublishLabel: storyAnchor.storyPublishLabel,
     })
 
     const existing = await findViewerMomentMemory(viewer.charId, moment.id)
@@ -165,6 +172,9 @@ async function flushUserMomentDistributionArchive(job: UserMomentDistributionArc
       momentMemoryRole: 'viewer',
       momentUserAuthored: true,
       momentPayload: { ...built.payload, publishedAt },
+      ...(storyAnchor.storyPublishLabel
+        ? { storyTimeLabel: storyAnchor.storyPublishLabel }
+        : {}),
       ...(job.wechatAccountId?.trim()
         ? { sourceWechatAccountId: job.wechatAccountId.trim() }
         : {}),

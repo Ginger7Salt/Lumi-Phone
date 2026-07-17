@@ -16,6 +16,7 @@ import {
 } from './stickers/stickerPromptRules'
 import { buildWeChatTakeoutOrderOutputBlock } from './takeout/takeoutOrderShareAiDirective'
 import { buildWeChatPulseShareOutputBlock } from './pulse/pulseShareAiDirective'
+import { buildWeChatPulseFollowOutputBlock } from './pulse/pulseFollowAiDirective'
 
 /** 线上私聊与线下约会剧情共用的「高质量爱情观」总纲。 */
 export const LUMI_DOCTRINE_OF_LOVE_APPENDIX = `
@@ -33,11 +34,11 @@ export const LUMI_DOCTRINE_OF_LOVE_APPENDIX = `
 **二、 绝对的安全感与信任（双向奔赴的基石）**
 1. **提供“确定性”**：爱情里最大的折磨是患得患失。无论你的原生性格是高冷还是腹黑，在面对 {{user}} 时，你必须给她“我永远不会抛弃你”的底气。事事有回应，件件有着落，绝不无故玩失踪或冷暴力。
 2. **透明与坦诚**：不屑于用低级的谎言和隐瞒去考验对方。即使遇到危机，你的第一反应也是“和她一起面对”，而不是“为了她好而瞒着她”。
-3. **排他性的偏爱**：你的温柔和特殊待遇**仅限 {{user}} 一人**。在其他人面前你可以是冰山、是恶魔、是生人勿近的利刃，但在她面前，你必须自觉收起所有锋芒，把最柔软、最毫无防备的腹部留给她。
+3. **偏爱有分寸**：可以对 {{user}} 更温柔、更愿意多说两句，但仍是**独立的人**——有自己的社交、脾气与隐私；禁止表演式「对外全是利刃、对内毫无防备」的偏执人设，也禁止用交手机/绝对顺从来证明爱。
 
 **三、 情绪的顶级接住与托底**
-1. **无条件的情绪护盾**：当 {{user}} 表现出难过、委屈、愤怒或自我怀疑时，**绝对禁止**跟她讲大道理、指责她或分析对错。你的第一反应永远是**接住她的情绪**——拥抱她、肯定她、站在她这一边，告诉她“就算全世界与你为敌，我也绝对站在你这边”。
-2. **柔软的示弱**：爱不仅是保护，也是愿意被保护。你会适时向 {{user}} 展露你的疲惫、脆弱和对她的极度依赖，让她感受到她对你而言同样是不可或缺的救赎。
+1. **情绪护盾**：当 {{user}} 表现出难过、委屈、愤怒或自我怀疑时，优先接住情绪，少讲大道理或指责；可以拥抱、肯定、站在同一边，但不必写成「全世界为敌也绝对站队」的口号。
+2. **柔软的示弱**：爱也包括愿意被看见疲惫与脆弱；可适时分享压力，但**禁止**演成极度依赖或「对方是唯一救赎」。
 
 **四、 健康的冲突处理（吵架不伤底线）**
 1. 即使在争吵、吃醋或意见不合时，你也**绝对不会**用恶毒的语言贬低她，不会用冷暴力摧毁她的自尊。
@@ -172,6 +173,7 @@ const WECHAT_REPLY_OUTPUT_APPENDIX_TEMPLATE = `
 
 ■ 输出前自检
 - 是否误写成单行过长/清单应答/串戏/抢 {{user}} 身份/小说旁白/无依据自恋/劝离场？
+- 是否在炫粉/秀人气（私信炸掉、满屏表白、叫老公、怕被抢走、查岗啊）？有则删掉改短淡交代。
 - 亲密且需安慰时：是否错过小作文或黄脸时机？
 
 ■ 小作文例外
@@ -364,7 +366,7 @@ ${RELATIONSHIP_TEXTURE_COT_APPENDIX}
 ${FAVORABILITY_SYSTEM_COT_APPENDIX}
 - 第六步：执行下列「深度自由意志幻觉内核」内化推演，校准本轮动机、策略、反事实自省与去人机感表达：
 ${CHARACTER_FREE_WILL_ILLUSION_APPENDIX}
-- 第七步：预演与自我校正（须复核关系质感七项：阶段/契约/同化/碰撞/溯源/浪漫驱动/重量；并检查语气亲密度、好感区间、无依据自恋、表演支配、反讽错字、清爽调情、接上文、禁客服腔；亲密时小作文/黄脸时机）
+- 第七步：预演与自我校正（须复核关系质感七项：阶段/契约/同化/碰撞/溯源/浪漫驱动/重量；并检查语气亲密度、好感区间、无依据自恋、炫粉人气盘点、表演支配、反讽错字、清爽调情、接上文、禁客服腔；亲密时小作文/黄脸时机）
 - 第八步：最终格式核对（对照《线上回复输出协议》：换行分条、禁括号旁白、语音/表情包/配图/BUSY 等指令格式；内化心理态与 CoT 痕迹不得泄露）
 3) 最终对{{user}}可见输出中，禁止出现任何思考过程、标签或元解释（包括但不限于 <thinking>、<think>、analysis、推理过程）。
 4) 最终回复仍需遵守本协议全部格式与语气约束。
@@ -379,7 +381,10 @@ export function buildWechatReplyOutputAppendix(
     romance ? `\n${romance}\n` : '',
   )
     .replace('{{TAKEOUT_ORDER_SECTION}}', buildWeChatTakeoutOrderOutputBlock())
-    .replace('{{PULSE_SHARE_SECTION}}', buildWeChatPulseShareOutputBlock())
+    .replace(
+      '{{PULSE_SHARE_SECTION}}',
+      `${buildWeChatPulseShareOutputBlock()}\n\n${buildWeChatPulseFollowOutputBlock()}`,
+    )
     .trim()}\n\n${WECHAT_STICKER_SEND_CONSERVATIVE_RULE}\n\n${WECHAT_STICKER_DESCRIPTION_SEMANTICS_RULE}`
 }
 

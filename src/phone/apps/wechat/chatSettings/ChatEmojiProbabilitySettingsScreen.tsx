@@ -21,6 +21,7 @@ import {
 } from '../wechatMediaSendFrequency'
 import { ensureStickerStoreHydrated, getStickerCatalogEntries, type StickerCatalogEntry } from '../stickers/stickerStore'
 import { buildWechatClassicStickerGroups } from '../stickers/wechatClassicStickerPack'
+import { CommitOnReleaseRangeInput } from './CommitOnReleaseRangeInput'
 
 type EmojiProbTab = 'unified' | 'targeted' | 'classic'
 
@@ -66,15 +67,23 @@ function RoundTriggerPercentControl({
   onChange: (percent: number) => void
   onResetDefault: () => void
 }) {
-  const display = displayRoundTriggerPercent(stored, kind)
-  const customized = isRoundTriggerCustomized(stored)
+  const committed = displayRoundTriggerPercent(stored, kind)
+  const customizedStored = isRoundTriggerCustomized(stored)
+  const [uiValue, setUiValue] = useState(committed)
+  const [dragging, setDragging] = useState(false)
+
+  useEffect(() => {
+    setUiValue(committed)
+  }, [committed])
+
+  const showCustom = dragging || customizedStored
 
   return (
     <div className="mt-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[14px] font-medium text-black">
-          {customized ? (
-            <ChatSettingsNum>{display}%</ChatSettingsNum>
+          {showCustom ? (
+            <ChatSettingsNum>{uiValue}%</ChatSettingsNum>
           ) : kind === 'classicEmoji' ? (
             <>
               展示默认约 <ChatSettingsNum>{CLASSIC_EMOJI_UI_DEFAULT_ROUND_TRIGGER_PERCENT}%</ChatSettingsNum>
@@ -83,19 +92,20 @@ function RoundTriggerPercentControl({
             '系统默认由语境决定（无固定概率）'
           )}
         </span>
-        {customized ? (
+        {customizedStored && !dragging ? (
           <button type="button" onClick={onResetDefault} className="shrink-0 text-[12px] text-[#576b95]">
             恢复默认
           </button>
         ) : null}
       </div>
-      <input
-        type="range"
+      <CommitOnReleaseRangeInput
         min={0}
         max={100}
         step={1}
-        value={display}
-        onChange={(e) => onChange(Number(e.target.value))}
+        value={committed}
+        onDraftChange={setUiValue}
+        onDragStateChange={setDragging}
+        onCommit={onChange}
         className="mt-2 w-full accent-black"
         aria-label={kind === 'classicEmoji' ? '微信黄脸每轮触发概率' : '表情包每轮触发概率'}
       />
@@ -190,6 +200,13 @@ function CollapsibleGroupHeader({
     onChange: (percent: number) => void
   }
 }) {
+  const committedPercent = groupPercentControl?.percent ?? 0
+  const [uiPercent, setUiPercent] = useState(committedPercent)
+
+  useEffect(() => {
+    setUiPercent(committedPercent)
+  }, [committedPercent])
+
   return (
     <div className="border-b border-[#f0f0f0] px-3 py-2.5">
       <div className="flex items-center gap-2">
@@ -222,22 +239,54 @@ function CollapsibleGroupHeader({
             <span>组内选用概率</span>
             <span>
               {groupPercentControl.mixed ? '约 ' : ''}
-              <ChatSettingsNum>{groupPercentControl.percent}%</ChatSettingsNum>
+              <ChatSettingsNum>{uiPercent}%</ChatSettingsNum>
               {groupPercentControl.mixed ? '（组内不一致）' : ''}
             </span>
           </div>
-          <input
-            type="range"
+          <CommitOnReleaseRangeInput
             min={0}
             max={100}
             step={1}
-            value={groupPercentControl.percent}
-            onChange={(e) => groupPercentControl.onChange(Number(e.target.value))}
+            value={committedPercent}
+            onDraftChange={setUiPercent}
+            onCommit={groupPercentControl.onChange}
             className="mt-1 w-full accent-black"
             aria-label={`${title} 组内选用概率`}
           />
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function StickerItemPercentControl({
+  percent,
+  onChange,
+}: {
+  percent: number
+  onChange: (percent: number) => void
+}) {
+  const [uiPercent, setUiPercent] = useState(percent)
+
+  useEffect(() => {
+    setUiPercent(percent)
+  }, [percent])
+
+  return (
+    <div className="mt-2">
+      <div className="flex items-center justify-between text-[12px] text-[#666]">
+        <span>选用概率</span>
+        <ChatSettingsNum>{uiPercent}%</ChatSettingsNum>
+      </div>
+      <CommitOnReleaseRangeInput
+        min={0}
+        max={100}
+        step={1}
+        value={percent}
+        onDraftChange={setUiPercent}
+        onCommit={onChange}
+        className="mt-1 w-full accent-black"
+      />
     </div>
   )
 }
@@ -617,21 +666,10 @@ export function ChatEmojiProbabilitySettingsScreen({
                                     允许发送
                                   </label>
                                   {allowed ? (
-                                    <div className="mt-2">
-                                      <div className="flex items-center justify-between text-[12px] text-[#666]">
-                                        <span>选用概率</span>
-                                        <ChatSettingsNum>{percent}%</ChatSettingsNum>
-                                      </div>
-                                      <input
-                                        type="range"
-                                        min={0}
-                                        max={100}
-                                        step={1}
-                                        value={percent}
-                                        onChange={(e) => setGifPercent(entry.ref, Number(e.target.value))}
-                                        className="mt-1 w-full accent-black"
-                                      />
-                                    </div>
+                                    <StickerItemPercentControl
+                                      percent={percent}
+                                      onChange={(v) => setGifPercent(entry.ref, v)}
+                                    />
                                   ) : banned && groupEnabled ? (
                                     <p className="mt-1 text-[11px] text-[#fa5151]">已永久禁止发送</p>
                                   ) : null}

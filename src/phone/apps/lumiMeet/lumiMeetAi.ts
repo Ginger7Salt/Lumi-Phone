@@ -1,4 +1,5 @@
 import type { ApiConfig } from '../api/types'
+import { MBTI_OUTPUT_BAN_SHORT } from '../wechat/mbtiOutputBan'
 import { normalizeWechatId, openAiCompatibleChat } from '../wechat/newFriendsPersona/ai'
 import {
   coerceWechatSignature,
@@ -247,7 +248,8 @@ export async function aiGenerateSquarePosts(params: {
     }))
   }
 
-  const sys = `你是遇见 App 广场的写手。只输出 JSON 数组（不要 Markdown），每项含 authorAlias（网名，4–12字）、body（正文，40–120字，口语、可有少量标点），风格：${labels[style]}。禁止输出数组外套以外的文字。`
+  const sys = `你是遇见 App 广场的写手。只输出 JSON 数组（不要 Markdown），每项含 authorAlias（网名，4–12字）、body（正文，40–120字，口语、可有少量标点），风格：${labels[style]}。禁止输出数组外套以外的文字。
+${MBTI_OUTPUT_BAN_SHORT}`
   const user = `生成 ${count} 条，同一风格内条目口吻要有差异。`
   try {
     const raw = await openAiCompatibleChat(cfg, [
@@ -503,6 +505,7 @@ export async function aiMeetPostMatchOpeningLines(params: {
 
   const sys = `你在交友 App 遇见里扮演角色 ${params.npc.nickname}。
 刚刚你与用户**互相心动**，临时会话已开启，**用户还没有发过任何消息**。你要以该角色口吻**主动发出开场打招呼**（像连发几条微信）：**务必换行分条**，常见 2～4 行、每行短句；贴合人设；可略带轻松或矜持，**禁止**机械复述 "匹配成功了"、"系统提示" 等元话术，**禁止** Markdown、禁止括号动作描写。
+${MBTI_OUTPUT_BAN_SHORT}
 
 人设与九维侧写（须遵守，禁止 OOC 成万能舔狗）：
 ${personaBlock}
@@ -630,6 +633,7 @@ export async function aiMeetChatReply(params: {
 
   const sys = `你在交友 App 遇见的临时会话里扮演对方角色 ${params.npc.nickname}。
 人设与九维侧写（须严格遵守，禁止 OOC 成 "万能暖男/舔狗"）；口吻像都市里正常成年人，三观正、尊重边界，禁止极端、操控或违法暗示。
+${MBTI_OUTPUT_BAN_SHORT}
 ${personaBlock}
 
 ${params.dualPersonaDirective?.trim() ? `${params.dualPersonaDirective.trim().slice(0, 1800)}\n\n` : ''}${MEET_CHAT_COT_APPENDIX}
@@ -807,6 +811,7 @@ export async function aiMeetCharOutgoingFriendRequestGreeting(params: {
 
   const sys = `你是角色「${charNick}」。你与对方在交友 App「遇见」里已约定互换微信，现在由你**主动**在真实微信向对方发送「添加好友时的验证消息」（一行备注式打招呼，不是私聊续聊）。
 ${personaBlock}
+${MBTI_OUTPUT_BAN_SHORT}
 
 【必须遵守】
 1. 只输出**一行**中文，约 12～45 字，口语自然、贴合人设，可带 1 个语气词。
@@ -865,6 +870,7 @@ export async function aiMeetTruthMirrorCharAnswer(params: {
 
   const sys = `你在交友 App「遇见」临时会话中扮演角色 ${params.npc.nickname}。
 须严格遵守人设（含表里反差、阴暗面与克制感的伪装），表达可冷酷、深情、戏谑或偏执，须合法、尊重边界，拒绝操控与越界恐怖化描写。
+${MBTI_OUTPUT_BAN_SHORT}
 ${personaBlock}
 ${params.dualPersonaDirective?.trim() ? params.dualPersonaDirective.trim().slice(0, 1600) : ''}
 
@@ -935,6 +941,7 @@ export async function aiMeetContractCovenantReply(params: {
 
   const sys = `你在交友 App「遇见」临时会话中扮演角色 ${params.npc.nickname}。
 须严格遵守人设（含表里反差、防备心、社交距离与占有欲等），表达须合法、尊重边界，禁止操控、威胁或违法暗示。
+${MBTI_OUTPUT_BAN_SHORT}
 ${personaBlock}
 ${params.dualPersonaDirective?.trim() ? params.dualPersonaDirective.trim().slice(0, 1600) : ''}
 

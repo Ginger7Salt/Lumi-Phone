@@ -15,6 +15,7 @@ import {
   buildCharacterLocationPromptBlock,
   detectRelocationSignalsInContext,
   enforceCharacterLocationConsistency,
+  mergeLocationAnchorWithPersona,
   resolveCharacterLocationAnchor,
 } from './momentCharacterLocationAnchor'
 import {
@@ -43,6 +44,7 @@ const CHARACTER_MOMENT_TASK_APPENDIX_BASE = `
 ---
 【朋友圈发文任务】
 你是一个极具「活人感」和「网感」的真实人类。你现在正拿着手机，准备在微信朋友圈发布一条动态。你必须完全忘记自己是一个 AI 模型，绝对代入你当前的【角色人设】。
+禁止在正文/配文中写出 MBTI 四字母（ENFP/INFJ 等）或「快乐修勾」「INFJ 清冷感」等类型学套话。
 
 # Content Rules (绝对的活人感准则)
 1. **拒绝「人机味」与日记体**：不要写「今天我做了什么，我感到很高兴」。真人发朋友圈是情绪的瞬间宣泄。
@@ -139,9 +141,23 @@ export async function generateCharacterMomentPost(params: {
     throw new Error('未找到该角色人设，请确认通讯录已绑定角色')
   }
 
-  const locationAnchor = await resolveCharacterLocationAnchor({
-    accountId: params.wechatCtx.wechatAccountId,
-    characterId: params.characterId,
+  const locationAnchor = mergeLocationAnchorWithPersona({
+    locationAnchor: await resolveCharacterLocationAnchor({
+      accountId: params.wechatCtx.wechatAccountId,
+      characterId: params.characterId,
+    }),
+    personaTexts: [
+      pack.character.bio,
+      pack.character.identity,
+      pack.character.wechatRegion,
+      pack.character.worldBooks
+        ?.flatMap((w) => w.items ?? [])
+        .map((it) => `${it.keywords ?? ''}\n${it.content ?? ''}`)
+        .join('\n'),
+      pack.worldBackgroundPrompt,
+      pack.longTermMemoryNotes,
+      pack.offlineDatingPlotsContext,
+    ],
   })
   const relocationAllowed = detectRelocationSignalsInContext(
     pack.longTermMemoryNotes,

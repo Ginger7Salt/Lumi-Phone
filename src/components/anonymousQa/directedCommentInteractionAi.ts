@@ -46,7 +46,7 @@ function buildInteractionAppendix(playerTargetLabel: string): string {
 2) authorName / replyToName 必须与名单中的**通讯录展示名**完全一致（备注优先，无备注即微信昵称），禁止用人设真实姓名；
 3) authorType 为 "character" 或 "author"；
 4) 彼此无人脉直接关系的羁绊禁止互接；有敌对/情敌/竞争等人脉边的可在楼中楼互怼（修罗场），须贴合人设、禁止 OOC；
-5) 每条 content 15~45 字；禁止 Emoji；
+5) 每条 content 15~45 字；禁止 Emoji；禁止写出 MBTI 四字母或「快乐修勾」「INFJ 清冷感」等类型学套话；
 6) 鼓励至少一条羁绊↔羁绊互怼或拆台（须有人脉/情敌/竞争依据），不必全员只对玩家客气。
 
 示例（字段名不可改，内容须自拟）：

@@ -149,7 +149,19 @@ export type PlotItem = {
   id: string
   type: PlotItemType
   content: string
+  /**
+   * 系统落库墙钟（后台时序 / 游标；不对用户展示）。
+   * 与剧情时间字段分离。
+   */
   timestamp: number
+  /** 显式系统落库时间；缺省回退 timestamp */
+  systemRecordedAt?: number
+  /** 剧情日（故事内，用户可见） */
+  storyDay?: string
+  /** 剧情时段/时刻（用户可见） */
+  storyTime?: string
+  /** 剧情时间展示文案 */
+  storyTimeLabel?: string
   highlightText?: string
   /** 剧情配图（穿插在剧情卡片中展示） */
   plotImages?: PlotImageItem[]

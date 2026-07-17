@@ -9,6 +9,7 @@ export async function persistProactiveRevealPayload(
   const { personaDb } = await import('./newFriendsPersona/idb')
   const stored = await personaDb.listWeChatChatMessagesByConversationKey(payload.conversationKey)
   const recentStickerRefs = collectRecentCharacterStickerRefsFromMessages(stored)
+  const convSettings = await personaDb.getChatConversationSettings(payload.conversationKey)
   const planned = await planProactiveRevealBubblesAsync(
     payload.bubbles,
     {
@@ -16,6 +17,9 @@ export async function persistProactiveRevealPayload(
       characterName: payload.notifyPeerTitle.trim() || 'TA',
       userLabel: payload.playerDisplayName.trim() || '我',
       defaultRecipientName: payload.playerDisplayName.trim() || '我',
+      playerIdentityId: payload.playerIdentityId,
+      playerDisplayName: payload.playerDisplayName.trim() || '用户',
+      pulseDmScreenshotEnabled: convSettings?.pulseDmScreenshotEnabled === true,
     },
     recentStickerRefs,
   )

@@ -35,7 +35,12 @@ import {
   deleteUserMoment,
   patchUserMoment,
 } from './momentsFeedStorage'
+import {
+  buildMomentImagePromptPatch,
+  buildMomentImageReplacePatch,
+} from './momentImagePatch'
 import type { ContactTag, MomentContactRef } from './newMomentTypes'
+import { deleteCharacterMomentMemoriesForMoment } from './momentArchiverService'
 import { deleteUserMomentDistributionForMoment } from './userMomentDistributionArchiveService'
 import { useMomentsSettingsStore } from './useMomentsSettingsStore'
 
@@ -466,7 +471,7 @@ export function useMomentFeedInteractions({
         prev.map((m) => (m.id === momentId ? { ...m, isPinned: nextPinned } : m)),
       )
       await patchUserMoment(accountId, momentId, { isPinned: nextPinned })
-      if (existing.isUserAuthored) {
+      if (existing.isUserAuthored || existing.authorCharacterId?.trim()) {
         archiveCharacterMoment({ ...existing, isPinned: nextPinned })
       }
     },
@@ -476,16 +481,45 @@ export function useMomentFeedInteractions({
   const handleDeleteMoment = useCallback(
     async (momentId: string) => {
       const existing = userMoments.find((m) => m.id === momentId)
-      if (!existing?.isUserAuthored) return
+      if (!existing) return
+      if (!existing.isUserAuthored && !existing.authorCharacterId?.trim()) return
       const next = await deleteUserMoment(accountId, momentId)
       setUserMoments(next)
-      await deleteUserMomentDistributionForMoment({ accountId, momentId })
+      if (existing.isUserAuthored) {
+        await deleteUserMomentDistributionForMoment({ accountId, momentId })
+      } else {
+        await deleteCharacterMomentMemoriesForMoment(momentId)
+      }
       if (floatingTarget?.momentId === momentId) {
         setFloatingTarget(null)
       }
       onMomentDeleted?.(momentId)
     },
     [accountId, floatingTarget?.momentId, onMomentDeleted, setUserMoments, userMoments],
+  )
+
+  const handleReplaceMomentImage = useCallback(
+    async (momentId: string, index: number, next: { url: string; prompt: string }) => {
+      if (!accountId) throw new Error('未选择微信账号')
+      const existing = userMoments.find((m) => m.id === momentId)
+      if (!existing) throw new Error('动态不存在')
+      const patch = buildMomentImageReplacePatch(existing, index, next)
+      const list = await patchUserMoment(accountId, momentId, patch)
+      setUserMoments(list)
+    },
+    [accountId, setUserMoments, userMoments],
+  )
+
+  const handleSaveMomentImagePrompt = useCallback(
+    async (momentId: string, index: number, prompt: string) => {
+      if (!accountId) throw new Error('未选择微信账号')
+      const existing = userMoments.find((m) => m.id === momentId)
+      if (!existing) throw new Error('动态不存在')
+      const patch = buildMomentImagePromptPatch(existing, index, prompt)
+      const list = await patchUserMoment(accountId, momentId, patch)
+      setUserMoments(list)
+    },
+    [accountId, setUserMoments, userMoments],
   )
 
   const handleRevealPendingInteractions = useCallback(
@@ -532,6 +566,8 @@ export function useMomentFeedInteractions({
     handleToggleLike,
     handleTogglePin,
     handleDeleteMoment,
+    handleReplaceMomentImage,
+    handleSaveMomentImagePrompt,
     handleRevealPendingInteractions,
     openFloatingInput,
     playerIdentityId: qnaWechatCtx?.playerIdentityId,

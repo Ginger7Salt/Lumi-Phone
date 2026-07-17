@@ -14,10 +14,22 @@ function looksLikeBareSchemaToken(t: string): boolean {
   return SCHEMA_FIELD_RE.test(s) && s.length < 80
 }
 
+/** 截断的统一记忆 JSON 残骸（常见于同轮剧情+JSON 被 max_tokens 截断）。 */
+export function looksLikeTruncatedUnifiedMemoryJson(text: string): boolean {
+  const s = String(text ?? '').trim()
+  if (!s) return false
+  if (/^\s*\{\s*"primary"\s*:/i.test(s)) return true
+  if (/^\s*\{\s*[\s\S]{0,80}"content"\s*:\s*"/i.test(s) && !/"\s*\}\s*$/.test(s)) return true
+  if (/"primary"\s*:\s*\{\s*"content"\s*:\s*"[^"]*$/i.test(s)) return true
+  if (/^\{[\s\S]*"content"\s*:\s*"[^"]*$/i.test(s) && s.includes('"primary"')) return true
+  return false
+}
+
 /** 正文是否像「把 JSON 字段说明当正文」的泄漏（非占位符 {{user}} 的正常记忆）。 */
 export function looksLikeMemoryJsonSchemaLeak(text: string): boolean {
   const s = String(text ?? '').trim()
   if (!s) return false
+  if (looksLikeTruncatedUnifiedMemoryJson(s)) return true
   let score = 0
   if (SCHEMA_FIELD_RE.test(s)) score += 1
   if (/[`"']?keywords[`"']?\s*[:：]/i.test(s)) score += 1
@@ -96,6 +108,31 @@ function decodeJsonStringLiteral(raw: string): string {
   }
 }
 
+/** 从未闭合的 `"content": "...` 中尽量 salvage 叙事正文。 */
+function extractUnclosedContentString(s: string): string {
+  const markers = [/"primary"\s*:\s*\{[\s\S]*?"content"\s*:\s*"/i, /"content"\s*:\s*"/i]
+  for (const startRe of markers) {
+    const m = startRe.exec(s)
+    if (!m || m.index == null) continue
+    let i = m.index + m[0].length
+    let out = ''
+    while (i < s.length) {
+      const ch = s[i]!
+      if (ch === '\\' && i + 1 < s.length) {
+        out += ch + s[i + 1]!
+        i += 2
+        continue
+      }
+      if (ch === '"') break
+      out += ch
+      i += 1
+    }
+    const decoded = decodeJsonStringLiteral(out).trim()
+    if (decoded.length >= 8) return decoded.slice(0, 2000)
+  }
+  return ''
+}
+
 /** JSON 不完整时，尽量从泄漏文本中抽出 primary/content 字段。 */
 export function extractPrimaryContentFromLeakedModelOutput(raw: string): string {
   const s = String(raw ?? '').trim()
@@ -113,6 +150,14 @@ export function extractPrimaryContentFromLeakedModelOutput(raw: string): string 
     if (looksLikeEnglishMemoryMetaAnalysis(decoded)) continue
     if (looksLikeMemoryJsonSchemaLeak(decoded)) continue
     return decoded.slice(0, 2000)
+  }
+  const unclosed = extractUnclosedContentString(s)
+  if (
+    unclosed &&
+    !looksLikeEnglishMemoryMetaAnalysis(unclosed) &&
+    !looksLikeMemoryJsonSchemaLeak(unclosed)
+  ) {
+    return unclosed
   }
   return ''
 }
@@ -136,6 +181,9 @@ export function resolveMemorySummaryContentFromModelRaw(raw: string, jsonContent
 export function repairMemorySummaryBodyFromModel(raw: string): string {
   const trimmed = String(raw ?? '').trim()
   if (!trimmed) return ''
+  if (looksLikeTruncatedUnifiedMemoryJson(trimmed)) {
+    return extractPrimaryContentFromLeakedModelOutput(trimmed) || ''
+  }
   if (looksLikeEnglishMemoryMetaAnalysis(trimmed)) {
     const extracted = extractPrimaryContentFromLeakedModelOutput(trimmed)
     if (extracted) return extracted

@@ -15,7 +15,11 @@ import {
 } from 'react'
 import { useCustomization } from '../../CustomizationContext'
 import { LISTEN_TOGETHER_NAVIGATE_EVENT } from '../../../components/discoverListen/listenTogetherNavigation'
-import { LUMI_PULSE_NAVIGATE_EVENT } from '../lumiPulse/lumiPulseNavigation'
+import {
+  LUMI_PULSE_NAVIGATE_EVENT,
+  LUMI_PULSE_RETURN_TO_CHAT_EVENT,
+  type PulseReturnToChat,
+} from '../lumiPulse/lumiPulseNavigation'
 import {
   WECHAT_FOCUS_GROUP_CHAT_EVENT,
   WECHAT_FOCUS_PERSONA_CHAT_EVENT,
@@ -112,7 +116,6 @@ import {
   resolvePrivateWeChatStorageConversationKey,
   resolveWeChatPrivateChatTarget,
   parseWechatAccountPrivateConversationKey,
-  wechatConversationKey,
   wechatGroupPeerCharacterId,
 } from './wechatConversationKey'
 import {
@@ -121,9 +124,6 @@ import {
   subscribeWechatConversationAiPipeline,
 } from './wechatConversationAiPipeline'
 import {
-  countUnreadPrivateMessagesForAccountCharacter,
-  ensureAccountScopedGroupConversation,
-  ensureAccountScopedPrivateConversation,
   markPrivateChatConversationReadForAccountCharacter,
   resolveAccountScopedPrivateConversationKey,
   resolveWalletChatMessageStorageKey,
@@ -1094,6 +1094,7 @@ function MessageThreadListItem({
   onSwipeOpenChange,
   playerIdentityId,
   onListDataMutated,
+  onThreadHidden,
   onRequestDelete,
 }: {
   t: MessagesThreadRow
@@ -1105,6 +1106,8 @@ function MessageThreadListItem({
   onSwipeOpenChange: (open: boolean) => void
   playerIdentityId: string | null
   onListDataMutated: () => void
+  /** 左滑「不显示」：立刻从列表移除（全量刷新前先反馈） */
+  onThreadHidden?: (conversationKey: string) => void
   onRequestDelete: (t: MessagesThreadRow) => void
 }) {
   const { state } = useCustomization()
@@ -1182,16 +1185,20 @@ function MessageThreadListItem({
   }
 
   const runHide = async () => {
-    if (!playerIdentityId) return
+    const existing = await personaDb.getChatConversationSettings(t.conversationKey)
+    const pid = playerIdentityId?.trim() || existing?.playerIdentityId?.trim()
+    if (!pid) return
+    // 先从列表摘掉，避免全量刷新慢时以为「不显示」没生效
+    onThreadHidden?.(t.conversationKey)
+    onSwipeOpenChange(false)
+    void animate(x, 0, MSG_THREAD_SWIPE_SPRING)
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
     await personaDb.upsertChatConversationSettings({
       conversationKey: t.conversationKey,
       peerCharacterId: t.peerCharacterId,
-      playerIdentityId,
+      playerIdentityId: pid,
       hiddenFromMessageList: true,
     })
-    onSwipeOpenChange(false)
-    void animate(x, 0, MSG_THREAD_SWIPE_SPRING)
-    onListDataMutated()
   }
 
   const runDelete = () => {
@@ -1210,21 +1217,40 @@ function MessageThreadListItem({
       style={isPinnedSection ? undefined : { borderColor: 'var(--wx-border)' }}
     >
       <div className="absolute inset-y-0 right-0 z-0 flex bg-[#e6e6e6]" style={{ width: MSG_THREAD_SWIPE_ACTION_W }} aria-hidden={!swipeOpen}>
-        <button type="button" data-swipe-action className={`${swipeActionBtnClass} border-l-0`} onClick={() => void runPin()}>
+        <button
+          type="button"
+          data-swipe-action
+          tabIndex={swipeOpen ? 0 : -1}
+          className={`${swipeActionBtnClass} border-l-0`}
+          onClick={() => void runPin()}
+        >
           <Pin className="size-4 shrink-0" strokeWidth={2} aria-hidden />
           <span>{t.isPinned ? '取消置顶' : '置顶'}</span>
         </button>
-        <button type="button" data-swipe-action className={swipeActionBtnClass} onClick={() => void runMarkUnread()}>
+        <button
+          type="button"
+          data-swipe-action
+          tabIndex={swipeOpen ? 0 : -1}
+          className={swipeActionBtnClass}
+          onClick={() => void runMarkUnread()}
+        >
           <CircleDot className="size-4 shrink-0" strokeWidth={2} aria-hidden />
           <span>标为未读</span>
         </button>
-        <button type="button" data-swipe-action className={swipeActionBtnClass} onClick={() => void runHide()}>
+        <button
+          type="button"
+          data-swipe-action
+          tabIndex={swipeOpen ? 0 : -1}
+          className={swipeActionBtnClass}
+          onClick={() => void runHide()}
+        >
           <EyeOff className="size-4 shrink-0" strokeWidth={2} aria-hidden />
           <span>不显示</span>
         </button>
         <button
           type="button"
           data-swipe-action
+          tabIndex={swipeOpen ? 0 : -1}
           className={`${swipeActionBtnClass} text-[#fa5151]`}
           onClick={runDelete}
         >
@@ -1418,6 +1444,7 @@ function MessagesTab({
   onOpenChat,
   playerIdentityId,
   onListDataMutated,
+  onThreadHidden,
 }: {
   threads: MessagesThreadRow[]
   pinnedExpanded: boolean
@@ -1426,6 +1453,7 @@ function MessagesTab({
   onOpenChat: (chat: WxActiveChat) => void
   playerIdentityId: string | null
   onListDataMutated: () => void
+  onThreadHidden?: (conversationKey: string) => void
 }) {
   const [swipeOpenThreadKey, setSwipeOpenThreadKey] = useState<string | null>(null)
   const [deleteConfirmThread, setDeleteConfirmThread] = useState<MessagesThreadRow | null>(null)
@@ -1538,6 +1566,7 @@ function MessagesTab({
                           onSwipeOpenChange={(open) => setSwipeOpenThreadKey(open ? t.key : null)}
                           playerIdentityId={playerIdentityId}
                           onListDataMutated={onListDataMutated}
+                          onThreadHidden={onThreadHidden}
                           onRequestDelete={setDeleteConfirmThread}
                         />
                       </div>
@@ -1573,6 +1602,7 @@ function MessagesTab({
                     onSwipeOpenChange={(open) => setSwipeOpenThreadKey(open ? t.key : null)}
                     playerIdentityId={playerIdentityId}
                     onListDataMutated={onListDataMutated}
+                    onThreadHidden={onThreadHidden}
                     onRequestDelete={setDeleteConfirmThread}
                   />
                 )
@@ -3718,6 +3748,28 @@ function WeChatAppInner({ onBack }: Props) {
     window.addEventListener(LUMI_PULSE_NAVIGATE_EVENT, onNavigateWeibo)
     return () => window.removeEventListener(LUMI_PULSE_NAVIGATE_EVENT, onNavigateWeibo)
   }, [])
+  useEffect(() => {
+    const onReturnToChat = (e: Event) => {
+      const detail = (e as CustomEvent<PulseReturnToChat>).detail
+      if (!detail?.kind) return
+      if (detail.kind === 'persona') {
+        const id = detail.characterId?.trim()
+        if (!id) return
+        setRoute({ name: 'chat', chat: { kind: 'persona', characterId: id } })
+        return
+      }
+      if (detail.kind === 'group') {
+        const id = detail.groupId?.trim()
+        if (!id) return
+        setRoute({ name: 'chat', chat: { kind: 'group', groupId: id } })
+        return
+      }
+      setRoute({ name: 'chat', chat: { kind: detail.kind } })
+    }
+    window.addEventListener(LUMI_PULSE_RETURN_TO_CHAT_EVENT, onReturnToChat as EventListener)
+    return () =>
+      window.removeEventListener(LUMI_PULSE_RETURN_TO_CHAT_EVENT, onReturnToChat as EventListener)
+  }, [])
 
   const openPersonaChatByCharacterId = useCallback((characterId: string) => {
     const target = resolveWeChatPrivateChatTarget(characterId)
@@ -4235,9 +4287,18 @@ function WeChatAppInner({ onBack }: Props) {
   const refreshMessageThreadsMeta = useCallback(async () => {
     if (playerIdentityId === null) return
     const pid = playerIdentityId
+    const acc = currentAccountId?.trim() ?? ''
 
-    const convSettings = await personaDb.listChatConversationSettingsByPlayerIdentity(pid)
+    // 按 conversationKey 建索引（勿仅按 playerIdentityId）：私聊会话身份可能与当前马甲不同，
+    // 否则左滑「不显示/置顶」写入后刷新读不到设置，卡片会立刻弹回来。
+    const convSettings = await personaDb.listAllChatConversationSettings()
     const settingsByKey = new Map(convSettings.map((s) => [s.conversationKey, s]))
+    const hiddenPeerIds = new Set(
+      convSettings
+        .filter((s) => s.hiddenFromMessageList)
+        .map((s) => s.peerCharacterId.trim())
+        .filter(Boolean),
+    )
 
     const buildOne = async (
       conversationKey: string,
@@ -4245,15 +4306,21 @@ function WeChatAppInner({ onBack }: Props) {
       name: string,
       avatarUrl: string | undefined,
       characterIdForKey: string,
-    ): Promise<MessagesThreadRow & { sortTs: number }> => {
+      peerCharacterId: string,
+    ): Promise<(MessagesThreadRow & { sortTs: number }) | null> => {
+      // 「不显示」的会话：直接跳过，别再扫未读/最新消息
+      if (
+        hiddenPeerIds.has(peerCharacterId) ||
+        (settingsByKey.get(conversationKey)?.hiddenFromMessageList ?? false)
+      ) {
+        return null
+      }
       const st = settingsByKey.get(conversationKey) ?? null
       const isPinned = st?.isPinned ?? false
-      const unread = await personaDb.countUnreadWeChatCharacterMessages(conversationKey)
-      const recent = await personaDb.listWeChatChatMessagesRecent({
-        conversationKey,
-        limit: 1,
-      })
-      const last = recent[recent.length - 1]
+      const [unread, last] = await Promise.all([
+        personaDb.countUnreadWeChatCharacterMessages(conversationKey),
+        personaDb.peekLatestWeChatChatMessage(conversationKey),
+      ])
       let preview =
         kind === 'lumi'
           ? '点击开始与 Lumi 聊天'
@@ -4319,120 +4386,113 @@ function WeChatAppInner({ onBack }: Props) {
       }
     }
 
-    const acc = currentAccountId?.trim() ?? ''
-    const lumiKey = acc
-      ? await ensureAccountScopedPrivateConversation({
-          wechatAccountId: acc,
-          characterId: WECHAT_LUMI_PEER_CHARACTER_ID,
-          appSessionPlayerIdentityId: pid,
-        })
-      : wechatConversationKey(WECHAT_LUMI_PEER_CHARACTER_ID, pid)
-    const lumiRowData = await buildOne(lumiKey, 'lumi', 'Lumi', lumiWechatAvatarUrl, WECHAT_LUMI_PEER_CHARACTER_ID)
-
+    // 列表刷新只算键，不做 ensure* 迁移（迁移会 listDistinct getAll + rekey，角色一多就卡死）
+    const lumiKey = resolvePrivateWeChatStorageConversationKey(
+      WECHAT_LUMI_PEER_CHARACTER_ID,
+      acc || null,
+      pid,
+    )
     const selfDisplayName =
       wechatAccountProfile?.nickname?.trim() || state.profile.displayName?.trim() || '我'
-    const selfKey = acc
-      ? await ensureAccountScopedPrivateConversation({
-          wechatAccountId: acc,
-          characterId: WECHAT_SELF_PEER_CHARACTER_ID,
-          appSessionPlayerIdentityId: pid,
-        })
-      : wechatConversationKey(WECHAT_SELF_PEER_CHARACTER_ID, pid)
-    const selfRowData = await buildOne(
-      selfKey,
-      'self',
-      selfDisplayName,
-      wechatAccountProfile?.avatarUrl ?? state.profile.avatarImageUrl,
+    const selfKey = resolvePrivateWeChatStorageConversationKey(
       WECHAT_SELF_PEER_CHARACTER_ID,
+      acc || null,
+      pid,
     )
 
-    const personaRowsData = await Promise.all(
-      state.wechatPersonaContacts.map(async (c) => {
-        const sessionSid = await resolveActivePrivateChatSessionPlayerIdentityId({
-          characterId: c.characterId,
-          wechatAccountId: acc || null,
-          appPlayerIdentityId: pid,
-        })
-        const convKey = acc
-          ? await ensureAccountScopedPrivateConversation({
-              wechatAccountId: acc,
-              characterId: c.characterId,
-              appSessionPlayerIdentityId: sessionSid,
-            })
-          : resolvePrivateWeChatStorageConversationKey(c.characterId, null, sessionSid)
-        let characterAvatar: string | undefined
-        if (!c.avatarUrl?.trim()) {
+    const [lumiRowData, selfRowData] = await Promise.all([
+      buildOne(lumiKey, 'lumi', 'Lumi', lumiWechatAvatarUrl, WECHAT_LUMI_PEER_CHARACTER_ID, WECHAT_LUMI_PEER_CHARACTER_ID),
+      buildOne(
+        selfKey,
+        'self',
+        selfDisplayName,
+        wechatAccountProfile?.avatarUrl ?? state.profile.avatarImageUrl,
+        WECHAT_SELF_PEER_CHARACTER_ID,
+        WECHAT_SELF_PEER_CHARACTER_ID,
+      ),
+    ])
+
+    const contacts = state.wechatPersonaContacts
+    const personaRowsData: Array<MessagesThreadRow & { sortTs: number }> = []
+    // 分批，避免 Promise.all 一次性 stampede
+    const BATCH = 6
+    for (let i = 0; i < contacts.length; i += BATCH) {
+      const slice = contacts.slice(i, i + BATCH)
+      const batch = await Promise.all(
+        slice.map(async (c) => {
+          if (hiddenPeerIds.has(c.characterId)) return null
           const ch = await personaDb.getCharacter(c.characterId)
-          characterAvatar = ch?.avatarUrl?.trim()
-        }
-        const avatarResolved = resolveWeChatContactAvatarUrl(c.avatarUrl, characterAvatar) || undefined
-        const unread = acc
-          ? await countUnreadPrivateMessagesForAccountCharacter({
-              wechatAccountId: acc,
-              characterId: c.characterId,
-              appSessionPlayerIdentityId: sessionSid,
-              fallbackConversationKey: convKey,
-            })
-          : await personaDb.countUnreadWeChatCharacterMessages(convKey)
-        const row = await buildOne(convKey, 'persona', c.remarkName, avatarResolved, c.characterId)
-        return { ...row, unread }
-      }),
-    )
+          // 列表用同步绑定身份即可，不必对每个关联身份再探 latest（那是进聊天室才该做的）
+          const sessionSid = resolvePrivateChatSessionPlayerIdentityId(ch, pid)
+          const convKey = resolvePrivateWeChatStorageConversationKey(c.characterId, acc || null, sessionSid)
+          if (settingsByKey.get(convKey)?.hiddenFromMessageList) return null
+          const avatarResolved =
+            resolveWeChatContactAvatarUrl(c.avatarUrl, ch?.avatarUrl?.trim()) || undefined
+          return buildOne(convKey, 'persona', c.remarkName, avatarResolved, c.characterId, c.characterId)
+        }),
+      )
+      for (const row of batch) {
+        if (row) personaRowsData.push(row)
+      }
+    }
 
     const groups = await personaDb.listGroupChatsForPlayerIdentity(pid)
-    const groupRowsData: Array<MessagesThreadRow & { sortTs: number }> = await Promise.all(
-      groups.map(async (g) => {
-        const conversationKey = acc
-          ? await ensureAccountScopedGroupConversation({
-              wechatAccountId: acc,
-              groupId: g.id,
-              appSessionPlayerIdentityId: pid,
-            })
-          : resolveGroupWeChatStorageConversationKey(g.id, null, pid)
-        const peerCharacterId = wechatGroupPeerCharacterId(g.id)
-        const st = settingsByKey.get(conversationKey) ?? null
-        const isPinned = st?.isPinned ?? false
-        const unread = await personaDb.countUnreadWeChatCharacterMessages(conversationKey)
-        const recent = await personaDb.listWeChatChatMessagesRecent({ conversationKey, limit: 1 })
-        const last = recent[recent.length - 1]
-        let preview = '点击开始群聊'
-        let time = '—'
-        const msgTs = last ? last.timestamp : 0
-        const sortTs = Math.max(msgTs, st?.lastMessageTime ?? 0)
-        if (last) {
-          const pv = formatWeChatMessagesTabPreviewFromStoredMessage(last)
-          preview = pv.slice(0, 48) + (pv.length > 48 ? '…' : '')
-          const d = new Date(last.timestamp)
-          time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-        }
-        const listTitle = g.remark.trim() || g.name
-        const avatarUrl = g.avatar.trim() || undefined
-        return {
-          key: `group-${g.id}`,
-          kind: 'group' as const,
-          groupId: g.id,
-          conversationKey,
-          peerCharacterId,
-          isPinned,
-          name: listTitle,
-          time,
-          preview,
-          avatarUrl,
-          unread,
-          sortTs,
-        }
-      }),
-    )
+    const groupRowsData: Array<MessagesThreadRow & { sortTs: number }> = []
+    for (let i = 0; i < groups.length; i += BATCH) {
+      const slice = groups.slice(i, i + BATCH)
+      const batch = await Promise.all(
+        slice.map(async (g) => {
+          const peerCharacterId = wechatGroupPeerCharacterId(g.id)
+          if (hiddenPeerIds.has(peerCharacterId)) return null
+          const conversationKey = resolveGroupWeChatStorageConversationKey(g.id, acc || null, pid)
+          if (settingsByKey.get(conversationKey)?.hiddenFromMessageList) return null
+          const st = settingsByKey.get(conversationKey) ?? null
+          const isPinned = st?.isPinned ?? false
+          const [unread, last] = await Promise.all([
+            personaDb.countUnreadWeChatCharacterMessages(conversationKey),
+            personaDb.peekLatestWeChatChatMessage(conversationKey),
+          ])
+          let preview = '点击开始群聊'
+          let time = '—'
+          const msgTs = last ? last.timestamp : 0
+          const sortTs = Math.max(msgTs, st?.lastMessageTime ?? 0)
+          if (last) {
+            const pv = formatWeChatMessagesTabPreviewFromStoredMessage(last)
+            preview = pv.slice(0, 48) + (pv.length > 48 ? '…' : '')
+            const d = new Date(last.timestamp)
+            time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+          }
+          const listTitle = g.remark.trim() || g.name
+          const avatarUrl = g.avatar.trim() || undefined
+          return {
+            key: `group-${g.id}`,
+            kind: 'group' as const,
+            groupId: g.id,
+            conversationKey,
+            peerCharacterId,
+            isPinned,
+            name: listTitle,
+            time,
+            preview,
+            avatarUrl,
+            unread,
+            sortTs,
+          }
+        }),
+      )
+      for (const row of batch) {
+        if (row) groupRowsData.push(row)
+      }
+    }
 
     const pack: Array<MessagesThreadRow & { sortTs: number }> = [
-      lumiRowData,
-      selfRowData,
+      ...(lumiRowData ? [lumiRowData] : []),
+      ...(selfRowData ? [selfRowData] : []),
       ...personaRowsData,
       ...groupRowsData,
     ]
-    const visiblePack = pack.filter((r) => !(settingsByKey.get(r.conversationKey)?.hiddenFromMessageList ?? false))
-    const pinned = visiblePack.filter((r) => r.isPinned).sort((a, b) => b.sortTs - a.sortTs)
-    const normal = visiblePack.filter((r) => !r.isPinned).sort((a, b) => b.sortTs - a.sortTs)
+    const pinned = pack.filter((r) => r.isPinned).sort((a, b) => b.sortTs - a.sortTs)
+    const normal = pack.filter((r) => !r.isPinned).sort((a, b) => b.sortTs - a.sortTs)
     const merged = [...pinned, ...normal].map((row) => {
       const { sortTs: _s, ...rest } = row
       return rest
@@ -4457,11 +4517,28 @@ function WeChatAppInner({ onBack }: Props) {
     if (messagesListTabActive) setMessagesPinnedExpanded(false)
   }, [messagesListTabActive])
 
+  /** 角色多时 storage 事件会连打；合并刷新，避免会话列表卡死 */
   useEffect(() => {
-    const onStorage = () => void refreshMessageThreadsMeta()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const onStorage = () => {
+      if (timer != null) clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        void refreshMessageThreadsMeta()
+      }, 160)
+    }
     window.addEventListener('wechat-storage-changed', onStorage)
-    return () => window.removeEventListener('wechat-storage-changed', onStorage)
+    return () => {
+      window.removeEventListener('wechat-storage-changed', onStorage)
+      if (timer != null) clearTimeout(timer)
+    }
   }, [refreshMessageThreadsMeta])
+
+  const hideMessageThreadFromList = useCallback((conversationKey: string) => {
+    const k = conversationKey.trim()
+    if (!k) return
+    setMessageThreads((prev) => prev.filter((t) => t.conversationKey !== k))
+  }, [])
 
   const [activeConversationKey, setActiveConversationKey] = useState<string | null>(null)
   useEffect(() => {
@@ -4476,31 +4553,22 @@ function WeChatAppInner({ onBack }: Props) {
     if (layer.kind === 'persona' && chatRouteIdentityId === null) {
       return
     }
-    void (async () => {
-      const sessionPid =
-        layer.kind === 'persona' && chatRouteIdentityId?.trim()
-          ? chatRouteIdentityId.trim()
-          : pid
-      if (layer.kind === 'group') {
-        const key = acc
-          ? await ensureAccountScopedGroupConversation({
-              wechatAccountId: acc,
-              groupId: layer.groupId,
-              appSessionPlayerIdentityId: sessionPid,
-            })
-          : resolveGroupWeChatStorageConversationKey(layer.groupId, null, sessionPid)
-        if (!cancelled) setActiveConversationKey(key)
-        return
-      }
-      const key = acc
-        ? await ensureAccountScopedPrivateConversation({
-            wechatAccountId: acc,
-            characterId: activeConversationCharacterId,
-            appSessionPlayerIdentityId: sessionPid,
-          })
-        : resolvePrivateWeChatStorageConversationKey(activeConversationCharacterId, null, sessionPid)
-      if (!cancelled) setActiveConversationKey(key)
-    })()
+    // 只算键，不做 ensure* 迁移（进聊天与列表一致，避免整库扫卡白屏）
+    const sessionPid =
+      layer.kind === 'persona' && chatRouteIdentityId?.trim()
+        ? chatRouteIdentityId.trim()
+        : pid
+    if (layer.kind === 'group') {
+      const key = resolveGroupWeChatStorageConversationKey(layer.groupId, acc || null, sessionPid)
+      setActiveConversationKey(key)
+    } else {
+      const key = resolvePrivateWeChatStorageConversationKey(
+        activeConversationCharacterId,
+        acc || null,
+        sessionPid,
+      )
+      setActiveConversationKey(key)
+    }
     return () => {
       cancelled = true
     }
@@ -4802,6 +4870,7 @@ function WeChatAppInner({ onBack }: Props) {
     danmaku: boolean
     thinkingChain: boolean
     forwardHistoryCard: boolean
+    pulseDmScreenshot: boolean
     profileImageChange: boolean
     internetMemeLexicon: boolean
     bg: string
@@ -4834,6 +4903,7 @@ function WeChatAppInner({ onBack }: Props) {
           danmaku: s?.isDanmakuMode ?? false,
           thinkingChain: s?.showThinkingChain === true,
           forwardHistoryCard: s?.forwardHistoryCardEnabled === true,
+          pulseDmScreenshot: s?.pulseDmScreenshotEnabled === true,
           profileImageChange: s?.profileImageChangeEnabled === true,
           internetMemeLexicon: s?.internetMemeLexiconEnabled === true,
           bg: (s?.chatBackground ?? '').trim(),
@@ -4845,6 +4915,7 @@ function WeChatAppInner({ onBack }: Props) {
           prev.danmaku === next.danmaku &&
           prev.thinkingChain === next.thinkingChain &&
           prev.forwardHistoryCard === next.forwardHistoryCard &&
+          prev.pulseDmScreenshot === next.pulseDmScreenshot &&
           prev.profileImageChange === next.profileImageChange &&
           prev.internetMemeLexicon === next.internetMemeLexicon &&
           prev.bg === next.bg &&
@@ -5258,6 +5329,7 @@ function WeChatAppInner({ onBack }: Props) {
         replyBias: replyBiasFull,
         includeThinkingChain: !friendRequestAdjudication && convSettings?.showThinkingChain === true,
         includeForwardHistoryCard: convSettings?.forwardHistoryCardEnabled === true,
+        includePulseDmScreenshot: convSettings?.pulseDmScreenshotEnabled === true,
         includeProfileImageChange: convSettings?.profileImageChangeEnabled === true,
         includeInternetMemeLexicon: convSettings?.internetMemeLexiconEnabled === true,
         friendRequestAdjudication,
@@ -5875,7 +5947,15 @@ function WeChatAppInner({ onBack }: Props) {
                 memoryKeywords: kwBackup?.length ? kwBackup : undefined,
               })
               if (memParsed.timeline) {
-                await persistStoryTimelineFromSummaryDelta(target.characterId, memParsed.timeline, 'private')
+                await persistStoryTimelineFromSummaryDelta(
+                  target.characterId,
+                  memParsed.timeline,
+                  'private',
+                  {
+                    conversationKey: convKey,
+                    recordedAtMs: Date.now(),
+                  },
+                )
               }
             }
           } catch {
@@ -6181,6 +6261,7 @@ function WeChatAppInner({ onBack }: Props) {
                 danmakuEnabled={chatSessionPrefs?.danmaku ?? false}
                 thinkingChainEnabled={chatSessionPrefs?.thinkingChain ?? false}
                 forwardHistoryCardEnabled={chatSessionPrefs?.forwardHistoryCard ?? false}
+                pulseDmScreenshotEnabled={chatSessionPrefs?.pulseDmScreenshot ?? false}
                 profileImageChangeEnabled={chatSessionPrefs?.profileImageChange ?? false}
                 internetMemeLexiconEnabled={chatSessionPrefs?.internetMemeLexicon ?? false}
                 showGroupMemberNicknameInChat={chatSessionPrefs?.showGroupMemberNicknameInChat !== false}
@@ -6234,8 +6315,9 @@ function WeChatAppInner({ onBack }: Props) {
                   setRoute({ name: 'red-packet-send', chat: activeChatForRoute })
                 }}
                 onNavigateRedPacketDetail={(detail) => {
-                  if (!activeChatForRoute) return
-                  setRoute({ name: 'red-packet-detail', chat: activeChatForRoute, detail })
+                  const chat = activeChatForRoute ?? wxDockChatRef.current
+                  if (!chat) return
+                  setRoute({ name: 'red-packet-detail', chat, detail })
                 }}
                 onOpenLumiTransfer={() => {
                   if (!activeChatForRoute) return
@@ -6280,6 +6362,7 @@ function WeChatAppInner({ onBack }: Props) {
                     onOpenChat={(chat) => setRoute({ name: 'chat', chat })}
                     playerIdentityId={playerIdentityId}
                     onListDataMutated={() => void refreshMessageThreadsMeta()}
+                    onThreadHidden={hideMessageThreadFromList}
                   />
                 </div>
               ) : route.tab === 'contacts' ? (
@@ -7479,7 +7562,11 @@ function WeChatAppInner({ onBack }: Props) {
 
       <AnimatePresence>
         {consoleOpen ? (
-          <WeChatConsoleFloatingPanel open={consoleOpen} onClose={closeConsole} />
+          <WeChatConsoleFloatingPanel
+            open={consoleOpen}
+            onClose={closeConsole}
+            characterId={chatRoomPersonaCharacterId ?? undefined}
+          />
         ) : null}
       </AnimatePresence>
 

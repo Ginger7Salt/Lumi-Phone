@@ -8,6 +8,7 @@ export const MEMORY_SCENE_CHIP_CLASS: Record<MemorySceneTag, string> = {
   关联线下: 'bg-[#0d9488]/12 text-[#0f766e] ring-1 ring-[#0d9488]/20',
   遇见: 'bg-gray-900/10 text-gray-800 ring-1 ring-gray-900/10',
   朋友圈: 'bg-gray-600/10 text-gray-700 ring-1 ring-gray-600/15',
+  微博: 'bg-[#E5989B]/15 text-[#C97B7E] ring-1 ring-[#E5989B]/25',
 }
 
 export function memorySceneFilterLabel(tag: MemorySceneTag): string {

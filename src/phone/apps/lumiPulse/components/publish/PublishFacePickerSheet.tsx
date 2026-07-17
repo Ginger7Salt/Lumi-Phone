@@ -27,7 +27,7 @@ export function PublishFacePickerSheet({
     <>
       <motion.button
         type="button"
-        className="fixed inset-0 z-[1270] bg-black/20 backdrop-blur-[2px]"
+        className="fixed inset-0 z-[1270] bg-transparent"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -35,7 +35,7 @@ export function PublishFacePickerSheet({
         onClick={onClose}
       />
       <motion.div
-        className="fixed inset-x-0 bottom-0 z-[1280] flex max-h-[72vh] flex-col overflow-hidden rounded-t-[24px] bg-white/98 shadow-[0_-12px_48px_rgba(0,0,0,0.1)] backdrop-blur-xl"
+        className="fixed inset-x-0 bottom-0 z-[1280] flex max-h-[72vh] flex-col overflow-hidden rounded-t-[24px] border-t border-black/[0.06] bg-white shadow-[0_-12px_48px_rgba(0,0,0,0.1)]"
         initial={{ y: '100%' }}
         animate={{ y: 0 }}
         exit={{ y: '100%' }}

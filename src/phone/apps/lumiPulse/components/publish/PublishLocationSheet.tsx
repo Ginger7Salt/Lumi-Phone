@@ -1,21 +1,11 @@
 import { motion } from 'framer-motion'
 import { MapPin, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Pressable } from '../../../../components/Pressable'
 import { PULSE_SHEET_SPRING } from '../../constants'
 
-export const PULSE_PUBLISH_LOCATIONS = [
-  '上海 · 外滩滨江',
-  '北京 · 三里屯',
-  '杭州 · 西湖畔',
-  '成都 · 宽窄巷子',
-  '深圳 · 湾畔步道',
-  '广州 · 珠江新城',
-  '南京 · 梧桐大道',
-  '苏州 · 平江路',
-  '重庆 · 洪崖洞',
-  '西安 · 城墙根',
-] as const
+const MAX_LOCATION_LEN = 48
 
 export function PublishLocationSheet({
   selected,
@@ -28,6 +18,22 @@ export function PublishLocationSheet({
   onClear: () => void
   onClose: () => void
 }) {
+  const [draft, setDraft] = useState(() => selected?.trim() || '')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const t = window.setTimeout(() => inputRef.current?.focus(), 80)
+    return () => window.clearTimeout(t)
+  }, [])
+
+  const trimmed = draft.trim()
+  const canConfirm = trimmed.length > 0
+
+  const confirm = () => {
+    if (!canConfirm) return
+    onPick(trimmed.slice(0, MAX_LOCATION_LEN))
+  }
+
   return (
     <>
       <motion.button
@@ -40,7 +46,7 @@ export function PublishLocationSheet({
         onClick={onClose}
       />
       <motion.div
-        className="fixed inset-x-0 bottom-0 z-[1280] max-h-[58vh] overflow-hidden rounded-t-[28px] bg-white/95 shadow-[0_-12px_48px_rgba(0,0,0,0.08)] backdrop-blur-xl"
+        className="fixed inset-x-0 bottom-0 z-[1280] overflow-hidden rounded-t-[28px] bg-white/95 shadow-[0_-12px_48px_rgba(0,0,0,0.08)] backdrop-blur-xl"
         initial={{ y: '100%' }}
         animate={{ y: 0 }}
         exit={{ y: '100%' }}
@@ -53,33 +59,47 @@ export function PublishLocationSheet({
             <X className="size-5" strokeWidth={1.5} />
           </Pressable>
         </div>
-        <div className="max-h-[44vh] overflow-y-auto px-4 pb-4">
-          {selected ? (
+
+        <div className="px-4 pb-4">
+          <div className="flex items-center gap-2 rounded-2xl bg-[#F7F6F5] px-3.5 py-3">
+            <MapPin className="size-4 shrink-0 text-neutral-400" strokeWidth={1.5} />
+            <input
+              ref={inputRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value.slice(0, MAX_LOCATION_LEN))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  confirm()
+                }
+              }}
+              maxLength={MAX_LOCATION_LEN}
+              placeholder="输入地点，如：自家阳台 / 咖啡店角落"
+              className="min-w-0 flex-1 bg-transparent text-[14px] text-[#1C1C1E] outline-none placeholder:text-neutral-300"
+            />
+          </div>
+          <p className="mt-2 px-1 text-[11px] text-neutral-400">
+            可写任意地点名，最多 {MAX_LOCATION_LEN} 字
+          </p>
+
+          <div className="mt-4 flex gap-2">
+            {selected ? (
+              <Pressable
+                type="button"
+                onClick={onClear}
+                className="flex-1 rounded-full bg-[#F5F5F4] py-2.5 text-[13px] text-neutral-600"
+              >
+                清除位置
+              </Pressable>
+            ) : null}
             <Pressable
               type="button"
-              onClick={onClear}
-              className="mb-3 w-full rounded-2xl bg-[#F5F5F4] px-4 py-3 text-left text-[12px] text-neutral-500"
+              disabled={!canConfirm}
+              onClick={confirm}
+              className="flex-[1.4] rounded-full bg-[#1C1C1E] py-2.5 text-[13px] text-white disabled:opacity-35"
             >
-              清除当前位置 · {selected}
+              确认
             </Pressable>
-          ) : null}
-          <div className="grid gap-2">
-            {PULSE_PUBLISH_LOCATIONS.map((label) => {
-              const active = selected === label
-              return (
-                <Pressable
-                  key={label}
-                  type="button"
-                  onClick={() => onPick(label)}
-                  className={`flex items-center gap-2.5 rounded-2xl px-4 py-3 text-left ${
-                    active ? 'bg-[#1C1C1E] text-white' : 'bg-[#FAFAFA] text-[#1C1C1E]'
-                  }`}
-                >
-                  <MapPin className="size-4 shrink-0 opacity-70" strokeWidth={1.5} />
-                  <span className="text-[13px]">{label}</span>
-                </Pressable>
-              )
-            })}
           </div>
         </div>
       </motion.div>

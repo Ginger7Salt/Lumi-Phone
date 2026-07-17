@@ -1,4 +1,5 @@
 import { Check, Hourglass } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import {
   ImessageApplePayCashCard,
@@ -6,6 +7,10 @@ import {
   type MessengerBubbleStyle,
 } from '../wechatMessengerSpecialBubbles'
 import { WechatRedPacketBubbleFace } from '../wechatBubbleWechatUi'
+import {
+  isLumiRedPacketOpenedUi,
+  LUMI_REDPACKET_OPENED_CHANGED_EVENT,
+} from './lumiRedPacketOpenedStore'
 
 const PLATINUM = '#D4AF37'
 
@@ -23,6 +28,13 @@ function resolveVisual(data: RedPacketBubbleData): VisualKind {
   if (data.expired && !data.opened) return 'expired'
   if (data.opened) return 'claimed'
   return 'unclaimed'
+}
+
+function resolveLiveOpened(messageId: string | undefined, propOpened: boolean): boolean {
+  if (propOpened) return true
+  const id = messageId?.trim()
+  if (!id) return false
+  return isLumiRedPacketOpenedUi(id)
 }
 
 /** 闭合信封 + 中央火漆圆（铂金色线稿） */
@@ -66,8 +78,10 @@ function IconExpired() {
 
 /**
  * 柔和浅色铂金风红包气泡：高定邀请函式卡片，摒弃高饱和金红。
+ * 已领取态与转账气泡同构：优先读独立 UI store + 事件，不绑死 ChatRoom items。
  */
 export function RedPacketBubble({
+  messageId,
   data,
   isSelf,
   messengerStyle = 'lumi',
@@ -75,6 +89,8 @@ export function RedPacketBubble({
   replyPreview,
   replyIsSelf = false,
 }: {
+  /** 聊天消息 id：用于订阅本地已拆状态（与 transferId 同角色） */
+  messageId?: string
   data: RedPacketBubbleData
   isSelf: boolean
   messengerStyle?: MessengerBubbleStyle
@@ -82,19 +98,32 @@ export function RedPacketBubble({
   replyPreview?: { senderName: string; content: string; onClick?: () => void }
   replyIsSelf?: boolean
 }) {
-  const kind = resolveVisual(data)
+  const [liveOpened, setLiveOpened] = useState(() => resolveLiveOpened(messageId, data.opened))
+
+  useEffect(() => {
+    setLiveOpened(resolveLiveOpened(messageId, data.opened))
+  }, [messageId, data.opened])
+
+  useEffect(() => {
+    const sync = () => setLiveOpened(resolveLiveOpened(messageId, data.opened))
+    window.addEventListener(LUMI_REDPACKET_OPENED_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(LUMI_REDPACKET_OPENED_CHANGED_EVENT, sync)
+  }, [messageId, data.opened])
+
+  const liveData: RedPacketBubbleData = { ...data, opened: liveOpened || data.opened }
+  const kind = resolveVisual(liveData)
   if (messengerStyle === 'imessage') {
-    return <ImessageApplePayCashCard amountYuan={data.amountYuan} remark={data.remark} />
+    return <ImessageApplePayCashCard amountYuan={liveData.amountYuan} remark={liveData.remark} />
   }
   if (messengerStyle === 'telegram') {
     const title = kind === 'unclaimed' ? 'Gift' : kind === 'claimed' ? 'Gift Opened' : 'Gift Expired'
     const btn =
-      kind === 'unclaimed' ? `Open ¥${Number(data.amountYuan || 0).toFixed(2)}` : kind === 'claimed' ? 'View Gift' : 'Expired'
+      kind === 'unclaimed' ? `Open ¥${Number(liveData.amountYuan || 0).toFixed(2)}` : kind === 'claimed' ? 'View Gift' : 'Expired'
     return (
       <TelegramInvoiceCard
         title={title}
-        description={data.remark?.trim() || '恭喜发财，大吉大利'}
-        amountYuan={data.amountYuan}
+        description={liveData.remark?.trim() || '恭喜发财，大吉大利'}
+        amountYuan={liveData.amountYuan}
         buttonLabel={btn}
         emoji="🎁"
         onAction={onAction}
@@ -104,13 +133,13 @@ export function RedPacketBubble({
     )
   }
 
-  const remark = (data.remark || '恭喜发财，大吉大利').trim() || '恭喜发财，大吉大利'
+  const remark = (liveData.remark || '恭喜发财，大吉大利').trim() || '恭喜发财，大吉大利'
 
   if (messengerStyle === 'wechat') {
     return <WechatRedPacketBubbleFace remark={remark} kind={kind} isSelf={isSelf} />
   }
 
-  const remarkLegacy = (data.remark || 'Best Wishes').trim() || 'Best Wishes'
+  const remarkLegacy = (liveData.remark || 'Best Wishes').trim() || 'Best Wishes'
   const tag = kind === 'unclaimed' ? 'RED PACKET' : kind === 'claimed' ? 'OPENED' : 'EXPIRED'
 
   const isClaimed = kind === 'claimed'

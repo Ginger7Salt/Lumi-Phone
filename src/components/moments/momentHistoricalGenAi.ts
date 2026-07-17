@@ -15,6 +15,7 @@ import {
   buildCharacterLocationPromptBlock,
   detectRelocationSignalsInContext,
   enforceCharacterLocationConsistency,
+  mergeLocationAnchorWithPersona,
   resolveCharacterLocationAnchor,
 } from './momentCharacterLocationAnchor'
 import { MOMENT_LOCATION_PROMPT_HINT } from './momentLocationUtils'
@@ -54,6 +55,7 @@ const HISTORICAL_MOMENT_TASK_APPENDIX = `
 ---
 【历史朋友圈补全任务】
 你是一个极具「活人感」和「网感」的真实人类。你现在正拿着手机，准备在微信朋友圈**回溯发布**一条过去某个时刻的动态。你必须完全忘记自己是一个 AI 模型，绝对代入你当前的【角色人设】。
+禁止在正文/配文中写出 MBTI 四字母（ENFP/INFJ 等）或「快乐修勾」「INFJ 清冷感」等类型学套话。
 
 # Historical Rules（历史回溯准则）
 1. **假定发帖时刻**由用户给定；语气、季节感、热点、生活状态须贴合该日期，**禁止**提及该时刻之后才会发生的事。
@@ -120,9 +122,23 @@ export async function generateHistoricalCharacterMomentPost(params: {
     throw new Error('未找到该角色人设，请确认通讯录已绑定角色')
   }
 
-  const locationAnchor = await resolveCharacterLocationAnchor({
-    accountId: params.wechatCtx.wechatAccountId,
-    characterId: params.characterId,
+  const locationAnchor = mergeLocationAnchorWithPersona({
+    locationAnchor: await resolveCharacterLocationAnchor({
+      accountId: params.wechatCtx.wechatAccountId,
+      characterId: params.characterId,
+    }),
+    personaTexts: [
+      pack.character.bio,
+      pack.character.identity,
+      pack.character.wechatRegion,
+      pack.character.worldBooks
+        ?.flatMap((w) => w.items ?? [])
+        .map((it) => `${it.keywords ?? ''}\n${it.content ?? ''}`)
+        .join('\n'),
+      pack.worldBackgroundPrompt,
+      pack.longTermMemoryNotes,
+      pack.offlineDatingPlotsContext,
+    ],
   })
   const relocationAllowed = detectRelocationSignalsInContext(
     pack.longTermMemoryNotes,

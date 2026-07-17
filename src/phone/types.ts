@@ -125,6 +125,7 @@ export type AppSlot = {
     | 'backgroundNotify'
     | 'sandbox'
     | 'appearance'
+    | 'evolution'
   label: string
   /** 可选：自定义图标图片 URL（优先于线框 SVG） */
   iconImageUrl: string
@@ -512,8 +513,18 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     { id: 'backgroundNotify', label: '后台通知', iconImageUrl: '', iconRadius: 18 },
     { id: 'sandbox', label: '幻境引擎', iconImageUrl: '', iconRadius: 18 },
     { id: 'appearance', label: '外观', iconImageUrl: '', iconRadius: 18 },
+    { id: 'evolution', label: '系统演进录', iconImageUrl: '', iconRadius: 18 },
   ],
-  desktopLayout: ['voiceprint', 'dataArchive', 'appearance', 'recycleBin', 'sandbox', null, null, null],
+  desktopLayout: [
+    'voiceprint',
+    'dataArchive',
+    'appearance',
+    'recycleBin',
+    'sandbox',
+    'evolution',
+    null,
+    null,
+  ],
   ui: {
     showStatusBar: true,
     fullScreen: false,
@@ -565,6 +576,14 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
       ...DEFAULT_APP_PAGE_STYLE,
       pageBg: '#F5F6F8',
       pageBgImageUrl: DEFAULT_WECHAT_CHAT_WALLPAPER_PATH,
+    },
+    evolution: {
+      ...DEFAULT_APP_PAGE_STYLE,
+      pageBg: '#F9FAFB',
+      headerBg: 'rgba(249,250,251,0.92)',
+      cardBg: '#ffffff',
+      fontFamily:
+        '"Inter", "Noto Sans SC", system-ui, -apple-system, "PingFang SC", sans-serif',
     },
   },
   dockStyle: {

@@ -1,16 +1,23 @@
-import { motion } from 'framer-motion'
-
 import { Pressable } from '../../../components/Pressable'
 import { PULSE_COLORS } from '../constants'
 import type { PulseTrendingTag, PulseTrendingTopic } from '../pulseTypes'
 import { formatPulseCount } from '../pulseTypes'
-import { PulseNum } from './PulseNum'
+import { PulseNum, PulseNumericText } from './PulseNum'
 import { PulseWeiboFaceText } from './PulseWeiboFaceText'
 
 const TAG_STYLE: Record<PulseTrendingTag, string> = {
   新: 'bg-[#A3C4BC] text-white',
   热: 'bg-[#E5989B] text-white',
   爆: 'bg-[#D4AF37] text-white',
+}
+
+/** 热搜榜标题：去掉包裹的 #话题#，按普通文案显示 */
+function plainTrendingTitle(title: string): string {
+  const t = title.trim()
+  if (t.startsWith('#') && t.endsWith('#') && t.length > 2) {
+    return t.slice(1, -1).trim() || t
+  }
+  return t.replace(/#([^#\n]+)#/g, '$1').trim() || t
 }
 
 function rankColor(rank: number): string {
@@ -32,13 +39,7 @@ export function TrendingItem({
   const rank = index + 1
 
   const body = (
-    <motion.div
-      variants={{
-        hidden: { opacity: 0, y: 8 },
-        show: { opacity: 1, y: 0 },
-      }}
-      className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3.5 shadow-[0_2px_15px_rgba(0,0,0,0.03)]"
-    >
+    <div className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3.5 shadow-[0_2px_15px_rgba(0,0,0,0.03)]">
       <PulseNum
         className="w-7 shrink-0 text-center text-[17px] font-semibold"
         style={{ color: rankColor(rank) }}
@@ -46,7 +47,9 @@ export function TrendingItem({
         {rank}
       </PulseNum>
       <div className="min-w-0 flex-1">
-        <p className="truncate font-medium text-[15px] text-[#1C1C1E]">{topic.title}</p>
+        <p className="truncate font-medium text-[15px] text-[#1C1C1E]">
+          <PulseNumericText text={plainTrendingTitle(topic.title)} />
+        </p>
         {topic.excerpt ? (
           <p className="mt-0.5 truncate text-[12px] text-neutral-400">
             <PulseWeiboFaceText text={topic.excerpt} />
@@ -65,9 +68,11 @@ export function TrendingItem({
           <PulseNum className="text-[10px] text-neutral-400">
             {formatPulseCount(topic.postCount)}
           </PulseNum>
+        ) : topic.heatLabel ? (
+          <PulseNum className="text-[10px] text-neutral-400">{topic.heatLabel}</PulseNum>
         ) : null}
       </div>
-    </motion.div>
+    </div>
   )
 
   if (!onPress) return body

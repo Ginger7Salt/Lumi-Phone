@@ -69,6 +69,8 @@ ${modeNote}
 ${perspectiveRule}
 ${taskBlock}
 
+【禁止 MBTI 出戏】旁白与对白中禁止写出 ENFP/INFJ 等四字母或「快乐修勾」「INFJ 清冷感」等类型学套话。
+
 【输出铁律】
 - **禁止**输出 \`<thinking>\`、思维链、JSON、Markdown 围栏或任何解释性前后缀。
 - **只输出**一段可直接阅读的剧情正文。

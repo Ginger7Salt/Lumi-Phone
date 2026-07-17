@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Check, Pencil, Sparkles, Trash2, X } from 'lucide-react'
+import { Check, Pencil, RotateCcw, Sparkles, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { isAndroidWeb, resolveAndroidKeyboardPadPx } from '../../../hooks/keyboardInset'
 import {
@@ -39,6 +39,7 @@ export function LoreEntryEditorSheet({
   itemId,
   onPatchItem,
   onDeleteItem,
+  onResetToInitial,
   forPlayerIdentity = false,
   networkPeersForInsert,
   canUseAi,
@@ -55,6 +56,8 @@ export function LoreEntryEditorSheet({
   itemId: string
   onPatchItem: (wbId: string, itemId: string, patch: Partial<WorldBookItem>) => void
   onDeleteItem: (wbId: string, itemId: string) => void
+  /** 尾声延展：恢复本条出厂稿 */
+  onResetToInitial?: () => void
   forPlayerIdentity?: boolean
   networkPeersForInsert: PeerRow[]
   canUseAi: boolean
@@ -68,8 +71,15 @@ export function LoreEntryEditorSheet({
   const inputFocusedRef = useRef(false)
   const [androidKbPad, setAndroidKbPad] = useState(0)
   const [bodyEditing, setBodyEditing] = useState(false)
+  const [confirmResetInitial, setConfirmResetInitial] = useState(false)
 
   const rawBody = String(item.content ?? '')
+  const initialBody = String(item.contentInitial ?? '').trim()
+  const canResetToInitial =
+    item.priority === 'after' &&
+    Boolean(onResetToInitial) &&
+    initialBody.length > 0 &&
+    initialBody !== rawBody.trim()
   const { expanded: expandedBody, loading: bodyPreviewLoading } = useCharacterFieldPlaceholderPreview({
     draft: rawBody,
     characterId: character.id,
@@ -80,7 +90,10 @@ export function LoreEntryEditorSheet({
     !forPlayerIdentity && rawBody.includes('{{') && expandedBody ? expandedBody : rawBody
 
   useEffect(() => {
-    if (!open) setBodyEditing(false)
+    if (!open) {
+      setBodyEditing(false)
+      setConfirmResetInitial(false)
+    }
   }, [open, itemId])
 
   useEffect(() => {
@@ -333,6 +346,39 @@ export function LoreEntryEditorSheet({
                   })}
                 </div>
               </div>
+
+              {item.priority === 'after' && onResetToInitial ? (
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    disabled={!canResetToInitial && !confirmResetInitial}
+                    onClick={() => {
+                      if (!canResetToInitial) return
+                      if (!confirmResetInitial) {
+                        setConfirmResetInitial(true)
+                        window.setTimeout(() => setConfirmResetInitial(false), 3600)
+                        return
+                      }
+                      setConfirmResetInitial(false)
+                      onResetToInitial()
+                    }}
+                    className={`flex w-full items-center justify-center gap-1.5 rounded-2xl border px-3 py-2.5 text-[12px] font-medium transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 ${
+                      confirmResetInitial
+                        ? 'border-amber-400/80 bg-amber-50 text-amber-900'
+                        : 'border-stone-200/90 bg-stone-50/90 text-stone-600 hover:bg-white'
+                    }`}
+                  >
+                    <RotateCcw className="size-3.5 shrink-0" strokeWidth={2} />
+                    {confirmResetInitial
+                      ? '再点确认：恢复本条最初内容'
+                      : canResetToInitial
+                        ? '恢复本条最初尾声'
+                        : initialBody
+                          ? '已是最初尾声'
+                          : '尚无出厂稿可恢复'}
+                  </button>
+                </div>
+              ) : null}
 
               <div className="mt-5">
                 <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-stone-400">AI 灵感</p>

@@ -113,6 +113,7 @@ import { formatOfflineUnsummarizedBlockFromPlotSnapshots } from './loadOfflineDa
 import { loadDatingNpcNetworkPromptBlock } from './datingNpcNetworkPrompt'
 import { datingPlotBodyForPromptInjection, splitDatingAssistantOutput, resolveDatingPlotDisplayFromItem } from './plotCoT'
 import { PROSE_FORBIDDEN_LEXICON_PROMPT } from '../proseForbiddenLexiconPrompt'
+import { MBTI_OUTPUT_BAN_RULE } from '../mbtiOutputBan'
 import { buildDatingStyleSystemPrompt } from './lumiThinkingChainRules'
 import { getLoreArchiveBuiltinPresetTogglesSnapshot } from '../../../worldbook/worldbookLoreStore'
 import { appendAiRegenerateVersion, initialAiPlotVersions, plotWithVersionIndex } from './plotVersions'
@@ -1899,7 +1900,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
     userText: userText ?? '',
   })
   const systemPromptRaw =
-    `${charUserDirective}${buildDatingStyleSystemPrompt(getLoreArchiveBuiltinPresetTogglesSnapshot())}${styleAppend}${
+    `${charUserDirective}\n${MBTI_OUTPUT_BAN_RULE}\n\n${buildDatingStyleSystemPrompt(getLoreArchiveBuiltinPresetTogglesSnapshot())}${styleAppend}${
       datingArchiveBlock
         ? `\n\n${datingArchiveBlock}\n\n${worldBookRoleLockReminder}\n`
         : '\n'
@@ -2732,7 +2733,14 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       /** 须优先读 genOptions：VN 分支在同一次点击里会先 stage 再 send，React 尚未提交时 archive 里的 hint 仍为旧值。 */
       const hint =
         (genOptions?.branchContinuationHint ?? '').trim() || (archiveSnap.branchContinuationHint ?? '').trim() || undefined
-      const p1: PlotItem = { id: uid('p'), type: 'player', content: msg, timestamp: Date.now() }
+      const playerPlotTs = Date.now()
+      const p1: PlotItem = {
+        id: uid('p'),
+        type: 'player',
+        content: msg,
+        timestamp: playerPlotTs,
+        systemRecordedAt: playerPlotTs,
+      }
       const genOpts = {
         godPerspective: archiveSnap.godPerspective,
         mainCharacterOffstage: !!archiveSnap.mainCharacterOffstage,
@@ -2824,12 +2832,16 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             storyCalendarAnchor: resolveStoryCalendarAnchorFromPlotItems(plotsForModel),
           })
           const wbRevertNew = sanitizeWorldBookAfterRevertEntries(aiGen.worldBookAfterRevertEntries)
+          const { dualNarrativeStoryFieldsFromDelta } = await import('../memory/dualNarrativeTime')
+          const storyFields = dualNarrativeStoryFieldsFromDelta(timelineDelta)
           let aiPlot: PlotItem = {
             id: uid('ai'),
             type: 'ai',
             timestamp: plotTs,
+            systemRecordedAt: plotTs,
             highlightText: char.realName,
             ...aiPlotPersistFields(parsed, timelineSnap, timelineDelta),
+            ...storyFields,
             worldBookAfterRevertEntries: wbRevertNew.length ? wbRevertNew : undefined,
           }
           let plotImageWarningForToast: string | undefined
@@ -3252,6 +3264,10 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             storyCalendarAnchor: resolveStoryCalendarAnchorFromPlotItems(before),
           })
         const nextRevert = sanitizeWorldBookAfterRevertEntries(aiGenRegen.worldBookAfterRevertEntries)
+        const { dualNarrativeStoryFieldsFromDelta: storyFieldsFromDeltaRegen } = await import(
+          '../memory/dualNarrativeTime'
+        )
+        const regenStory = storyFieldsFromDeltaRegen(timelineDeltaRegen)
         let nextPlot: PlotItem = {
           ...appendAiRegenerateVersion(
             plotSlot,
@@ -3261,6 +3277,9 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             timelineSnapRegen,
             timelineDeltaRegen,
           ),
+          timestamp: plotTsRegen,
+          systemRecordedAt: plotTsRegen,
+          ...regenStory,
           worldBookAfterRevertEntries: nextRevert.length ? nextRevert : undefined,
         }
         let plotImageWarningForToast: string | undefined

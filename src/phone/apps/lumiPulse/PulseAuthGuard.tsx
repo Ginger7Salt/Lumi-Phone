@@ -3,25 +3,24 @@ import { ChevronLeft } from 'lucide-react'
 import { useState } from 'react'
 
 import { Pressable } from '../../components/Pressable'
-import { PersonaRosterAvatar } from '../wechat/newFriendsPersona/personaRoster/PersonaRosterAvatar'
 import { PULSE_COLORS } from './constants'
-import type { PulsePovOption } from './pulseTypes'
+import type { PulseIdentityOption } from './usePulseIdentityOptions'
 
 type Props = {
-  options: PulsePovOption[]
+  options: PulseIdentityOption[]
   onSelect: (povId: string) => void
   onBack?: () => void
   backLabel?: string
-  playerName?: string
 }
 
-export function PulseAuthGuard({ options, onSelect, onBack, backLabel = '返回主页', playerName }: Props) {
+/** 进入微博广场：选择玩家身份视角（各身份独立） */
+export function PulseAuthGuard({ options, onSelect, onBack, backLabel = '返回主页' }: Props) {
   const [syncingId, setSyncingId] = useState<string | null>(null)
 
-  const handlePick = (opt: PulsePovOption) => {
+  const handlePick = (opt: PulseIdentityOption) => {
     if (syncingId) return
     setSyncingId(opt.povId)
-    window.setTimeout(() => onSelect(opt.povId), 920)
+    window.setTimeout(() => onSelect(opt.povId), 720)
   }
 
   return (
@@ -48,18 +47,18 @@ export function PulseAuthGuard({ options, onSelect, onBack, backLabel = '返回�
         <div className="pointer-events-none absolute inset-0 bg-white/75 backdrop-blur-2xl" aria-hidden />
         <div className="relative z-10 w-full max-w-[360px] text-center">
           <p className="text-[10px] font-medium uppercase tracking-[0.38em] text-neutral-400">
-            WORLD SELECT
+            IDENTITY SELECT
           </p>
           <h1 className="mt-2 font-serif text-[1.4rem] font-medium tracking-[0.1em] text-[#1C1C1E]">
-            选择世界
+            选择身份视角
           </h1>
           <p className="mt-3 text-[12px] leading-relaxed text-neutral-500">
-            以你的微博账号{playerName ? `（${playerName}）` : ''}浏览不同世界的动态。选择一位主要角色，进入 ta 的世界观舆论场。
+            每个身份视角相互独立：只能看见、互动绑定了该身份的角色动态与剧情，不可跨身份穿梭。
           </p>
 
           {options.length === 0 ? (
             <p className="mt-10 text-[12px] leading-relaxed text-neutral-400">
-              暂无主要角色。请先在微信人脉中创建主要角色，再来探索各世界的微博。
+              暂无可用身份。请先在「我的身份」中创建身份，再来微博广场。
             </p>
           ) : (
             <div className="mt-10 flex flex-wrap items-start justify-center gap-5">
@@ -81,11 +80,9 @@ export function PulseAuthGuard({ options, onSelect, onBack, backLabel = '返回�
                           className="size-[68px] rounded-full border-2 border-white object-cover shadow-[0_2px_15px_rgba(0,0,0,0.06)]"
                         />
                       ) : (
-                        <PersonaRosterAvatar
-                          character={{ avatarUrl: opt.avatarUrl, mbti: undefined }}
-                          size={68}
-                          kind="wechat"
-                        />
+                        <div className="flex size-[68px] items-center justify-center rounded-full border-2 border-white bg-[#F0EEEA] text-[22px] font-medium text-neutral-500 shadow-[0_2px_15px_rgba(0,0,0,0.06)]">
+                          {(opt.label || '?').slice(0, 1)}
+                        </div>
                       )}
                       <AnimatePresence>
                         {syncing ? (
@@ -105,9 +102,11 @@ export function PulseAuthGuard({ options, onSelect, onBack, backLabel = '返回�
                     <span className="line-clamp-2 text-center text-[11px] font-medium tracking-[0.04em] text-[#1C1C1E]">
                       {opt.label}
                     </span>
-                    <span className="line-clamp-1 text-center text-[10px] tracking-wide text-neutral-400">
-                      {opt.worldName}
-                    </span>
+                    {opt.subtitle ? (
+                      <span className="line-clamp-1 text-center text-[10px] tracking-wide text-neutral-400">
+                        {opt.subtitle}
+                      </span>
+                    ) : null}
                   </Pressable>
                 )
               })}
@@ -122,7 +121,8 @@ export function PulseAuthGuard({ options, onSelect, onBack, backLabel = '返回�
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
               >
-                World Linked. <span style={{ color: PULSE_COLORS.dustyRose }}>世界已接入</span>
+                Perspective Linked.{' '}
+                <span style={{ color: PULSE_COLORS.dustyRose }}>身份已接入</span>
               </motion.p>
             ) : null}
           </AnimatePresence>

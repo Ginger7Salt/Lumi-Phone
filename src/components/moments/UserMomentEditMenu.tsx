@@ -6,7 +6,7 @@ type UserMomentEditMenuProps = {
   isPinned?: boolean
   onTogglePin: () => void
   onDelete?: () => void
-  /** 角色朋友圈仅置顶，不提供删除 */
+  /** 为 false 时仅展示置顶 */
   showDelete?: boolean
 }
 
@@ -32,7 +32,9 @@ export function UserMomentEditMenu({
 
   const handleDelete = () => {
     setOpen(false)
-    const ok = window.confirm('确定删除这条朋友圈吗？\n\n删除后无法恢复。')
+    const ok = window.confirm(
+      '确定删除这条朋友圈吗？\n\n删除后无法恢复，相关朋友圈记忆将同步清除。',
+    )
     if (ok) onDelete?.()
   }
 

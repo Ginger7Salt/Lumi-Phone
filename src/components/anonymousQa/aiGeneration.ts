@@ -168,6 +168,7 @@ export async function generateQuestionsWithAi(params: BatchGenerateParams): Prom
 2. 公开提问要宏大/有趣/带倾诉欲。
 3. 定向提问要尖锐私密且有明确指向。
 4. 语气要有网感。
+5. 禁止在提问/评论正文写出 MBTI 四字母（ENFP/INFJ 等）或「快乐修勾」「INFJ 清冷感」等类型学套话。
 
 # Output Format
 返回纯 JSON 数组，不要 markdown。`
@@ -256,6 +257,7 @@ async function generateGenericDynamicRepliesWithAi(args: {
 
 # Interaction Rules
 生成 1~3 条不同视角跟帖：赞同者/反驳者/吃瓜群众/楼主本人。
+禁止在跟帖正文写出 MBTI 四字母或「快乐修勾」「INFJ 清冷感」等类型学套话。
 
 # Output Format
 返回纯 JSON 数组：

@@ -19,6 +19,7 @@ const REPLY_TASK_PER_COMMENT = `
 - 用户有 N 条评论时，replies 数组必须恰好 N 项，与评论顺序一一对应
 - 每项是自然口语，像微信朋友圈评，1-3 句，直接写正文
 - 禁止在正文里写「回复1」「回复₁」「回复一」等编号、分条标题或序号前缀
+- 禁止写出 MBTI 四字母或「快乐修勾」「INFJ 清冷感」等类型学套话
 - 仅输出 JSON：{"replies":["对第1条评论的回复","对第2条评论的回复"]}
 ${MOMENT_SONG_SHARE_AI_COMMENT_RULES}
 ${MOMENT_TEXT_OUTPUT_HINT}
@@ -31,6 +32,7 @@ const REPLY_TASK_UNIFIED = `
 - 要承接用户评论的整体语境与情绪转折，可呼应最早一条里的疑问，也可接住最后一条里的结论
 - 只输出**一条**回复，不要拆成多条、不要编号、不要「回复1/回复2」
 - 1-3 句口语化即可，像微信朋友圈评
+- 禁止写出 MBTI 四字母或「快乐修勾」「INFJ 清冷感」等类型学套话
 - 仅输出 JSON：{"reply":"你的整体回复"} 或 {"replies":["你的整体回复"]}
 ${MOMENT_SONG_SHARE_AI_COMMENT_RULES}
 ${MOMENT_TEXT_OUTPUT_HINT}

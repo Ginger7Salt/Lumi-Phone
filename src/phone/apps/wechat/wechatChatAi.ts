@@ -17,6 +17,7 @@ import type {
 import { genderLabelZh } from './newFriendsPersona/utils'
 import { loadPrivateChatNetworkRelationshipsBlock } from './networkRelationshipsPrompt'
 import { buildPrivateChatNetworkNpcPronounBlock } from './privateChatNetworkNpcPronoun'
+import { loadPulseCharacterFollowingPromptBlock } from '../lumiPulse/pulseFollowingPrompt'
 import {
   buildMemorySummaryCharGenderDirective,
   normalizeMemorySummaryBodyAfterModel,
@@ -28,7 +29,6 @@ import {
   stripFlatMemorySummaryStorageMarkers,
 } from './memory/memorySummaryProseFormat'
 import {
-  STORY_TIMELINE_SUMMARY_JSON_FIELDS,
   hasTimelineDeltaContent,
   normalizeStoryTimelineRowKeyword,
   normalizeStoryTimelineRowKeywords,
@@ -45,6 +45,16 @@ import {
   repairMemorySummaryBodyFromModel,
   resolveMemorySummaryContentFromModelRaw,
 } from './memory/memorySummarySchemaLeakRepair'
+import {
+  DATING_UNIFIED_MEMORY_MARKUP_DELIMITER,
+  DATING_UNIFIED_MEMORY_JSON_DELIMITER_LEGACY,
+  STORY_TIMELINE_SUMMARY_MARKUP_FIELDS,
+  UNIFIED_MEMORY_LINKED_MARKUP_RULE,
+  looksLikeUnifiedMemoryMarkup,
+  parseUnifiedMemoryLinkedMarkup,
+  parseTimelineMarkupFromBlock,
+  splitDatingAiResponseAndUnifiedMemoryMarkup,
+} from './memory/memorySummaryLinkedMarkupFormat'
 import { personaDb } from './newFriendsPersona/idb'
 import {
   openAiCompatibleChat,
@@ -60,6 +70,7 @@ import {
   WECHAT_FORWARD_HISTORY_FORGER_APPENDIX,
   LUMI_SYSTEM_OVERRIDE_APPENDIX,
 } from './wechatReplyOutputPrompt'
+import { buildWeChatPulseDmScreenshotOutputBlock } from './pulse/pulseDmScreenshotAiDirective'
 import { splitRawByForwardHistory } from './chatHistory/parseForwardHistoryXml'
 import type { WeChatChatHistoryPayload } from './newFriendsPersona/types'
 import { WECHAT_FRIEND_REQUEST_ADJUDICATION_OUTPUT_APPENDIX } from './wechatFriendRequestAdjudicationPrompt'
@@ -133,7 +144,6 @@ import {
 } from './charUserPlaceholders'
 import { expandWorldBookItemUserPlaceholders } from './worldBookUserPlaceholderBindings'
 import {
-  buildEpiloguePatchesSummaryJsonRule,
   parseEpiloguePatchesFromSummaryJsonRoot,
 } from './newFriendsPersona/worldBookAfterSync'
 import {
@@ -605,13 +615,13 @@ function buildLongTermMemorySection(notes?: string): string {
 function buildUnsummarizedPrivateSection(notes?: string): string {
   const t = notes?.trim()
   if (!t) return ''
-  return `\n\n---\n【尚未写入长期记忆的私聊片段（本地游标之后；每条前缀 \`[YYYY年M月D日 星期X HH:mm]\` 为系统落库时刻，即真实生成/发送钟点，**不是**剧情时间、**不是**【剧情时间轴】）】\n${t}\n`
+  return `\n\n---\n【尚未写入长期记忆的私聊片段（本地游标之后；前缀若含 \`[剧情 …｜系统 …]\`：左侧为故事内锚点，右侧为真实落库钟点；仅有系统前缀时**不是**剧情时间。故事「现在」以【剧情时间轴】【当前锚点】为准；线上落库晚于线下时，视为接在该锚点之后）】\n${t}\n`
 }
 
 function buildUnsummarizedGroupSection(notes?: string): string {
   const t = notes?.trim()
   if (!t) return ''
-  return `\n\n---\n【尚未写入长期记忆的群聊片段（本地游标之后；每条前缀为系统落库时刻，即真实生成/发送钟点，**不是**剧情时间）】\n${t}\n`
+  return `\n\n---\n【尚未写入长期记忆的群聊片段（本地游标之后；前缀规则同私聊：有「剧情｜系统」双写时以剧情侧理解故事先后，系统侧仅表真实落库）】\n${t}\n`
 }
 
 function buildUnsummarizedMeetSection(notes?: string): string {
@@ -863,25 +873,35 @@ export async function materializeSystemContent(params: BuildSystemContentParams)
   const worldBookTextForPrompt = params.character
     ? await buildWorldBookTextForPrompt(params.character)
     : ''
-  const [networkNpcPronounBlock, networkRelationshipsBlock] = await Promise.all([
-    params.character && params.promptMode === 'persona'
-      ? buildPrivateChatNetworkNpcPronounBlock({
-          character: params.character,
-          playerThirdPersonRule: buildWeChatPlayerThirdPersonPronounIronRule(params.playerIdentity),
-        })
-      : Promise.resolve(''),
-    params.character && params.promptMode === 'persona'
-      ? loadPrivateChatNetworkRelationshipsBlock({
-          character: params.character,
-          sessionPlayerIdentityId: params.playerIdentity?.id,
-        })
-      : Promise.resolve(''),
-  ])
+  const [networkNpcPronounBlock, networkRelationshipsBlock, pulseFollowingBlock] =
+    await Promise.all([
+      params.character && params.promptMode === 'persona'
+        ? buildPrivateChatNetworkNpcPronounBlock({
+            character: params.character,
+            playerThirdPersonRule: buildWeChatPlayerThirdPersonPronounIronRule(params.playerIdentity),
+          })
+        : Promise.resolve(''),
+      params.character && params.promptMode === 'persona'
+        ? loadPrivateChatNetworkRelationshipsBlock({
+            character: params.character,
+            sessionPlayerIdentityId: params.playerIdentity?.id,
+          })
+        : Promise.resolve(''),
+      params.character && params.promptMode === 'persona'
+        ? loadPulseCharacterFollowingPromptBlock({
+            characterId: params.character.id,
+          })
+        : Promise.resolve(''),
+    ])
+  const mergedNetworkRelationships = [networkRelationshipsBlock, pulseFollowingBlock]
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join('\n')
   const raw = buildSystemContent({
     ...params,
     worldBookTextForPrompt,
     networkNpcPronounBlock,
-    networkRelationshipsBlock,
+    networkRelationshipsBlock: mergedNetworkRelationships || undefined,
   })
   const wbIden = params.worldBookPlayerIdentity ?? params.playerIdentity ?? null
   return expandSystemPromptPlaceholders(raw, {
@@ -1274,6 +1294,7 @@ function buildPersonaPrivateChatSelfServiceAppendix(params: {
   userMomentsViewerCatalog?: string
   includeThinkingChain?: boolean
   includeForwardHistoryCard?: boolean
+  includePulseDmScreenshot?: boolean
   includeProfileImageChange?: boolean
   includeInternetMemeLexicon?: boolean
 }): string {
@@ -1287,6 +1308,9 @@ function buildPersonaPrivateChatSelfServiceAppendix(params: {
   const forwardBlock = params.includeForwardHistoryCard
     ? `\n\n${WECHAT_FORWARD_HISTORY_FORGER_APPENDIX}`
     : ''
+  const pulseDmShotBlock = params.includePulseDmScreenshot
+    ? `\n\n${buildWeChatPulseDmScreenshotOutputBlock()}`
+    : ''
   const profileImageBlock = params.includeProfileImageChange
     ? `\n\n${WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_APPENDIX}${profileBlock ? `\n\n${profileBlock}` : ''}`
     : ''
@@ -1296,7 +1320,7 @@ function buildPersonaPrivateChatSelfServiceAppendix(params: {
   return appendWorldBookAfterPatchOutputRules(
     params.character,
     false,
-    `${buildWechatReplyOutputAppendix(toggles)}${forwardBlock}${thinkingBlock}${profileImageBlock}${memeLexiconBlock}\n\n${WECHAT_CHARACTER_PROFILE_UPDATE_APPENDIX}${pinCatalog ? `\n\n${pinCatalog}` : ''}${userMomentsCatalog ? `\n\n${userMomentsCatalog}` : ''}\n\n${WECHAT_CHARACTER_MOMENT_PUBLISH_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_PIN_APPENDIX}`,
+    `${buildWechatReplyOutputAppendix(toggles)}${forwardBlock}${pulseDmShotBlock}${thinkingBlock}${profileImageBlock}${memeLexiconBlock}\n\n${WECHAT_CHARACTER_PROFILE_UPDATE_APPENDIX}${pinCatalog ? `\n\n${pinCatalog}` : ''}${userMomentsCatalog ? `\n\n${userMomentsCatalog}` : ''}\n\n${WECHAT_CHARACTER_MOMENT_PUBLISH_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_PIN_APPENDIX}`,
   )
 }
 
@@ -1421,6 +1445,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
   busyContext?: BusyRuntimeContext
   includeThinkingChain?: boolean
   includeForwardHistoryCard?: boolean
+  includePulseDmScreenshot?: boolean
   includeProfileImageChange?: boolean
   includeInternetMemeLexicon?: boolean
   currentTimeMs?: number
@@ -1473,7 +1498,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
   characterWechatProfileBlock?: string
   /** 用户消息 https 链接网页摘要 */
   sharedLinkPreviewBlock?: string
-  /** 每轮摘要表：要求模型在回复末尾追加 unified memory JSON */
+  /** 每轮摘要表：要求模型在回复末尾追加 unified memory markup */
   perRoundMemoryAppendix?: string
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
@@ -1603,6 +1628,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
           userMomentsViewerCatalog: params.userMomentsViewerCatalog,
           includeThinkingChain: params.includeThinkingChain === true,
           includeForwardHistoryCard: params.includeForwardHistoryCard === true,
+          includePulseDmScreenshot: params.includePulseDmScreenshot === true,
           includeProfileImageChange: params.includeProfileImageChange === true,
           includeInternetMemeLexicon: params.includeInternetMemeLexicon === true,
         })
@@ -1901,6 +1927,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   busyContext?: BusyRuntimeContext
   includeThinkingChain?: boolean
   includeForwardHistoryCard?: boolean
+  includePulseDmScreenshot?: boolean
   includeProfileImageChange?: boolean
   includeInternetMemeLexicon?: boolean
   currentTimeMs?: number
@@ -1935,7 +1962,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   userMomentsViewerCatalog?: string
   characterWechatProfileBlock?: string
   sharedLinkPreviewBlock?: string
-  /** 每轮摘要表：要求模型在回复末尾追加 unified memory JSON */
+  /** 每轮摘要表：要求模型在回复末尾追加 unified memory markup */
   perRoundMemoryAppendix?: string
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
@@ -2068,6 +2095,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
         userMomentsViewerCatalog: params.userMomentsViewerCatalog,
         includeThinkingChain: params.includeThinkingChain === true,
         includeForwardHistoryCard: params.includeForwardHistoryCard === true,
+        includePulseDmScreenshot: params.includePulseDmScreenshot === true,
         includeProfileImageChange: params.includeProfileImageChange === true,
         includeInternetMemeLexicon: params.includeInternetMemeLexicon === true,
       })
@@ -2871,15 +2899,15 @@ export async function requestWeChatCharacterPsyche(params: {
 
 /** 自动总结入库正文：统一占位符，便于改名后注入/展示仍解析为最新显示名 */
 const MEMORY_BODY_PLACEHOLDER_INSTRUCTION = `
-【记忆正文·指称铁律】（**仅**约束 JSON 的 content 正文；**primary 与 linked[].content 同等遵守**）
+【记忆正文·指称铁律】（**仅**约束「正文」叙事字段；**primary 与 linked 的正文同等遵守**）
 - 正文**禁止**抄写材料里的**玩家、对方人设及其他出镜角色**的**真实姓名、完整档案昵称、微信号**。
-- **禁止**把材料里出现过的称呼**原样汉字串**写进 content（含：对话台词里的直呼、群昵称、通讯录备注、摘录标题行「显示名：」后的标签、线上发言者标签里的昵称等）。指人**只能**用 {{user}} / {{char}} / {{archive_char}} / {{id:UUID}}，或不含上述专名的**纯泛称**（如「对方店里那位同事」须仍不夹真名）。
+- **禁止**把材料里出现过的称呼**原样汉字串**写进正文（含：对话台词里的直呼、群昵称、通讯录备注、摘录标题行「显示名：」后的标签、线上发言者标签里的昵称等）。指人**只能**用 {{user}} / {{char}} / {{archive_char}} / {{id:UUID}}，或不含上述专名的**纯泛称**（如「对方店里那位同事」须仍不夹真名）。
 - 玩家：**全文第三人称档案体**；凡写到玩家的行为/发言/请求，**必须**写 **{{user}}**（可写「{{user}}向{{char}}…」），**禁止**第一人称「我」「我的」；**禁止**用「用户」「玩家」及材料中的身份姓名为指代。
 - **当前私聊会话中的对方人设**（本条记忆将挂在该角色档案下）：须用 {{char}} 指代，**禁止**写其材料中的显示名。
 - 若材料涉及**线下约会存档主角**（人脉/约会根人设）：用 {{archive_char}}；**禁止**用「主要角色」「男主角」「女主角」「存档主角」等泛称代替占位符。
 - 其他已知人设：若用户消息附录或摘录标题中给出了 **character_id**（UUID），正文须写 {{id:该id}}（把「该id」换成真实 UUID），与材料**完全一致、无空格**；**禁止**臆造 id；**禁止**写 id 的十六进制简码或 UUID 裸串（如 \`8219487c\`）；**禁止**嵌套写 \`{{id:{{id:…}}}}\`，只写一层 \`{{id:完整id}\`。
 - 若材料含「转发【收藏】」：原发送者须用 {{id:…}} 或泛称指代，**禁止**写角色 id 简码；收藏内容摘要可概括写入，勿把「[收藏]」当正文事实。
-（说明：category / precise / emotion_need / extra_keywords 仍可从材料提炼**场景、物品、事件**类钩子词便于搜索；尽量不要把人物全名塞进触发维。）
+（说明：分类 / 精准 / 情绪 / 关键词 仍可从材料提炼**场景、物品、事件**类钩子词便于搜索；尽量不要把人物全名塞进触发维。）
 `.trim()
 
 /** 微信线上总结：纯文本三行结构（标题 + 关键词 + 正文），与入库格式一致。 */
@@ -3224,6 +3252,8 @@ function sanitizeUnifiedMemorySummaryPlainContent(raw: string): string {
       .trim(),
   )
   if (!stripped || looksLikeMemoryJsonSchemaLeak(stripped)) return ''
+  // 拒收仍含截断 JSON 外壳的片段，避免档案页直接展示 { "primary": ...
+  if (/^\s*\{/.test(stripped) && /"primary"|"content"\s*:/i.test(stripped)) return ''
   return normalizeMemoryIdPlaceholderSyntax(normalizeMemorySummaryBodyAfterModel(stripped))
 }
 
@@ -3239,8 +3269,10 @@ async function buildMemorySummaryPeerGenderAppendix(peerCharacterId: string | nu
   }
 }
 
-/** 约会剧情同一 HTTP 回复末尾追加的合并长期记忆 JSON 分隔符（须单独成行）。 */
-export const DATING_UNIFIED_MEMORY_JSON_DELIMITER = '<<<DATING_UNIFIED_MEMORY_JSON>>>'
+/** 约会剧情同一 HTTP 回复末尾追加的合并长期记忆分隔符（须单独成行）。新：markup；旧：JSON 分隔符仍可解析。 */
+export const DATING_UNIFIED_MEMORY_JSON_DELIMITER = DATING_UNIFIED_MEMORY_MARKUP_DELIMITER
+/** @deprecated 兼容旧分隔符字面量 */
+export const DATING_UNIFIED_MEMORY_JSON_DELIMITER_LEGACY_EXPORT = DATING_UNIFIED_MEMORY_JSON_DELIMITER_LEGACY
 
 /** 与 {@link requestUnifiedMemorySummaryWithLinked} 用户消息中的线上摘录格式一致。 */
 export function formatUnifiedMemoryOnlineBlock(
@@ -3257,62 +3289,24 @@ export function formatUnifiedMemoryOnlineBlock(
 }
 
 export const UNIFIED_MEMORY_LINKED_JSON_RULE = `
-【输出格式】只输出一个 JSON 对象，禁止 markdown 代码围栏，禁止 JSON 前后任何解释文字。顶层必须为：
-{
-  "primary": {
-    "content": string,
-    "category": string,
-    "precise": string,
-    "emotion_need": string[],
-    "extra_keywords": string[],
-    "timeline": { ...见下方 timeline 字段说明，可选 }
-  },
-  "linked": [
-    {
-      "character_id": string,
-      "content": string,
-      "category": string,
-      "precise": string,
-      "emotion_need": string[],
-      "extra_keywords": string[],
-      "timeline": { ...见下方 timeline 字段说明；线下每轮摘要表模式须填 row_title + row_keywords + event_summary }
-    }
-  ],
-  "epilogue_patches": [
-    {
-      "character_id": string,
-      "world_book_id": string,
-      "item_id": string,
-      "new_content": string
-    }
-  ]
-}
-- primary：写给「当前私聊对象」的一条长期记忆；字段含义与原先单对象 JSON 相同；**content 须用占位符指人**（{{user}} 玩家、{{char}} 当前私聊对象、{{archive_char}} 线下存档主角、{{id:人设UUID}} 其他人脉，规则同 linked）。
-- linked：写给「人脉子角色」或「已绑定主角」的零或多条；character_id **只能**来自用户消息「可关联角色 id 表」反引号内的 id（勿选当前约会对象 id，应写在 primary）。若「线下关联摘录」未含某 id，但分隔符上方剧情正文或摘录中有该角色可核对事实，**仍须**写 linked（约会特则）；仅当确实无事实时不写；每名角色至多一条；无则 linked 为 []。
-${buildEpiloguePatchesSummaryJsonRule()}
-- linked[].content：**第三人称旁白**；凡写到人**必须**用表达式（入库不替换，注入时由程序替换），**禁止**用汉字直呼玩家、存档主角、本条角色或其他人脉的真名/昵称/「用户」「玩家」「主角」「主要角色」等代称：须 **{{user}}**=玩家；**{{char}}**=本条 linked 的 character_id 对应角色（人脉 NPC 或另一存档主角）；**{{archive_char}}**=线下剧情存档根人设；**{{id:人设UUID}}**=其他可关联角色，id 须与 id 表一致。**禁止**把摘录「显示名：」或台词里的称呼原样抄入本条 content。
-- linked[].timeline（线下每轮摘要表）：与 primary.timeline 同规则；**row_title 必填**（4～10 字概括该 NPC 本切片）；**row_keywords 必填**（3～5 个、每条 ≤5 字）；event_summary 为摘要句，勿粘贴 content 全文。
-- 不要在任何 content 字段内添加「[线上]」「[线下]」等标签（程序会加前缀）。
-${STORY_TIMELINE_SUMMARY_JSON_FIELDS}
+${UNIFIED_MEMORY_LINKED_MARKUP_RULE}
 ${MEMORY_BODY_PLACEHOLDER_INSTRUCTION}
-若模型仍返回旧版「仅顶层 content/category/…」单对象且无 primary 键，调用方会把它当作 primary 并视 linked 为空。`.trim()
+`.trim()
 
-/** 约会单次模型回复：分隔剧情正文与末尾合并记忆 JSON。 */
+/** 约会单次模型回复：分隔剧情正文与末尾合并记忆（markup 优先，兼容旧 JSON 分隔符）。 */
 export function splitDatingAiResponseAndUnifiedMemoryJson(raw: string): {
   plotRaw: string
   memoryJsonText: string | null
 } {
-  const d = DATING_UNIFIED_MEMORY_JSON_DELIMITER
-  const idx = raw.lastIndexOf(d)
-  if (idx < 0) return { plotRaw: String(raw ?? '').trim(), memoryJsonText: null }
+  const split = splitDatingAiResponseAndUnifiedMemoryMarkup(raw)
   return {
-    plotRaw: raw.slice(0, idx).trimEnd(),
-    memoryJsonText: (raw.slice(idx + d.length).trim() || null) as string | null,
+    plotRaw: split.plotRaw,
+    memoryJsonText: split.memoryText,
   }
 }
 
 /**
- * 注入约会 user 消息末尾：要求模型在剧情/VN 输出后追加一行分隔符 + unified memory JSON（与 {@link requestUnifiedMemorySummaryWithLinked} 同 schema）。
+ * 注入约会 user 消息末尾：要求模型在剧情/VN 输出后追加一行分隔符 + unified memory markup（与 {@link requestUnifiedMemorySummaryWithLinked} 同结构）。
  */
 export function buildDatingCombinedMemoryUserAppendix(params: {
   onlineTranscript: ChatTranscriptTurn[]
@@ -3329,7 +3323,7 @@ export function buildDatingCombinedMemoryUserAppendix(params: {
   summaryRoundDue?: boolean
   /** 生日/节日/参考时刻（注入 timeline 写法的日历上下文） */
   calendarContextBlock?: string
-  /** 系统内仍 open 的动机伏笔 / 待办（同轮 JSON 须对照回收） */
+  /** 系统内仍 open 的动机伏笔 / 待办（同轮记忆块须对照回收） */
   priorOpenAnchorsBlock?: string
 }): string {
   const onlineBlock = formatUnifiedMemoryOnlineBlock(params.onlineTranscript, params.peerLabel.trim() || '对方')
@@ -3347,34 +3341,34 @@ export function buildDatingCombinedMemoryUserAppendix(params: {
   const calendarSection = calendarBlock ? `\n${calendarBlock}\n` : `\n${STORY_TIMELINE_CALENDAR_AWARENESS_RULES}\n`
   const summaryRoundDue = params.summaryRoundDue === true
   const roundModeBlock = summaryRoundDue
-    ? `【本轮档位·合并长期记忆】本轮为自动总结间隔轮：primary.content **须**写 60～200 字第三人称备忘（无新事实可 ""）；primary.timeline 仍须填写本轮状态增量。`
-    : `【本轮档位·仅剧情时间轴】本轮**不是**自动总结间隔轮：primary.content **必须**为 ""（空字符串）；但 primary.timeline **必须**填写本轮可核对的状态增量（地点/时段/服装/物品/动机伏笔/待办/事件摘要等，无变化也须至少写 event_summary，约 80～100 字）。`
+    ? `【本轮档位·合并长期记忆】本轮为自动总结间隔轮：[PRIMARY] 正文 **须**写 60～200 字第三人称备忘（无新事实可留空）；[TIMELINE] 仍须填写本轮状态增量。`
+    : `【本轮档位·仅剧情时间轴】本轮**不是**自动总结间隔轮：[PRIMARY] 正文 **必须**留空；但 [TIMELINE] **必须**填写本轮可核对的状态增量（地点/时段/服装/物品/伏笔/待办/事件等，无变化也须至少写「事件」，约 80～100 字）。`
   const priorAnchors = String(params.priorOpenAnchorsBlock || '').trim()
   const priorAnchorsSection = priorAnchors ? `\n${priorAnchors}\n` : ''
 
   return `
 ---------------------
-【同一回复内追加：合并长期记忆 JSON（必须执行）】
+【同一回复内追加：合并长期记忆（必须执行 · 非 JSON）】
 在你写完完整剧情正文之后：若本轮包含 VN「【VN语音参数】…【VN语音参数结束】」隐藏块，须放在剧情正文之后；**另起一行**输出且**仅一行**分隔符（勿加前后空格）：
-${DATING_UNIFIED_MEMORY_JSON_DELIMITER}
-分隔符之后直到全文结束，输出**恰好一个** JSON 对象（禁止 markdown 围栏、禁止 JSON 前后解释），结构如下：
+${DATING_UNIFIED_MEMORY_MARKUP_DELIMITER}
+分隔符之后直到全文结束，输出记忆 markup（禁止 JSON、禁止 markdown 围栏、禁止前后解释），结构如下：
 ${UNIFIED_MEMORY_LINKED_JSON_RULE}
 
 ${roundModeBlock}
 
-【约会特则·覆盖上文 JSON 说明里 linked「仅摘录」的硬性限制】
+【约会特则·覆盖上文 linked「仅摘录」的硬性限制】
 - linked 的 character_id **只能**使用下方「可关联角色 id 表」反引号内的 id（人脉子角色或已绑定主角），**禁止**编造 id；**禁止**把当前约会对象 \`${peerId}\` 写进 linked（应写在 primary）。
 - 「线下关联摘录」可能为（无）或未含某角色：只要你**分隔符上方**已写出的剧情正文里，该 id 对应角色出现**可核对**的言行或互动，仍须为其写 linked（普通剧情/VN 均可）；无则该项不写。
 - 仍须遵守：禁止材料与正文外臆造；每名可关联角色至多一条 linked。
 
 【本轮合并长期记忆的语义要求】
 - 你是嵌入在本轮剧情模型里的「长期记忆 / 剧情时间轴」子任务：须综合下列「线上 / 已有线下 / 人脉 NPC 摘录」以及**分隔符上方你刚输出的全部剧情正文**（去掉 \`<thinking>…</thinking>\`；VN 标签可保留）提炼事实。
-- **timeline（每轮必填）**：primary.timeline 须反映分隔符上方正文**读至末尾时**的时空、服装、物品、动机伏笔、待办与本轮关键事件；仅写相对上一状态的**增量**。**foreshadows / todos 必须是结尾快照**（规则见上方 JSON 字段说明），不得与正文最后交代矛盾；无则省略对应数组。**story_day / story_time 为故事内时刻（禁止生成/落库时刻）**；跨时段须写 story_day_end、story_time_end，锚点展示为「开始 - 结束」区间。**location**：须写可区分的具体地点（店名/楼层/区域/包厢等），禁止仅写「饭馆、酒店、咖啡厅」等类名。**服装**：正文可核对时须写具体单品与可见状态（色/材质/版型/敞开挽袖/鞋履），禁止「便装、休闲、日常穿搭」等空泛词糊弄。
-- primary：**第三人称**；${summaryRoundDue ? '合成线上（若有）+ 游标后已有线下（若有）+ **本轮新正文**' : '本轮非总结间隔，content 留 ""，勿写长期记忆正文'}；玩家 **{{user}}**、对方 **{{char}}**；**禁止「我」**；不要在 JSON 里写 [私聊][线下] 前缀。
-- linked：除上表摘录外，**必须**结合你刚写的**本轮剧情正文**判断可关联角色（人脉 NPC 或已绑定主角）是否有可记事实（见「约会特则」）；勿因摘录为（无）就整段 linked 留空——若正文里确有下表 id 之事实，须写 linked。每条 linked 的 content **须为第三人称**，且凡涉玩家、存档主角、本条角色、其它可关联角色**一律**写 **{{user}} / {{archive_char}} / {{char}} / {{id:UUID}}**，**禁止**「用户」「玩家」「主角」「主要角色」及材料真名（规则同上方 JSON 与【记忆正文·指称铁律】）。**每条 linked 须同时写 timeline**（含 **row_title** 短标题 + **row_keywords** 检索词 + event_summary 摘要句，规则同 primary.timeline；勿把 content 全文贴进 timeline）。
-- 若汇总后确实无任何可核对的新事实，primary.content 可为 "" 且 linked=[]。
+- **[TIMELINE]（每轮必填）**：须反映分隔符上方正文**读至末尾时**的时空、服装、物品、动机伏笔、待办与本轮关键事件；仅写相对上一状态的**增量**。**伏笔 / 待办必须是结尾快照**，不得与正文最后交代矛盾；无则省略。**故事日 / 时刻 为故事内时刻（禁止生成/落库时刻）**；跨时段须写结束故事日、结束时刻。**地点**：须写可区分的具体地点。**服装**：须写具体单品与可见状态。
+- primary：**第三人称**；${summaryRoundDue ? '合成线上（若有）+ 游标后已有线下（若有）+ **本轮新正文**' : '本轮非总结间隔，正文可留空，勿写长期记忆正文'}；玩家 **{{user}}**、对方 **{{char}}**；**禁止「我」**；不要写 [私聊][线下] 前缀。
+- linked：除上表摘录外，**必须**结合你刚写的**本轮剧情正文**判断可关联角色是否有可记事实；每条 linked 正文**须为第三人称**，且一律用占位符。**每条 linked 后须再跟 [TIMELINE]**（含标题/关键词/事件）。
+- 若汇总后确实无任何可核对的新事实，primary 正文可留空且不写 [LINKED]。
 
-【可关联角色 id 表】（linked.character_id 仅可从中择一或多；勿选 \`${peerId}\`）
+【可关联角色 id 表】（[LINKED] character_id 仅可从中择一或多；勿选 \`${peerId}\`）
 ${roster}
 ${priorAnchorsSection}${epilogueSection}
 【线上聊天摘录（未总结）】
@@ -3386,7 +3380,7 @@ ${off}
 【线下关联摘录（人脉子角色 / 已绑定主角）】
 ${npc}
 
-【指称·材料边界】上文「显示名：」、发言者标签、剧情台词里的称呼**仅用于你对号入座是谁**；写入 JSON 的 **primary / linked[].content** 时**不得**复述这些汉字专名，须一律改为占位符（与【记忆正文·指称铁律】一致）。
+【指称·材料边界】上文「显示名：」、发言者标签、剧情台词里的称呼**仅用于你对号入座是谁**；写入 **primary / linked 正文** 时**不得**复述这些汉字专名，须一律改为占位符（与【记忆正文·指称铁律】一致）。
 ${calendarSection}`.trim()
 }
 
@@ -3398,7 +3392,8 @@ const UNIFIED_MEMORY_SUMMARY_SYSTEM_WITH_LINKED = `
 - linked：综合「人脉子角色 / 已绑定主角 线下关联摘录」与「线下约会剧情摘录」；为 id 表中有可核对事实的角色各写一条（含已绑定主角，不仅 NPC）；**全文第三人称**；指称用 **{{user}}、{{archive_char}}、{{char}}、{{id:人设UUID}}**；摘录为「（无）」时若约会剧情正文仍有该 id 之事实，**仍须**写 linked（约会特则）。
 - 只总结材料中可直接核对的事实；禁止主观心理臆测；禁止材料外剧情。
 - 口语化、具体；primary 正文约 60～200 字；每条 linked 约 40～160 字（信息很少可更短）。
-- 若用户提供了「尾声延展条目快照」，须同步评估 epilogue_patches（规则见 JSON 说明）。
+- 若用户提供了「尾声延展条目快照」，须同步评估 [EPILOGUE_PATCH]。
+- **禁止 JSON**；只输出下方 markup。
 ${UNIFIED_MEMORY_LINKED_JSON_RULE}
 `.trim()
 
@@ -3424,9 +3419,30 @@ function parseLinkedMemoryRowFromJsonObject(o: Record<string, unknown>): LinkedM
   return { ...sub, characterId: cid }
 }
 
-/** 解析「primary + linked」合并自动总结；兼容旧版仅顶层单对象 JSON。 */
+/** 解析「primary + linked」合并自动总结；优先 markup，兼容旧版 JSON。 */
 export function parseUnifiedMemorySummaryWithLinkedModelOutput(raw: string): UnifiedMemorySummaryWithLinkedResult {
   const stripped = stripAssistantFence(String(raw ?? '')).trim()
+
+  if (looksLikeUnifiedMemoryMarkup(stripped)) {
+    const markup = parseUnifiedMemoryLinkedMarkup(stripped)
+    if (markup) {
+      return {
+        primary: clampMemorySummaryTriggers({
+          ...markup.primary,
+          content: sanitizeUnifiedMemorySummaryPlainContent(markup.primary.content),
+        }),
+        linked: markup.linked.map((row) => ({
+          ...clampMemorySummaryTriggers({
+            ...row,
+            content: sanitizeUnifiedMemorySummaryPlainContent(row.content),
+          }),
+          characterId: row.characterId,
+        })),
+        ...(markup.epiloguePatches?.length ? { epiloguePatches: markup.epiloguePatches } : {}),
+      }
+    }
+  }
+
   const start = stripped.indexOf('{')
   const end = stripped.lastIndexOf('}')
   if (start < 0 || end <= start) {
@@ -3478,19 +3494,23 @@ const STORY_TIMELINE_SUMMARY_ONLY_SYSTEM = `
 你是「剧情摘要表」维护助手。用户会提供约会/私聊/线下剧情材料，请提炼本轮**剧情时间轴增量**。
 要求：
 - 只总结材料中可直接核对的时空、服装、物品、动机伏笔、待办与本轮关键事件；禁止材料外臆造。
-- **foreshadows / todos 必须是用户读完本轮剧情后的结尾快照**：以材料**末尾**为准，禁止与结尾已交代事实矛盾（例如结尾已写完作业，则不得再写 open 的「未完成作业」）。
-- **location**：须写可区分的具体地点（店名/楼层/区域/包厢等），禁止仅写「饭馆、酒店、咖啡厅」等类名。
-- **服装**：正文可核对时须写具体单品与可见状态，禁止「便装、休闲、日常穿搭」等空泛词。
-- 仅写相对上一状态的**增量**；无变化也须至少写 event_summary（约 80～100 字）；**row_title** 短标题必填（4～10 字）；**row_keywords** 必填（3～5 个、每条 ≤5 字）。
-- 若用户提供【系统已有·未收锚点】：须对照**正文末尾**是否已兑现；已完结者**必须**输出 status:"resolved"，勿让已完结事项继续悬挂。
-- 输出**恰好一个** JSON 对象：primary.content 必须为 ""；primary.timeline 为增量对象（字段见下方说明）。
-- 禁止 markdown 围栏；禁止 JSON 前后解释。
-${STORY_TIMELINE_SUMMARY_JSON_FIELDS}
+- **伏笔 / 待办必须是用户读完本轮剧情后的结尾快照**：以材料**末尾**为准，禁止与结尾已交代事实矛盾。
+- **地点**：须写可区分的具体地点，禁止仅写「饭馆、酒店、咖啡厅」等类名。
+- **服装**：正文可核对时须写具体单品与可见状态，禁止「便装、休闲」等空泛词。
+- 仅写相对上一状态的**增量**；无变化也须至少写「事件」（约 80～100 字）；**标题**短标题必填（4～10 字）；**关键词**必填（3～5 个、每条 ≤5 字）。
+- 若用户提供【系统已有·未收锚点】：须对照**正文末尾**是否已兑现；已完结者输出「resolved」。
+- **禁止 JSON**；只输出：
+[PRIMARY]
+正文：
+
+[TIMELINE]
+（字段见下方说明）
+${STORY_TIMELINE_SUMMARY_MARKUP_FIELDS}
 ${STORY_TIMELINE_CALENDAR_AWARENESS_RULES}
 `.trim()
 
 /**
- * 单独请求剧情摘要表增量（模型未在同轮 JSON 里写 timeline 时的补救；走摘要表专用或聊天主接口）。
+ * 单独请求剧情摘要表增量（模型未在同轮记忆块里写 timeline 时的补救；走摘要表专用或聊天主接口）。
  */
 export async function requestStoryTimelineSummaryOnly(params: {
   apiConfig: ApiConfig | null
@@ -3516,7 +3536,7 @@ export async function requestStoryTimelineSummaryOnly(params: {
     latestRound = `${latestRound.slice(0, 6000)}\n\n（本轮正文因长度已截断）`
   }
   const latestBlock = latestRound
-    ? `【本轮剧情正文（优先据此写 timeline；**伏笔/待办须以本块读至末尾时的状态为准**）】\n${latestRound}\n\n`
+    ? `【本轮剧情正文（优先据此写 TIMELINE；**伏笔/待办须以本块读至末尾时的状态为准**）】\n${latestRound}\n\n`
     : ''
   const priorAnchors = String(params.priorOpenAnchorsBlock || '').trim()
   const priorAnchorsBlock = priorAnchors ? `${priorAnchors}\n\n` : ''
@@ -3531,11 +3551,11 @@ export async function requestStoryTimelineSummaryOnly(params: {
     {
       role: 'user',
       content:
-        `请仅基于下列材料输出 JSON（primary.content 必须为 ""，primary.timeline 必填）：\n\n` +
+        `请仅基于下列材料输出 markup（[PRIMARY] 正文须留空；[TIMELINE] 必填）：\n\n` +
         priorAnchorsBlock +
         latestBlock +
         `${material}\n\n` +
-        `【指称】timeline 内 event_summary 等叙述须第三人称；玩家 {{user}}、对方 {{char}}；禁止「我」。${genderAppendix}${calendarAppendix}`,
+        `【指称】timeline 内「事件」等叙述须第三人称；玩家 {{user}}、对方 {{char}}；禁止「我」。${genderAppendix}${calendarAppendix}`,
     },
   ]
   const text = await openAiCompatibleChatLenient(cfg, messages, {
@@ -3544,7 +3564,11 @@ export async function requestStoryTimelineSummaryOnly(params: {
   })
   if (!text.trim()) return undefined
   const parsed = parseUnifiedMemorySummaryWithLinkedModelOutput(text)
-  const delta = parsed.primary.timeline
+  let delta = parsed.primary.timeline
+  if (!delta || !hasTimelineDeltaContent(delta)) {
+    // 兼容：整段只有 [TIMELINE] 无 PRIMARY
+    delta = parseTimelineMarkupFromBlock(text) ?? delta
+  }
   return delta && hasTimelineDeltaContent(delta) ? delta : undefined
 }
 
@@ -3850,6 +3874,7 @@ const DANMAKU_VARIETY_SHOW_RULES = `
 - 系统会给出【弹幕参考｜须贴合人设】：必须结合其中「聊天角色（对方）」与「用户（玩家）」档案吐嘈；自称、嗑点、称呼与气质须与档案一致，勿编造矛盾设定；未绑档案处用中性口吻、勿默认性别。
 - 允许：共情、磕糖、尖叫、毒舌、无语、适度玩梗与抽象。
 - 禁止：人身侮辱、黄暴、恶意攻击、引战、复述剧情当弹幕。
+- 禁止：写出 MBTI 四字母（ENFP/INFJ 等）、类型学绰号（快乐修勾等）或「XX 的清冷感」等标签套话；吐槽气质用具体表现，勿点名人格类型。
 
 【语感参考｜勿照抄整句，模仿口气即可】
 “谁懂啊！”“甜晕了…”“吃醋了吃醋了！！”“刚是不是表白了？”“木愣子一样我真服了”“搞什么鸡毛？赶紧上啊！”“不想看这种无聊场面”“他急了他急了”“这都能忍？换我早炸了”“细节控狂喜”“哈哈哈尬住了”“救命别太暧昧”

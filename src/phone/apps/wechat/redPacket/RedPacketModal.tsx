@@ -62,6 +62,7 @@ export function RedPacketModal({
   senderAvatarUrl,
   subcaption,
   onClose,
+  onClaimIntent,
   onFlowComplete,
 }: {
   open: boolean
@@ -71,12 +72,16 @@ export function RedPacketModal({
   senderName: string
   subcaption?: string
   onClose: () => void
+  /** 用户点拆封瞬间回调（可先把气泡标成已领取，不必等仪式结束） */
+  onClaimIntent?: () => void
   onFlowComplete: () => void | Promise<void>
 }) {
   const [phase, setPhase] = useState<CeremonyPhase>('idle')
   const finishedRef = useRef(false)
   const flowRef = useRef(onFlowComplete)
   flowRef.current = onFlowComplete
+  const claimIntentRef = useRef(onClaimIntent)
+  claimIntentRef.current = onClaimIntent
 
   useEffect(() => {
     if (!open) {
@@ -93,6 +98,11 @@ export function RedPacketModal({
 
   const startCeremony = useCallback(() => {
     if (phase !== 'idle' || finishedRef.current) return
+    try {
+      claimIntentRef.current?.()
+    } catch {
+      /* ignore */
+    }
     setPhase('seal_spin')
   }, [phase])
 

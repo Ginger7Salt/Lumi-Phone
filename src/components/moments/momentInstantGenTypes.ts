@@ -49,8 +49,12 @@ export type InstantGenConfig = {
   customContentDirection?: string
   /** 含文字载体时的目标正文字数（1～2000，含一字/标点） */
   textLengthTarget: number
+  /** 参考最近约 20 条私聊记录 */
   includeRecentChat: boolean
+  /** 参考未总结的线下约会剧情 */
   includeOfflinePlots: boolean
+  /** 参考角色长期记忆 */
+  includeLongTermMemory: boolean
 }
 
 export type InstantGenInteractionReplyDraft = {

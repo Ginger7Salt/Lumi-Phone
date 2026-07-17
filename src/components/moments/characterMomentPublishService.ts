@@ -59,10 +59,11 @@ async function generateCharacterMomentImages(
   prompts: string[],
   settings: MomentsImageGenSettings,
   character?: Character | null,
-): Promise<string[]> {
-  if (!settings.enabled) return []
+): Promise<{ urls: string[]; prompts: string[] }> {
+  if (!settings.enabled) return { urls: [], prompts: [] }
   const capped = prompts.slice(0, MAX_MOMENT_IMAGES)
   const urls: string[] = []
+  const kept: string[] = []
   for (const prompt of capped) {
     try {
       const url = await generateMomentsImage(
@@ -74,12 +75,15 @@ async function generateCharacterMomentImages(
           height: 512,
         }),
       )
-      if (url) urls.push(url)
+      if (url) {
+        urls.push(url)
+        kept.push(prompt)
+      }
     } catch {
       // 单张失败不阻断整条动态
     }
   }
-  return urls
+  return { urls, prompts: kept }
 }
 
 export async function publishCharacterMoment(
@@ -131,6 +135,7 @@ export async function publishCharacterMoment(
   })
 
   let imageUrls: string[] = []
+  let imagePrompts: string[] = []
   let postType = aiDraft.postType
   let content = sanitizeMomentBodyText(aiDraft.content)
   let attachedMusic = undefined as Awaited<ReturnType<typeof resolveCharacterMomentAttachedMusic>> | undefined
@@ -144,7 +149,13 @@ export async function publishCharacterMoment(
     const needsImages = postType === 'image' || postType === 'mixed'
     if (needsImages && isMomentsImageGenConfigured(params.imageGenSettings) && aiDraft.images.length) {
       params.onProgress?.('imaging')
-      imageUrls = await generateCharacterMomentImages(aiDraft.images, params.imageGenSettings, character)
+      const generated = await generateCharacterMomentImages(
+        aiDraft.images,
+        params.imageGenSettings,
+        character,
+      )
+      imageUrls = generated.urls
+      imagePrompts = generated.prompts
     }
 
     if (needsImages && !imageUrls.length) {
@@ -167,6 +178,7 @@ export async function publishCharacterMoment(
     postType,
     content,
     imageUrls: resolvePostImages(postType, imageUrls) ?? [],
+    imagePrompts: postType === 'text' || postType === 'music' ? undefined : imagePrompts,
     attachedMusic,
     location: aiDraft.location,
     privacy: aiDraft.privacy,

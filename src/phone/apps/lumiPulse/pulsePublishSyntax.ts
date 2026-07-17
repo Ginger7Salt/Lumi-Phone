@@ -1,4 +1,4 @@
-import { WeiboFaceByValues } from './pulseWeiboFaceData'
+import { resolveWeiboFaceUrl } from './pulseWeiboFace'
 
 export type PublishSyntaxPart =
   | { type: 'text'; value: string }
@@ -10,11 +10,14 @@ export type PublishSyntaxPart =
 type SyntaxHit = { start: number; end: number; part: PublishSyntaxPart }
 
 const FACE_RE = /\[([\u4e00-\u9fa5a-z0-9_]+?)\]/g
-/** #话题# 或 #话题 后接空格；# 后可有空格 */
-const HASHTAG_RE = /#\s*([^#[\]\s\n]{1,32})(?:#|(?=\s))/g
+/** 成对 #话题内容#（内容可含空格） */
+const HASHTAG_PAIRED_RE = /[#＃]([^#＃\n\[\]]{1,40})[#＃]/g
+/** #话题 后接空格（输入中 / 开放式话题） */
+const HASHTAG_RE = /[#＃]\s*([^#＃\[\]\s\n]{1,32})(?=\s)/g
 /** 行尾未打完的话题（如刚输入完尚未加空格） */
-const HASHTAG_TAIL_RE = /#\s*([^#[\]\s\n]{1,32})$/g
-const MENTION_RE = /@([^\s@【】\[\]\n#]{1,24})(?=\s|$)/g
+const HASHTAG_TAIL_RE = /[#＃]\s*([^#＃\[\]\s\n]{1,32})$/g
+/** 表达式艾特优先，其次纯文本昵称 */
+const MENTION_RE = /@\{\{(char|player):([^}]+)\}\}|@([^\s@【】\[\]\n#＃\{\}]{1,40})(?=\s|$)/g
 const SUPERTOPIC_RE = /【([^】]{1,32})】/g
 
 function collectHits(text: string, re: RegExp, build: (match: RegExpExecArray) => SyntaxHit | null): SyntaxHit[] {
@@ -46,15 +49,20 @@ export function parsePublishSyntax(text: string): PublishSyntaxPart[] {
     ...collectHits(text, FACE_RE, (m) => {
       const name = m[1]!
       const raw = m[0]
-      const url = WeiboFaceByValues[name as keyof typeof WeiboFaceByValues]
+      const face = resolveWeiboFaceUrl(name)
       return {
         start: m.index,
         end: m.index + raw.length,
-        part: url
-          ? { type: 'face', name, url, raw }
+        part: face
+          ? { type: 'face', name: face.name, url: face.url, raw }
           : { type: 'text', value: raw },
       }
     }),
+    ...collectHits(text, HASHTAG_PAIRED_RE, (m) => ({
+      start: m.index,
+      end: m.index + m[0].length,
+      part: { type: 'hashtag', value: m[1]!.trim(), raw: m[0] },
+    })),
     ...collectHits(text, HASHTAG_RE, (m) => ({
       start: m.index,
       end: m.index + m[0].length,
@@ -65,11 +73,18 @@ export function parsePublishSyntax(text: string): PublishSyntaxPart[] {
       end: m.index + m[0].length,
       part: { type: 'hashtag', value: m[1]!.trim(), raw: m[0] },
     })),
-    ...collectHits(text, MENTION_RE, (m) => ({
-      start: m.index,
-      end: m.index + m[0].length,
-      part: { type: 'mention', value: m[1]!.trim(), raw: m[0] },
-    })),
+    ...collectHits(text, MENTION_RE, (m) => {
+      const exprKind = m[1]
+      const exprId = m[2]
+      const plain = m[3]
+      const value =
+        exprKind && exprId ? `${exprKind}:${exprId.trim()}` : (plain ?? '').trim()
+      return {
+        start: m.index,
+        end: m.index + m[0].length,
+        part: { type: 'mention', value, raw: m[0] },
+      }
+    }),
     ...collectHits(text, SUPERTOPIC_RE, (m) => ({
       start: m.index,
       end: m.index + m[0].length,
@@ -95,7 +110,8 @@ export function parsePublishSyntax(text: string): PublishSyntaxPart[] {
 }
 
 export const PUBLISH_SYNTAX_COLORS = {
-  hashtag: '#7C90A0',
+  /** 与 PULSE_COLORS.topicBlue 一致，保证 #话题# 明显发蓝 */
+  hashtag: '#507DAF',
   mention: '#D4AF37',
   supertopicBg: 'rgba(28,28,30,0.04)',
   face: '#8E99A4',

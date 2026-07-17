@@ -86,6 +86,16 @@ function formatWechatUnsummarizedLineTime(m: Pick<WeChatChatMessage, 'timestamp'
   return formatSystemRecordTime(resolveMessageSystemRecordedAtMs(m))
 }
 
+/** 未总结摘录时间前缀：有剧情标签时双写「剧情｜系统」，避免模型把系统公历当年当成故事日 */
+function formatUnsummarizedDualTimePrefix(
+  m: Pick<WeChatChatMessage, 'timestamp' | 'systemRecordedAt' | 'storyTimeLabel'>,
+): string {
+  const systemLabel = formatWechatUnsummarizedLineTime(m)
+  const story = m.storyTimeLabel?.trim()
+  if (story) return `[剧情 ${story}｜系统 ${systemLabel}] `
+  return `[${systemLabel}] `
+}
+
 export function formatPrivateLineUnsummarized(
   m: WeChatChatMessage,
   opts?: { includeTimestamp?: boolean },
@@ -103,9 +113,7 @@ export function formatPrivateLineUnsummarized(
   if (!raw) return null
   const who = m.type === 'player' ? '用户' : '对方'
   const timePrefix =
-    opts?.includeTimestamp && m.timestamp
-      ? `[${formatWechatUnsummarizedLineTime(m)}] `
-      : ''
+    opts?.includeTimestamp && m.timestamp ? formatUnsummarizedDualTimePrefix(m) : ''
   return `- ${timePrefix}[私聊・${who}] ${clipOneLine(raw)}`
 }
 
@@ -159,9 +167,7 @@ function formatGroupLineUnsummarized(
 
   const who = formatGroupSpeakerLabelForPrivateContext(m, group, npcCharacterId)
   const timePrefix =
-    opts?.includeTimestamp && m.timestamp
-      ? `[${formatWechatUnsummarizedLineTime(m)}] `
-      : ''
+    opts?.includeTimestamp && m.timestamp ? formatUnsummarizedDualTimePrefix(m) : ''
   return `- ${timePrefix}[群「${gidLabel}」·${who}] ${clipOneLine(raw)}`
 }
 

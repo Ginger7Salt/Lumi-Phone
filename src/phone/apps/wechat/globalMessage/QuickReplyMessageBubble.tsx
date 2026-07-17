@@ -104,6 +104,7 @@ export function QuickReplyMessageBubble({ message, isSelf }: Props) {
     return (
       <div className="max-w-[min(220px,82%)] origin-bottom scale-[0.92]">
         <RedPacketBubble
+          messageId={message.id}
           isSelf={isSelf}
           data={{
             remark: rp.remark,

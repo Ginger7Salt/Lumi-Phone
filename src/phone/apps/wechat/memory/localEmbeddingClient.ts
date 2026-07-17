@@ -211,6 +211,12 @@ export function getLocalEmbeddingDimensions(): number {
   return dimensions
 }
 
+/** 指定本地模型是否已在当前页完成初始化（可立即向量化，无需再下载） */
+export function isLocalEmbeddingModelReady(modelId?: string): boolean {
+  const model = normalizeLocalEmbeddingModelId(modelId)
+  return dimensions > 0 && activeModel === model
+}
+
 export async function embedTextsWithLocalModel(texts: string[], modelId?: string): Promise<number[][]> {
   const trimmed = texts.map((t) => String(t ?? '').trim()).filter(Boolean)
   if (!trimmed.length) return []

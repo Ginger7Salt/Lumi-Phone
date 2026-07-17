@@ -6,14 +6,27 @@ import {
   buildPersonaAiPlayerIdentityContextBlock,
   buildPersonaAiPlayerUserGenderRules,
   buildPersonaAiRelationContextRules,
+  PERSONA_AI_COMPACT_ENTRY_TARGET_CHARS,
+  buildPersonaAiCompactEntryLengthRules,
 } from './personaAiGeneratePrompt'
 import type { PersonaAiGenerateForm } from './personaAiGenerateTypes'
 import type { Character, Gender, PlayerIdentity } from './types'
 import {
-  canonicalizePersonaAiEpilogueEntryName,
-  getPersonaAiEpilogueEntryTemplates,
+  PERSONA_AI_COMPACT_BOOK_TITLE,
+  PERSONA_AI_COMPACT_ENTRY_NAMES,
+  PERSONA_AI_ORIENTATION_MUTABLE_EPILOGUE_NAME,
+  PERSONA_AI_RELATIONSHIP_HISTORY_ENTRY_NAME,
+  canonicalizePersonaAiCompactEntryName,
+  isPersonaAiOrientationEpilogueName,
+  isPersonaAiRelationshipHistoryEntryName,
+  pickPersonaAiOrientationEpilogueContent,
+  pickPersonaAiRelationshipHistoryContent,
+  type PersonaAiCompactEntryName,
   type PersonaAiEpilogueEntry,
 } from './personaAiWorldBooks'
+import {
+  serializePersonaAiMarkup,
+} from './personaAiGenerateMarkup'
 
 export type PersonaAiGenerateIssueKind =
   | 'parse'
@@ -26,6 +39,65 @@ export type PersonaAiGenerateIssue = {
   kind: PersonaAiGenerateIssueKind
   label: string
   detail?: string
+}
+
+/** 增量修复允许写入的字段白名单 */
+export type PersonaAiRepairAllowlist = {
+  /** 允许补丁覆盖的顶层键（realName / bio / openingLines 等） */
+  topKeys: Set<string>
+  /** 允许补丁覆盖的世界书条目标题 */
+  wbNames: Set<string>
+  /** 存在截断/解析问题时放宽：允许合并补丁中出现的任意字段 */
+  allowBroadMerge: boolean
+}
+
+const TOP_ISSUE_ID_TO_KEY: Record<string, string> = {
+  'top-realName': 'realName',
+  'top-wechatNickname': 'wechatNickname',
+  'top-occupation': 'occupation',
+  'top-motto': 'motto',
+  'top-wechatSignature': 'wechatSignature',
+  'top-mbti': 'mbti',
+  'top-orientation': 'orientation',
+  'top-bio': 'bio',
+  'top-opening': 'openingLines',
+}
+
+export function buildPersonaAiRepairAllowlist(issues: PersonaAiGenerateIssue[]): PersonaAiRepairAllowlist {
+  const topKeys = new Set<string>()
+  const wbNames = new Set<string>()
+  let allowBroadMerge = false
+  for (const i of issues) {
+    if (i.kind === 'parse') {
+      allowBroadMerge = true
+      continue
+    }
+    if (i.id.startsWith('wb-') || i.id.startsWith('ep-')) {
+      const name = i.id.replace(/^(wb|ep)-/, '')
+      if (name) wbNames.add(name)
+      continue
+    }
+    const mapped = TOP_ISSUE_ID_TO_KEY[i.id]
+    if (mapped) topKeys.add(mapped)
+    else if (i.id.startsWith('top-')) topKeys.add(i.id.slice(4))
+  }
+  return { topKeys, wbNames, allowBroadMerge }
+}
+
+/** 按模式筛待处理项：补全=缺失；纠正=过短/占位 */
+export function pickPersonaAiRepairIssues(
+  issues: PersonaAiGenerateIssue[],
+  mode: 'complete' | 'fix',
+): PersonaAiGenerateIssue[] {
+  if (mode === 'complete') {
+    return issues.filter(
+      (i) =>
+        i.kind === 'missing_epilogue' ||
+        i.kind === 'missing_top_field' ||
+        i.kind === 'parse',
+    )
+  }
+  return issues.filter((i) => i.kind === 'placeholder_field' || i.kind === 'parse')
 }
 
 export type PersonaAiGenerateResult = {
@@ -48,54 +120,29 @@ export class PersonaAiGenerateFailure extends Error {
 
 const PLACEHOLDER = '（档案待补全）'
 
-const COMPREHENSIVE_AUDIT: { path: string[]; label: string }[] = [
-  { path: ['base', 'info'], label: '外在形象' },
-  { path: ['base', 'physiology'], label: '气质与体态' },
-  { path: ['core', 'surface'], label: '对外伪装' },
-  { path: ['core', 'trueSelf'], label: '真实底色' },
-  { path: ['core', 'values'], label: '三观与执念' },
-  { path: ['core', 'flaws'], label: '优缺点与雷点' },
-  { path: ['psyche', 'background'], label: '身世与性格成因' },
-  { path: ['psyche', 'shadow'], label: '阴影与心结' },
-  { path: ['psyche', 'emotionalPattern'], label: '情绪模式' },
-  { path: ['psyche', 'orientationOrigin'], label: '取向与自我认同' },
-  { path: ['abilities', 'skills'], label: '职业与技能' },
-  { path: ['abilities', 'hobbies'], label: '爱好' },
-  { path: ['abilities', 'socialMode'], label: '多面社交态度' },
-  { path: ['fetish', 'preference'], label: '亲密偏好' },
-  { path: ['fetish', 'sensory'], label: '感官与节奏' },
-  { path: ['fetish', 'dynamic'], label: '相处动态' },
-  { path: ['fetish', 'jealousy'], label: '吃醋与边界' },
-  { path: ['fetish', 'intimateSpeech'], label: '亲密口语习惯' },
-  { path: ['relations', 'family'], label: '对家庭' },
-  { path: ['relations', 'friends'], label: '对友人' },
-  { path: ['relations', 'enemies'], label: '对立面' },
-  { path: ['contrast', 'beforeLove'], label: '恋爱前' },
-  { path: ['contrast', 'afterLove'], label: '恋爱后' },
-  { path: ['contrast', 'conflict'], label: '冲突与和好' },
-  { path: ['daily', 'speech'], label: '口语与口头禅' },
-  { path: ['daily', 'habits'], label: '日常习惯' },
-  { path: ['daily', 'money'], label: '消费观' },
-  { path: ['daily', 'quirks'], label: '下意识与小怪癖' },
-  { path: ['arc', 'secrets'], label: '伪装与秘密' },
-  { path: ['arc', 'goal'], label: '动机、恐惧与软肋' },
-  { path: ['arc', 'contrastMoe'], label: '反差萌' },
+const TOP_FIELD_AUDIT: { key: string; label: string; minLen?: number }[] = [
+  { key: 'realName', label: '真实姓名' },
+  { key: 'wechatNickname', label: '微信昵称' },
+  { key: 'occupation', label: '职业' },
+  { key: 'motto', label: '座右铭', minLen: 4 },
+  { key: 'wechatSignature', label: '微信个性签名', minLen: 2 },
+  { key: 'mbti', label: 'MBTI' },
+  { key: 'orientation', label: '性取向' },
 ]
 
-function readNested(obj: unknown, path: string[]): unknown {
-  let cur: unknown = obj
-  for (const k of path) {
-    if (!cur || typeof cur !== 'object') return undefined
-    cur = (cur as Record<string, unknown>)[k]
-  }
-  return cur
-}
-
-function isWeakFieldValue(v: unknown): boolean {
+function isWeakFieldValue(v: unknown, minLen = 4): boolean {
   const t = String(v ?? '').trim()
   if (!t) return true
   if (t === PLACEHOLDER) return true
-  return t.length < 4
+  return t.length < minLen
+}
+
+/** empty → missing；有字但过短/占位 → placeholder */
+function classifyWeakField(v: unknown, minLen = 4): 'ok' | 'missing' | 'placeholder' {
+  const t = String(v ?? '').trim()
+  if (!t) return 'missing'
+  if (t === PLACEHOLDER || t.length < minLen) return 'placeholder'
+  return 'ok'
 }
 
 /** 尝试修复被截断的 JSON（常见于 max_tokens 用尽） */
@@ -128,58 +175,74 @@ export function salvageTruncatedJsonObject(text: string): Record<string, unknown
   return null
 }
 
-function parseEpilogueNamesFromParsed(
+function findCompactPersonaBook(character: Character) {
+  const books = character.worldBooks ?? []
+  return (
+    books.find((w) => w.name === PERSONA_AI_COMPACT_BOOK_TITLE) ||
+    books.find((w) => /角色人设档案|对你现在/.test(String(w.name ?? ''))) ||
+    books[0]
+  )
+}
+
+function collectCompactEntryContentsFromParsed(
   parsed: Record<string, unknown>,
-  orientationMutable: boolean,
-): Set<string> {
-  const names = new Set<string>()
-  const rawArr = parsed.epilogueEntries
-  if (!Array.isArray(rawArr)) return names
-  for (const x of rawArr) {
-    if (!x || typeof x !== 'object') continue
-    const rawName = String((x as Record<string, unknown>).name ?? '').trim()
-    if (!rawName) continue
-    const canonical = canonicalizePersonaAiEpilogueEntryName(rawName, orientationMutable)
-    names.add(canonical ?? rawName)
+): Map<PersonaAiCompactEntryName, string> {
+  const byName = new Map<PersonaAiCompactEntryName, string>()
+
+  const ingest = (nameRaw: string, contentRaw: string) => {
+    const content = String(contentRaw ?? '').trim()
+    if (!content || content === PLACEHOLDER) return
+    const canonical = canonicalizePersonaAiCompactEntryName(nameRaw)
+    if (!canonical) return
+    const prev = byName.get(canonical)
+    if (!prev || content.length > prev.length) byName.set(canonical, content)
   }
-  return names
+
+  const arr = parsed.worldBookEntries
+  if (Array.isArray(arr)) {
+    for (const x of arr) {
+      if (!x || typeof x !== 'object') continue
+      const o = x as Record<string, unknown>
+      ingest(String(o.name ?? ''), String(o.content ?? ''))
+    }
+  }
+
+  const obj = parsed.worldBookSections
+  if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      ingest(k, String(v ?? ''))
+    }
+  }
+
+  const epi = parsed.epilogueEntries
+  if (Array.isArray(epi)) {
+    for (const x of epi) {
+      if (!x || typeof x !== 'object') continue
+      const o = x as Record<string, unknown>
+      ingest(String(o.name ?? ''), String(o.content ?? ''))
+    }
+  }
+
+  return byName
 }
 
-function collectCanonicalEpilogueNames(
-  parsed: Record<string, unknown>,
-  character: Character,
-  orientationMutable: boolean,
-): Set<string> {
-  const names = parseEpilogueNamesFromParsed(parsed, orientationMutable)
-  const vol10 = (character.worldBooks ?? []).find((w) => w.name.includes('对你现在'))
-  for (const it of vol10?.items ?? []) {
-    const rawName = String(it.name ?? '').trim()
-    if (!rawName) continue
-    const canonical = canonicalizePersonaAiEpilogueEntryName(rawName, orientationMutable)
-    if (canonical) names.add(canonical)
-  }
-  return names
-}
-
-function vol10NonCanonicalExtraCount(character: Character, orientationMutable: boolean): number {
-  const vol10 = (character.worldBooks ?? []).find((w) => w.name.includes('对你现在'))
-  let extras = 0
-  for (const it of vol10?.items ?? []) {
-    const c = canonicalizePersonaAiEpilogueEntryName(String(it.name ?? ''), orientationMutable)
-    if (!c) extras += 1
-  }
-  return extras
-}
-
-/** 按条目标题合并尾声（补全只返回部分条目时，保留已有条目） */
-export function mergeEpilogueEntryArrays(
+/** 按条目标题合并世界书条目（补全只返回部分条目时，保留已有） */
+export function mergeWorldBookEntryArrays(
   base: unknown,
   patch: unknown,
-  orientationMutable: boolean,
+  opts?: {
+    /** 仅合并这些标题；未指定则合并补丁中全部条目 */
+    allowNames?: Set<string>
+    /**
+     * true：允许名单内条目一律以补丁为准（纠正模式）
+     * false：仅当补丁更长时覆盖（补全缺失时默认）
+     */
+    forcePatch?: boolean
+  },
 ): PersonaAiEpilogueEntry[] {
   const byKey = new Map<string, PersonaAiEpilogueEntry>()
 
-  const ingest = (arr: unknown, patchWins: boolean) => {
+  const ingest = (arr: unknown, isPatch: boolean) => {
     if (!Array.isArray(arr)) return
     for (const x of arr) {
       if (!x || typeof x !== 'object') continue
@@ -187,11 +250,17 @@ export function mergeEpilogueEntryArrays(
       const name = String(o.name ?? '').trim()
       const content = String(o.content ?? '').trim()
       if (!name || !content) continue
-      const canonical = canonicalizePersonaAiEpilogueEntryName(name, orientationMutable)
+      const canonical = canonicalizePersonaAiCompactEntryName(name)
       const key = canonical ?? name
+      if (isPatch && opts?.allowNames?.size && !opts.allowNames.has(key)) continue
       const entry: PersonaAiEpilogueEntry = { name: canonical ?? name, content }
       const prev = byKey.get(key)
-      if (!prev || patchWins || content.length > prev.content.length) {
+      if (!prev) {
+        byKey.set(key, entry)
+        continue
+      }
+      if (!isPatch) continue
+      if (opts?.forcePatch || content.length > prev.content.length) {
         byKey.set(key, entry)
       }
     }
@@ -202,69 +271,256 @@ export function mergeEpilogueEntryArrays(
   return Array.from(byKey.values())
 }
 
-export function syncEpilogueEntriesInParsedSnapshot(parsed: Record<string, unknown>, character: Character): void {
-  const vol10 = (character.worldBooks ?? []).find((w) => w.name.includes('对你现在'))
-  if (!vol10?.items?.length) return
-  const entries = vol10.items
+/** 只保留允许名单内的补丁字段，避免模型整卷重写时覆盖已完整内容 */
+export function filterPersonaAiRepairPatch(
+  patch: Record<string, unknown>,
+  allow: PersonaAiRepairAllowlist,
+  base?: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+
+  const takeTop = (k: string, v: unknown) => {
+    if (allow.allowBroadMerge) {
+      if (allow.topKeys.has(k) || isWeakFieldValue(base?.[k], 2)) out[k] = v
+      return
+    }
+    if (allow.topKeys.has(k)) out[k] = v
+  }
+
+  for (const [k, v] of Object.entries(patch)) {
+    if (k === 'worldBookEntries' || k === 'epilogueEntries') continue
+    takeTop(k, v)
+  }
+
+  const rawEntries = patch.worldBookEntries ?? patch.epilogueEntries
+  if (!Array.isArray(rawEntries)) return out
+
+  if (allow.allowBroadMerge) {
+    // 截断抢救：条目仍交给 mergeWorldBookEntryArrays（默认更长者胜）
+    out.worldBookEntries = rawEntries as PersonaAiEpilogueEntry[]
+    return out
+  }
+
+  if (allow.wbNames.size > 0) {
+    const filtered: PersonaAiEpilogueEntry[] = []
+    for (const x of rawEntries) {
+      if (!x || typeof x !== 'object') continue
+      const o = x as Record<string, unknown>
+      const name = String(o.name ?? '').trim()
+      const content = String(o.content ?? '').trim()
+      if (!name || !content) continue
+      const canonical = canonicalizePersonaAiCompactEntryName(name) ?? name
+      if (!allow.wbNames.has(canonical)) continue
+      filtered.push({ name: canonical, content })
+    }
+    if (filtered.length) out.worldBookEntries = filtered
+  }
+  return out
+}
+
+/** @deprecated 兼容旧名 */
+export function mergeEpilogueEntryArrays(
+  base: unknown,
+  patch: unknown,
+  _orientationMutable?: boolean,
+): PersonaAiEpilogueEntry[] {
+  return mergeWorldBookEntryArrays(base, patch)
+}
+
+export function syncWorldBookEntriesInParsedSnapshot(
+  parsed: Record<string, unknown>,
+  character: Character,
+): void {
+  const book = findCompactPersonaBook(character)
+  if (!book?.items?.length) return
+  const entries = book.items
     .map((it) => ({
       name: String(it.name ?? '').trim(),
       content: String(it.content ?? '').trim(),
     }))
     .filter((e) => e.name && e.content && e.content !== PLACEHOLDER)
-  if (entries.length) parsed.epilogueEntries = entries
+  if (entries.length) parsed.worldBookEntries = entries
 }
 
-const COMPREHENSIVE_ISSUE_PATHS: Record<string, string> = Object.fromEntries(
-  COMPREHENSIVE_AUDIT.map((row) => [`ph-${row.path.join('.')}`, `comprehensive.${row.path.join('.')}`]),
-)
+/** @deprecated */
+export function syncEpilogueEntriesInParsedSnapshot(
+  parsed: Record<string, unknown>,
+  character: Character,
+): void {
+  syncWorldBookEntriesInParsedSnapshot(parsed, character)
+}
 
 function repairHintForIssue(issue: PersonaAiGenerateIssue): string | null {
+  if (issue.id.startsWith('wb-')) {
+    const name = issue.id.slice(3)
+    return `补写段落【${name}】`
+  }
   if (issue.id.startsWith('ep-')) {
     const name = issue.id.slice(3)
-    return `epilogueEntries 中 name 须**完全一致**为「${name}」`
+    return `补写段落【${name}】`
   }
-  if (issue.id === 'top-bio') return '顶层 bio'
-  if (issue.id === 'top-opening') return '顶层 openingLines'
-  return COMPREHENSIVE_ISSUE_PATHS[issue.id] ?? null
+  if (issue.id === 'top-bio') return '补写【简介】'
+  if (issue.id.startsWith('top-')) {
+    const key = issue.id.slice(4)
+    const labelMap: Record<string, string> = {
+      realName: '真实姓名',
+      wechatNickname: '微信昵称',
+      occupation: '职业',
+      motto: '座右铭',
+      wechatSignature: '个性签名',
+      mbti: 'MBTI',
+      orientation: '性取向',
+    }
+    return `补写键值行「${labelMap[key] ?? key}：…」`
+  }
+  return null
 }
 
-/** 供补全 prompt 使用的精简快照：优先保留尾声与待补字段上下文 */
+/** 供补全 prompt 使用的精简快照（纯文本标记） */
 export function buildPersonaAiRepairSnapshot(
   parsed: Record<string, unknown>,
   issues: PersonaAiGenerateIssue[],
 ): string {
-  const weakPaths = new Set(
-    issues
-      .filter((i) => i.kind === 'placeholder_field')
-      .map((i) => COMPREHENSIVE_ISSUE_PATHS[i.id])
-      .filter(Boolean) as string[],
-  )
-  const comprehensive = (parsed.comprehensive ?? parsed) as Record<string, unknown>
-  const slimComprehensive: Record<string, unknown> = {}
-  for (const path of weakPaths) {
-    const parts = path.replace(/^comprehensive\./, '').split('.')
-    const v = readNested(comprehensive, parts)
-    if (v != null) {
-      let cur = slimComprehensive as Record<string, unknown>
-      for (let i = 0; i < parts.length - 1; i++) {
-        const k = parts[i]!
-        if (!cur[k] || typeof cur[k] !== 'object') cur[k] = {}
-        cur = cur[k] as Record<string, unknown>
-      }
-      cur[parts[parts.length - 1]!] = v
+  const allow = buildPersonaAiRepairAllowlist(issues)
+  const needWb = allow.wbNames
+  const needTop = allow.topKeys
+  const lines: string[] = []
+
+  const topLabels: { key: string; label: string }[] = [
+    { key: 'realName', label: '真实姓名' },
+    { key: 'wechatNickname', label: '微信昵称' },
+    { key: 'occupation', label: '职业' },
+    { key: 'motto', label: '座右铭' },
+    { key: 'wechatSignature', label: '个性签名' },
+    { key: 'mbti', label: 'MBTI' },
+    { key: 'orientation', label: '性取向' },
+    { key: 'bio', label: '简介' },
+  ]
+
+  const locked: string[] = []
+  const rewriteTop: string[] = []
+
+  for (const row of topLabels) {
+    const raw = parsed[row.key]
+    const text = Array.isArray(raw)
+      ? raw.map((x) => String(x).trim()).filter(Boolean).join('、')
+      : String(raw ?? '').trim()
+    const mustRewrite = allow.allowBroadMerge || needTop.has(row.key)
+    if (!mustRewrite && text && text !== PLACEHOLDER) {
+      locked.push(`${row.label}（已完整·勿改，约 ${text.length} 字）`)
+      continue
+    }
+    if (mustRewrite) {
+      if (text) rewriteTop.push(`${row.label}：${text}`)
+      else rewriteTop.push(`${row.label}：（空·请补写）`)
     }
   }
-  const slim: Record<string, unknown> = {}
-  if (parsed.bio != null) slim.bio = parsed.bio
-  if (parsed.openingLines != null) slim.openingLines = parsed.openingLines
-  if (parsed.epilogueEntries != null) slim.epilogueEntries = parsed.epilogueEntries
-  if (Object.keys(slimComprehensive).length) slim.comprehensive = slimComprehensive
-  else if (parsed.comprehensive != null) {
-    slim.comprehensive = '(其余九维字段已生成，此处省略；请勿重复输出已完整的 comprehensive 字段)'
+
+  if (locked.length) {
+    lines.push('【已完整顶层·禁止输出这些键】', ...locked.map((x) => `- ${x}`), '')
   }
-  const text = JSON.stringify(slim)
-  if (text.length <= 12000) return text
-  return `${text.slice(0, 12000)}…（快照已截断；epilogueEntries 与待补字段优先保留）`
+  if (rewriteTop.length) {
+    lines.push('【待处理顶层·仅可改这些键】', ...rewriteTop, '')
+  }
+
+  const arr = parsed.worldBookEntries ?? parsed.epilogueEntries
+  const lockedWb: string[] = []
+  const weakParts: string[] = []
+  if (Array.isArray(arr)) {
+    for (const x of arr) {
+      if (!x || typeof x !== 'object') continue
+      const o = x as Record<string, unknown>
+      const name = String(o.name ?? '').trim()
+      const content = String(o.content ?? '').trim()
+      if (!name) continue
+      const canonical = canonicalizePersonaAiCompactEntryName(name) ?? name
+      const mustRewrite = allow.allowBroadMerge || needWb.has(canonical)
+      if (!mustRewrite && content && content !== PLACEHOLDER) {
+        lockedWb.push(`【${canonical}】（已完整·勿改，约 ${content.length} 字）`)
+        continue
+      }
+      if (mustRewrite) {
+        weakParts.push(
+          '',
+          `【${canonical}】`,
+          content && content !== PLACEHOLDER ? content : '（空或过短·请重写本段）',
+        )
+      }
+    }
+  }
+
+  for (const name of PERSONA_AI_COMPACT_ENTRY_NAMES) {
+    if (!needWb.has(name) && !allow.allowBroadMerge) continue
+    const already = weakParts.some((p) => p === `【${name}】`)
+    if (already) continue
+    const hasInArr =
+      Array.isArray(arr) &&
+      arr.some((x) => {
+        if (!x || typeof x !== 'object') return false
+        const n = canonicalizePersonaAiCompactEntryName(String((x as { name?: unknown }).name ?? ''))
+        return n === name
+      })
+    if (!hasInArr) {
+      weakParts.push('', `【${name}】`, '（缺失·请新写本段）')
+    }
+  }
+
+  if (needWb.has(PERSONA_AI_ORIENTATION_MUTABLE_EPILOGUE_NAME) || allow.allowBroadMerge) {
+    const already = weakParts.some((p) => p === `【${PERSONA_AI_ORIENTATION_MUTABLE_EPILOGUE_NAME}】`)
+    if (!already) {
+      const hasOrient =
+        Array.isArray(arr) &&
+        arr.some((x) => {
+          if (!x || typeof x !== 'object') return false
+          return isPersonaAiOrientationEpilogueName(String((x as { name?: unknown }).name ?? ''))
+        })
+      if (!hasOrient && needWb.has(PERSONA_AI_ORIENTATION_MUTABLE_EPILOGUE_NAME)) {
+        weakParts.push(
+          '',
+          `【${PERSONA_AI_ORIENTATION_MUTABLE_EPILOGUE_NAME}】`,
+          '（缺失·请新写本段）',
+        )
+      }
+    }
+  }
+
+  if (needWb.has(PERSONA_AI_RELATIONSHIP_HISTORY_ENTRY_NAME)) {
+    const already = weakParts.some((p) => p === `【${PERSONA_AI_RELATIONSHIP_HISTORY_ENTRY_NAME}】`)
+    if (!already) {
+      const hasHistory =
+        Array.isArray(arr) &&
+        arr.some((x) => {
+          if (!x || typeof x !== 'object') return false
+          return isPersonaAiRelationshipHistoryEntryName(String((x as { name?: unknown }).name ?? ''))
+        })
+      if (!hasHistory) {
+        weakParts.push(
+          '',
+          `【${PERSONA_AI_RELATIONSHIP_HISTORY_ENTRY_NAME}】`,
+          '（缺失·请新写本段）',
+        )
+      }
+    }
+  }
+
+  if (lockedWb.length) {
+    lines.push('【已完整世界书·禁止输出这些段】', ...lockedWb.map((x) => `- ${x}`), '')
+  }
+  if (weakParts.length) {
+    lines.push('【待处理世界书正文·仅可输出这些【标题】】', ...weakParts)
+  }
+
+  // 解析失败时仍给一份可读全文作参考（但提示勿整卷重抄）
+  if (allow.allowBroadMerge && !rewriteTop.length && !weakParts.length) {
+    const full = serializePersonaAiMarkup(parsed, { includeAllTop: true })
+    if (full.trim()) {
+      lines.push('', '【参考全文（可能残缺；只补缺漏，勿整卷重抄）】', full)
+    }
+  }
+
+  const text = lines.join('\n').trim()
+  if (text.length <= 12000) return text || '（暂无已生成内容）'
+  return `${text.slice(0, 12000)}…（快照已截断）`
 }
 
 export function auditPersonaAiGenerateResult(
@@ -277,55 +533,157 @@ export function auditPersonaAiGenerateResult(
     issues.push({
       id: 'parse-truncated',
       kind: 'parse',
-      label: 'JSON 被截断',
-      detail: '模型输出未完整结束，已尝试抢救部分字段；建议补全或纠正。',
+      label: '输出可能被截断',
+      detail: '模型标记文本未完整结束，已尽量抢救已写出的字段；建议补全或纠正。',
     })
   }
 
-  const comprehensive = (meta.parsed.comprehensive ?? meta.parsed) as Record<string, unknown>
-  for (const row of COMPREHENSIVE_AUDIT) {
-    const v = readNested(comprehensive, row.path)
-    if (isWeakFieldValue(v)) {
+  for (const row of TOP_FIELD_AUDIT) {
+    const v = meta.parsed[row.key]
+    const charFallback =
+      row.key === 'realName'
+        ? character.name
+        : row.key === 'wechatNickname'
+          ? character.wechatNickname
+          : row.key === 'occupation'
+            ? character.identity
+            : row.key === 'motto'
+              ? character.motto
+              : row.key === 'wechatSignature'
+                ? character.wechatSignature
+                : row.key === 'mbti'
+                  ? character.mbti
+                  : undefined
+    const minLen = row.minLen ?? 2
+    const kindA = classifyWeakField(v, minLen)
+    const kindB = classifyWeakField(charFallback, minLen)
+    const kind = kindA === 'ok' || kindB === 'ok' ? 'ok' : kindA === 'missing' && kindB === 'missing' ? 'missing' : 'placeholder'
+    if (kind === 'missing') {
       issues.push({
-        id: `ph-${row.path.join('.')}`,
+        id: `top-${row.key}`,
+        kind: 'missing_top_field',
+        label: row.label,
+        detail: '内容缺失',
+      })
+    } else if (kind === 'placeholder') {
+      issues.push({
+        id: `top-${row.key}`,
         kind: 'placeholder_field',
         label: row.label,
-        detail: '内容缺失或为占位稿',
+        detail: '内容过短或为占位稿',
       })
     }
   }
 
-  if (!String(meta.parsed.bio ?? '').trim() && !String(character.bio ?? '').trim()) {
-    issues.push({ id: 'top-bio', kind: 'missing_top_field', label: '简介 bio', detail: '未生成' })
+  {
+    const bioKind = classifyWeakField(meta.parsed.bio ?? character.bio, 20)
+    if (bioKind === 'missing') {
+      issues.push({ id: 'top-bio', kind: 'missing_top_field', label: '简介 bio', detail: '未生成' })
+    } else if (bioKind === 'placeholder') {
+      issues.push({ id: 'top-bio', kind: 'placeholder_field', label: '简介 bio', detail: '过短或占位' })
+    }
   }
-  if (!String(meta.parsed.openingLines ?? '').trim() && !String(character.openingLines ?? '').trim()) {
-    issues.push({
-      id: 'top-opening',
-      kind: 'missing_top_field',
-      label: '开场白',
-      detail: '未生成',
-    })
-  }
-  const expected = getPersonaAiEpilogueEntryTemplates()
-  const parsedNames = collectCanonicalEpilogueNames(meta.parsed, character, form.orientationMutable)
-  for (const name of expected) {
-    if (!parsedNames.has(name)) {
+
+  const contents = collectCompactEntryContentsFromParsed(meta.parsed)
+  for (const name of PERSONA_AI_COMPACT_ENTRY_NAMES) {
+    const content = contents.get(name)
+    if (!content) {
       issues.push({
-        id: `ep-${name}`,
+        id: `wb-${name}`,
         kind: 'missing_epilogue',
-        label: `尾声 · ${name}`,
+        label: `世界书 · ${name}`,
         detail: '模型未返回或标题不匹配',
       })
+    } else if (isWeakFieldValue(content, Math.floor(PERSONA_AI_COMPACT_ENTRY_TARGET_CHARS * 0.45))) {
+      issues.push({
+        id: `wb-${name}`,
+        kind: 'placeholder_field',
+        label: `世界书 · ${name}`,
+        detail: `内容过短（目标约 ${PERSONA_AI_COMPACT_ENTRY_TARGET_CHARS} 字）或为占位稿`,
+      })
     }
   }
 
-  const extraCount = vol10NonCanonicalExtraCount(character, form.orientationMutable)
-  if (extraCount > 0) {
+  if (form.orientationMutable) {
+    const orientContent =
+      pickPersonaAiOrientationEpilogueContent(
+        Array.isArray(meta.parsed.worldBookEntries)
+          ? (meta.parsed.worldBookEntries as PersonaAiEpilogueEntry[])
+          : [],
+      ) ||
+      (() => {
+        const book = findCompactPersonaBook(character)
+        for (const it of book?.items ?? []) {
+          if (isPersonaAiOrientationEpilogueName(String(it.name ?? ''))) {
+            return String(it.content ?? '').trim()
+          }
+        }
+        return ''
+      })()
+    if (!orientContent) {
+      issues.push({
+        id: `wb-${PERSONA_AI_ORIENTATION_MUTABLE_EPILOGUE_NAME}`,
+        kind: 'missing_epilogue',
+        label: `世界书 · ${PERSONA_AI_ORIENTATION_MUTABLE_EPILOGUE_NAME}`,
+        detail: '取向可变时须单独输出该尾声条目',
+      })
+    } else if (isWeakFieldValue(orientContent, Math.floor(PERSONA_AI_COMPACT_ENTRY_TARGET_CHARS * 0.35))) {
+      issues.push({
+        id: `wb-${PERSONA_AI_ORIENTATION_MUTABLE_EPILOGUE_NAME}`,
+        kind: 'placeholder_field',
+        label: `世界书 · ${PERSONA_AI_ORIENTATION_MUTABLE_EPILOGUE_NAME}`,
+        detail: '内容过短或为占位稿',
+      })
+    }
+  }
+
+  if (form.relationshipHistoryHint.trim()) {
+    const historyContent =
+      pickPersonaAiRelationshipHistoryContent(
+        Array.isArray(meta.parsed.worldBookEntries)
+          ? (meta.parsed.worldBookEntries as PersonaAiEpilogueEntry[])
+          : [],
+      ) ||
+      (() => {
+        const book = findCompactPersonaBook(character)
+        for (const it of book?.items ?? []) {
+          if (isPersonaAiRelationshipHistoryEntryName(String(it.name ?? ''))) {
+            return String(it.content ?? '').trim()
+          }
+        }
+        return ''
+      })()
+    if (!historyContent) {
+      issues.push({
+        id: `wb-${PERSONA_AI_RELATIONSHIP_HISTORY_ENTRY_NAME}`,
+        kind: 'missing_epilogue',
+        label: `世界书 · ${PERSONA_AI_RELATIONSHIP_HISTORY_ENTRY_NAME}`,
+        detail: '填写了感情史时须单独输出该条目',
+      })
+    } else if (isWeakFieldValue(historyContent, Math.floor(PERSONA_AI_COMPACT_ENTRY_TARGET_CHARS * 0.35))) {
+      issues.push({
+        id: `wb-${PERSONA_AI_RELATIONSHIP_HISTORY_ENTRY_NAME}`,
+        kind: 'placeholder_field',
+        label: `世界书 · ${PERSONA_AI_RELATIONSHIP_HISTORY_ENTRY_NAME}`,
+        detail: '内容过短或为占位稿',
+      })
+    }
+  }
+
+  const book = findCompactPersonaBook(character)
+  let extras = 0
+  for (const it of book?.items ?? []) {
+    const rawName = String(it.name ?? '')
+    if (isPersonaAiOrientationEpilogueName(rawName)) continue
+    if (isPersonaAiRelationshipHistoryEntryName(rawName)) continue
+    if (!canonicalizePersonaAiCompactEntryName(rawName)) extras += 1
+  }
+  if (extras > 0) {
     issues.push({
-      id: 'ep-dup',
+      id: 'wb-dup',
       kind: 'parse',
-      label: '尾声条目标题不规范',
-      detail: `有 ${extraCount} 条标题无法归并到模板，可能重复；纠正时请只输出标准标题`,
+      label: '世界书条目标题不规范',
+      detail: `有 ${extras} 条标题无法归并到 ${PERSONA_AI_COMPACT_ENTRY_NAMES.length} 条模板，可能重复；纠正时请只输出标准标题`,
     })
   }
 
@@ -352,20 +710,38 @@ function deepMergePatch(base: Record<string, unknown>, patch: Record<string, unk
 export function mergePersonaAiParsedSnapshot(
   base: Record<string, unknown>,
   patch: Record<string, unknown>,
-  opts?: { orientationMutable?: boolean },
+  opts?: {
+    orientationMutable?: boolean
+    allowlist?: PersonaAiRepairAllowlist
+    /** 纠正模式：允许名单内条目强制以补丁覆盖 */
+    forceEntryPatch?: boolean
+  },
 ): Record<string, unknown> {
-  const patchCopy = { ...patch }
-  let mergedEpilogue: PersonaAiEpilogueEntry[] | undefined
-  if (patchCopy.epilogueEntries != null) {
-    mergedEpilogue = mergeEpilogueEntryArrays(
-      base.epilogueEntries,
-      patchCopy.epilogueEntries,
-      opts?.orientationMutable ?? false,
+  const filtered = opts?.allowlist
+    ? filterPersonaAiRepairPatch(patch, opts.allowlist, base)
+    : { ...patch }
+  const patchCopy = { ...filtered }
+  let mergedEntries: PersonaAiEpilogueEntry[] | undefined
+
+  const patchEntries = patchCopy.worldBookEntries ?? patchCopy.epilogueEntries
+  if (patchEntries != null) {
+    const forcePatch =
+      opts?.forceEntryPatch === true && !(opts.allowlist?.allowBroadMerge)
+    mergedEntries = mergeWorldBookEntryArrays(
+      base.worldBookEntries ?? base.epilogueEntries,
+      patchEntries,
+      {
+        allowNames:
+          opts?.allowlist && !opts.allowlist.allowBroadMerge ? opts.allowlist.wbNames : undefined,
+        forcePatch,
+      },
     )
+    delete patchCopy.worldBookEntries
     delete patchCopy.epilogueEntries
   }
+
   const out = deepMergePatch(base, patchCopy)
-  if (mergedEpilogue != null) out.epilogueEntries = mergedEpilogue
+  if (mergedEntries != null) out.worldBookEntries = mergedEntries
   return out
 }
 
@@ -373,22 +749,53 @@ export function buildPersonaAiRepairSystemPrompt(opts: {
   orientationMutable: boolean
   nsfwEnabled: boolean
   relationToUser?: string
+  mode?: 'complete' | 'fix'
+  includeRelationshipHistory?: boolean
 }): string {
   const rel = opts.relationToUser?.trim() || '普通熟人'
-  return `你是中文都市向角色档案修复助手。用户已有一次生成结果，但部分字段缺失、为占位稿或 JSON 不完整。
-你必须输出且仅输出**单个合法 JSON 对象**（不要 Markdown 围栏、不要解释）。
-**增量补全铁律**：在已有 JSON 快照上合并；只输出待补/待纠正的键，已正确的字段不要重复输出。
-epilogueEntries 可**只输出缺失的几条**，系统会按 name 与已有条目合并，不会覆盖其它已生成的尾声。
-结构须与完整人设 JSON 一致：可含 comprehensive、epilogueEntries、bio、openingLines 等顶层键。
-epilogueEntries 若输出：name 须与模板**完全一致**；每项 { "name", "content" }。
+  const includeHistory = opts.includeRelationshipHistory === true
+  const entryList = [
+    ...PERSONA_AI_COMPACT_ENTRY_NAMES.map((n) => `- ${n}`),
+    ...(opts.orientationMutable ? [`- ${PERSONA_AI_ORIENTATION_MUTABLE_EPILOGUE_NAME}（取向可变 · 尾声）`] : []),
+    ...(includeHistory ? [`- ${PERSONA_AI_RELATIONSHIP_HISTORY_ENTRY_NAME}（感情史 · 序言）`] : []),
+  ].join('\n')
+  const modeLine =
+    opts.mode === 'fix'
+      ? '本次任务是**纠正**：只重写「待处理」里标为过短/占位/不规范的字段与段落；已标「已完整·勿改」的禁止输出。'
+      : '本次任务是**补全**：只新写「待处理」里标为缺失的字段与段落；已标「已完整·勿改」的禁止输出、禁止改写。'
+  const orientHostLine = opts.orientationMutable
+    ? `取向写在尾声「${PERSONA_AI_ORIENTATION_MUTABLE_EPILOGUE_NAME}」，「性格内核」勿写取向；禁止因 {{user}} 颜值写自我怀疑。`
+    : '取向写在「性格内核」，禁止因 {{user}} 颜值写自我怀疑。'
+  const historyHostLine = includeHistory
+    ? `过往感情史写在序言「${PERSONA_AI_RELATIONSHIP_HISTORY_ENTRY_NAME}」；禁止写成与 {{user}} 当前关系。`
+    : ''
+  return `你是中文都市向角色档案修复助手。用户已有一次生成结果，但部分字段缺失或为占位稿。
+必须按【输出格式】写**纯文本标记**；**禁止 JSON**、禁止 Markdown 围栏、禁止解释。
+${modeLine}
+**增量铁律（最高优先级）**：
+1. 只输出需要补全/纠正的键值行与【段落】；不要输出整份人设。
+2. 快照里写「已完整·勿改」的键/段：一句都不要再写。
+3. 系统会按白名单合并；你多写的完整字段会被丢弃，但浪费 token 且易截断。
+世界书若输出：【标题】须与下列**完全一致**：
+${entryList}
 角色用 {{char}}、绑定玩家用 {{user}}，禁止写汉字真名。
-补全/纠正时须**完整参考**用户消息中的【绑定玩家身份】基础资料与世界书条目，{{user}} 的性别、身份与亲密描写不得与之矛盾。
-与 {{user}} 的关系为「${rel}」；同学/朋友下颜值欣赏≠恋爱≠取向动摇；非恋爱关系勿把 fetish 写成对 {{user}} 的暗恋或性幻想；vol03 取向条目禁止因 {{user}} 颜值写自我怀疑。
+与 {{user}} 的关系为「${rel}」；颜值欣赏≠恋爱≠取向动摇；「亲密与恋爱观」勿把 {{user}} 写成暗恋/性幻想对象；${orientHostLine}${historyHostLine ? ` ${historyHostLine}` : ''}
+「对你现在」须先读懂关系原文「${rel}」的投入程度，心里分量与之对齐；原文未表达好感时禁止补写成潜在心动、嘴硬心软或暗中关注。
 ${buildPersonaAiIntimatePartnerWordingRules()}
-${opts.nsfwEnabled ? 'NSFW 已开启：补写的 fetish 五字段须**直白描绘**（黄文义，禁止隐喻/清水），语气遵循用户亲密种子；禁止超雄 caricature；指恋人写「对方」，禁止男人/女人。' : 'NSFW 未开启：补写的 fetish 须清水纯爱，intimateSpeech 写与对方亲密口语示例，禁止露骨性描写；指恋人写「对方」，禁止男人/女人。'}
-${opts.orientationMutable ? `${buildPersonaAiOrientationMutableSemanticsRule(true)} 勿在 epilogueEntries 重复取向条目。` : ''}
+${opts.nsfwEnabled ? 'NSFW 已开启：补写「亲密与恋爱观」须直白描绘；指恋人写「对方」；禁止超雄 caricature。' : 'NSFW 未开启：补写「亲密与恋爱观」须清水恋爱观，禁止露骨；指恋人写「对方」。'}
+${opts.orientationMutable ? `${buildPersonaAiOrientationMutableSemanticsRule(true)}` : ''}
+${buildPersonaAiCompactEntryLengthRules()}
+补写正文须用**中性朴实**描述，禁止超雄/极端用语与八股油腻形容词。
 
-${buildPersonaAiHealthyToneRules()}`.trim()
+${buildPersonaAiHealthyToneRules()}
+
+【输出格式 · 增量纯文本（禁止 JSON）】
+只写待处理项。顶层用「键：值」单行；多行块用【标题】单独成行，正文写在下一行起。
+示例（假设只缺座右铭与「对你现在」）：
+座右铭：……
+【对你现在】
+……正文……
+不要输出示例里未列出的其他键或【段落】。`.trim()
 }
 
 export function buildPersonaAiRepairUserPrompt(params: {
@@ -403,20 +810,39 @@ export function buildPersonaAiRepairUserPrompt(params: {
   worldBackgroundPrompt?: string
 }): string {
   const { form, mode, issues } = params
+  const allow = buildPersonaAiRepairAllowlist(issues)
+  const allowedTop = [...allow.topKeys]
+  const allowedWb = [...allow.wbNames]
   const issueLines = issues
     .map((i) => {
       const hint = repairHintForIssue(i)
-      return `- ${i.label}${i.detail ? `（${i.detail}）` : ''}${hint ? ` → 补写 JSON 键：${hint}` : ''}`
+      const tag =
+        i.kind === 'missing_epilogue' || i.kind === 'missing_top_field'
+          ? '缺失'
+          : i.kind === 'placeholder_field'
+            ? '过短/占位'
+            : '解析'
+      return `- [${tag}] ${i.label}${i.detail ? `（${i.detail}）` : ''}${hint ? ` → ${hint}` : ''}`
     })
     .join('\n')
   const relation = form.relationToUser.trim() || '普通熟人'
-  const epilogueTemplates = getPersonaAiEpilogueEntryTemplates()
+  const allowLines = [
+    allow.allowBroadMerge
+      ? '- （存在截断/解析问题：可补缺漏字段，但仍禁止整卷无差别重抄已完整内容）'
+      : '',
+    allowedTop.length ? `- 允许输出的顶层键：${allowedTop.join('、')}` : '',
+    allowedWb.length ? `- 允许输出的世界书【标题】：${allowedWb.join('、')}` : '',
+    !allow.allowBroadMerge && !allowedTop.length && !allowedWb.length
+      ? '- （无明确白名单，请只处理【待处理项】列出的内容）'
+      : '',
+  ].filter(Boolean)
+
   const lines = [
     mode === 'complete'
-      ? '请**仅补全**下列缺失条目，不要改动已正确的字段。'
-      : '请**纠正**下列出错/占位/不贴合关系的条目，可重写对应字段使其自洽。',
+      ? '请**仅补全缺失**条目（空字段/未返回的世界书段）。不要改写已有正文，哪怕你觉得能写得更好。'
+      : '请**仅纠正过短/占位**条目。不要动已完整字段；对名单内条目可整段重写到合格长度。',
     '',
-    '【重要】本次是**增量补全**：在下方「已有 JSON 快照」基础上合并；不是从头重新生成整个人设。',
+    '【重要】这是增量补丁，不是重新生成整个人设。输出越短越好，只含待处理键/段。',
     '',
     `【与 {{user}} 的关系】${relation}`,
     form.relationDetailHint.trim()
@@ -425,13 +851,13 @@ export function buildPersonaAiRepairUserPrompt(params: {
     buildPersonaAiRelationContextRules(form),
     buildPersonaAiNsfwHintToneRules(form),
     '',
-    '【vol10 尾声条目标题（须完全一致）】',
-    ...epilogueTemplates.map((t) => `- ${t}`),
+    '【本次允许写入（白名单）】',
+    ...allowLines,
     '',
     '【待处理项】',
-    issueLines || '- （模型上次 JSON 整体解析失败，请输出完整合法 JSON）',
+    issueLines || '- （上次标记文本整体解析失败，请按格式补出缺漏；已完整内容仍勿重抄）',
     '',
-    '【已有 JSON 快照（已生成内容，勿重复输出已完整的键）】',
+    '【已有标记快照】',
     buildPersonaAiRepairSnapshot(params.parsedSnapshot, issues),
   ].filter(Boolean)
   if (params.rawText?.trim() && issues.some((i) => i.kind === 'parse')) {
@@ -451,9 +877,10 @@ export function buildPersonaAiRepairUserPrompt(params: {
   }
   lines.push(
     '',
-    '纠正时须遵守：完整参考上方【绑定玩家身份】与世界书；颜值欣赏≠恋爱≠取向动摇；fetish 勿把 {{user}} 写成暗恋/性幻想对象；vol03 取向勿因 {{user}} 颜值写自我怀疑；vol05/vol07 指恋人写「对方」，禁止男人/女人；{{user}} 身体描写须与绑定玩家性别及身份资料一致（仅 epilogue 等明确指 {{user}} 的字段）。',
-    '**全局禁止**：补写/纠正内容不得出现超雄、极端、病态 caricature（暴力压制、恐怖占有、跟踪监禁、PUA/煤气灯、精神疾病猎奇美化、性暴力 glorification 等）。',
-    '输出单个 JSON 对象，仅包含需要补全/纠正的键。',
+    '纠正/补全须遵守：完整参考上方【绑定玩家身份】与世界书；颜值欣赏≠恋爱≠取向动摇；「亲密与恋爱观」指恋人写「对方」；「对你现在」明确指 {{user}}；{{user}} 身体描写须与绑定玩家性别一致。',
+    `补写世界书条目约 ${PERSONA_AI_COMPACT_ENTRY_TARGET_CHARS} 字；描述用中性词，禁止超雄/极端用语与八股油腻形容词。`,
+    '**全局禁止**：不得出现超雄、极端、病态 caricature，也不得堆砌花里胡哨网文标签。',
+    '**只输出白名单内的键值行与【段落】**；禁止 JSON；禁止重复「已完整·勿改」内容。',
   )
   return lines.join('\n')
 }

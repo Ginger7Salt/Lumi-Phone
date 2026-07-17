@@ -37,10 +37,20 @@ export function formatCurrentTimeBlock(currentTimeMs?: number, opts?: { forLumiA
   const stamp = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${week} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(
     d.getSeconds(),
   )}`
-  const tail = opts?.forLumiAssistant
-    ? `可将时段体现在问候或语气里（如早晚安），但不要编造与用户私密剧情。\n`
-    : `请将时间感（早/午/晚、是否深夜、是否工作时段）自然体现在角色回复里；若无自定义时间配置，默认按系统当前时间理解。\n`
-  return `\n\n---\n【当前时间】\n当前时间点：${stamp}\n${tail}`
+  if (opts?.forLumiAssistant) {
+    return `\n\n---\n【当前时间】\n当前时间点：${stamp}\n可将时段体现在问候或语气里（如早晚安），但不要编造与用户私密剧情。\n`
+  }
+  // 角色扮演：墙钟只供早午晚语气；故事日历以剧情时间轴为准（避免系统 2023 vs 剧情 2024 打架）
+  return [
+    '',
+    '---',
+    '【当前时间】',
+    `当前时间点：${stamp}`,
+    '上列为微信应用内/系统墙钟，仅供感知早/午/晚、深夜与回复节奏；**不是**故事内公历日，也**不是**【剧情时间轴】里的「今天」。',
+    '故事「现在」以【剧情时间轴】的【当前锚点】为准。若用户在系统次日继续线上聊天或发朋友圈，而最新线下落库更早，须视为接在该剧情锚点之后，勿因上列年份把剧情日倒退。',
+    '请将时段感自然体现在回复里，但涉及「哪一天、过了多久」时优先服从剧情锚点与跨通道落库先后说明。',
+    '',
+  ].join('\n')
 }
 
 export const WECHAT_TIMESTAMP_GAP_MS = 5 * 60 * 1000

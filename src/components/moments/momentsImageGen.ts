@@ -54,7 +54,7 @@ import {
 } from './momentsImageSizePresets'
 import { resolveVolcengineImageSize, VOLCENGINE_IMAGE_API_URL } from './volcengineImageCatalog'
 import { localizeMomentsImageGenError } from './momentsImageGenErrorZh'
-import { buildCharacterMediaImagePrompt, buildDatingPlotImagePrompt, buildMomentsImagePrompt, isCharacterMediaCharacterAppearanceNeededPrompt, isCharacterMediaSelfiePrompt } from './momentsImagePromptEnhancer'
+import { buildCharacterMediaImagePrompt, buildDatingPlotImagePrompt, buildMomentsImagePrompt, isCharacterMediaCharacterAppearanceNeededPrompt } from './momentsImagePromptEnhancer'
 import { buildDatingPlotGenderLockSuffix } from '../../phone/apps/wechat/dating/datingPlotImagePromptGenderEnforcer'
 import { sanitizeCharacterMediaImagePrompt, stripFrontSelfieMirrorCueEnglish } from './characterMediaPromptSanitizer'
 import { hasCharacterMediaSelfiePrefix } from './characterMediaSelfiePrefix'
@@ -170,7 +170,6 @@ function buildFullPrompt(params: MomentsImageGenParams): string {
       built += `, consistent character appearance: ${hint}`
     }
     const refNote = params.characterAppearanceRefNote?.trim()
-    const isSelfie = isCharacterMediaSelfiePrompt(inferencePrompt)
     const characterAppearanceNeeded = isCharacterMediaCharacterAppearanceNeededPrompt(inferencePrompt)
     if (refNote && characterAppearanceNeeded) {
       built += hasReference
@@ -180,8 +179,9 @@ function buildFullPrompt(params: MomentsImageGenParams): string {
         : `, character appearance traits: ${refNote}`
     }
     const genderHint = params.characterGenderHint?.trim()
-    if (genderHint && hasReference && isSelfie) {
-      built += `, subject must be ${genderHint}, do NOT change gender or sex presentation`
+    if (genderHint) {
+      // 有无参考图、是否自拍都锁定：避免 LLM 已写入 1boy 等错误 tag 时第三人称构图被跳过性别锁
+      built += `, subject must be ${genderHint}, do NOT change gender or sex presentation, do NOT use opposite-sex body or face`
     }
     return built
   }

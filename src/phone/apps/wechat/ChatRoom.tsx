@@ -301,7 +301,6 @@ import {
   resolveGroupWeChatStorageConversationKey,
   resolvePrivateWeChatStorageConversationKey,
 } from './wechatConversationKey'
-import { ensureAccountScopedGroupConversation, ensureAccountScopedPrivateConversation } from './wechatAccountPrivateChatStorage'
 import {
   isNonPrimaryBindingSession,
   resolvePrivateChatPromptPlayerIdentityId,
@@ -409,6 +408,11 @@ import { extractLastUserQuoteFromChatTexts } from './characterPsyche/characterPs
 import type { CharacterPsychePageSummaries } from './characterPsyche/characterPsycheSummaries'
 import type { CharacterPsycheMetricsSnapshot, CharacterPsycheState } from './characterPsyche/characterPsycheTypes'
 import { RedPacketChatRow } from './redPacket/RedPacketChatRow'
+import {
+  clearLumiRedPacketOpenedUi,
+  isLumiRedPacketOpenedUi,
+  markLumiRedPacketOpenedUi,
+} from './redPacket/lumiRedPacketOpenedStore'
 import { MusicInviteChatRow } from './musicSync/MusicInviteChatRow'
 import { ListenCommentShareChatRow } from './musicSync/ListenCommentShareChatRow'
 import { ListenProfileShareChatRow } from './musicSync/ListenProfileShareChatRow'
@@ -494,6 +498,7 @@ import { locationShareContentFallback } from './location/wechatLocationUtils'
 import { emitTasteOrderPlaced } from '../takeout/tasteOrderBridge'
 import { openTasteAppTracking } from '../takeout/tasteNavigation'
 import { TakeoutOrderChatRow } from './takeout/TakeoutOrderChatRow'
+import { openLumiPulseApp } from '../lumiPulse/lumiPulseNavigation'
 import { PulseShareChatRow } from './pulse/PulseShareChatRow'
 import {
   buildCharacterTakeoutOrderBundle,
@@ -502,8 +507,27 @@ import {
   takeoutOrderContentFallback,
 } from './takeout/takeoutOrderShareAiDirective'
 import {
+  applyPulseCommentDirective,
+  coalescePulseCommentBlocksInLines,
   formatPulseShareAiTranscriptLine,
+  isPulseCommentDirectiveArtifactLine,
+  parsePulseCommentDirective,
+  stripPulseCommentDirectivesFromBubbles,
 } from './pulse/pulseShareAiDirective'
+import {
+  applyPulseFollowDirective,
+  isPulseFollowDirectiveArtifactLine,
+  parsePulseFollowDirective,
+  stripPulseFollowDirectivesFromBubbles,
+} from './pulse/pulseFollowAiDirective'
+import {
+  isPulseDmScreenshotDirectiveArtifactLine,
+  parsePulseDmScreenshotPlaceholderId,
+  preparePulseDmScreenshotPlaceholders,
+  PULSE_DM_SCREENSHOT_TRANSCRIPT,
+  stripPulseDmScreenshotDirectivesFromBubbles,
+  takePulseDmScreenshotCachedImage,
+} from './pulse/pulseDmScreenshotAiDirective'
 import {
   acceptLumiTransfer,
   emitLumiTransferChanged,
@@ -938,6 +962,7 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
         text: stripWechatGroupEventNoticePrefix(m.content),
         thinking: m.thinking,
         timestamp: m.timestamp,
+        storyTimeLabel: m.storyTimeLabel,
         replyTo: m.replyTo,
         images: m.images,
         imageGenPending: m.imageGenPending,
@@ -997,6 +1022,12 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
     ) {
       continue
     }
+    if (m.type === 'character' && typeof bodyText === 'string' && isPulseCommentDirectiveArtifactLine(bodyText)) {
+      continue
+    }
+    if (m.type === 'character' && typeof bodyText === 'string' && isPulseFollowDirectiveArtifactLine(bodyText)) {
+      continue
+    }
     if (
       m.type === 'character' &&
       m.characterId?.trim() === WECHAT_GROUP_BOT_CHARACTER_ID &&
@@ -1013,6 +1044,7 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
       text: resolvedChatHistory ? '[聊天记录]' : bodyText,
       thinking: m.thinking,
       timestamp: m.timestamp,
+      storyTimeLabel: m.storyTimeLabel,
       replyTo: m.replyTo,
       images: m.images,
       imageGenPending: m.imageGenPending,
@@ -1194,7 +1226,7 @@ function flattenBubbleLinesForBatch(source: string[]): string[] {
     if (parts.length > 1) out.push(...parts)
     else if (normalizedRawLine) out.push(normalizedRawLine)
   }
-  return out
+  return coalescePulseCommentBlocksInLines(out)
 }
 
 /** 需走完整分支（语音/红包/撤回/引用等）时为 true；纯文本批量路径为 false */
@@ -1225,6 +1257,11 @@ function bubbleLineNeedsSpecialBubbleHandler(line: string): boolean {
   if (parseLocationShareDirective(t)) return true
   if (isTakeoutOrderDirectiveArtifactLine(t)) return true
   if (parseTakeoutOrderDirective(t)) return true
+  if (isPulseCommentDirectiveArtifactLine(t)) return true
+  if (parsePulseCommentDirective(t)) return true
+  if (isPulseFollowDirectiveArtifactLine(t)) return true
+  if (parsePulseFollowDirective(t)) return true
+  if (isPulseDmScreenshotDirectiveArtifactLine(t)) return true
   return false
 }
 
@@ -1672,6 +1709,8 @@ type ChatMsg = {
   text: string
   thinking?: string
   timestamp: number
+  /** 剧情时间展示（有则时间分隔行优先显示，不展示系统/沉浸墙钟） */
+  storyTimeLabel?: string
   replyTo?: WeChatReplyToMeta
   images?: { base64: string; type: WeChatImageMime }[]
   imageGenPending?: boolean
@@ -2097,43 +2136,81 @@ function staggerDmBulletsAfterRestore(bullets: DmBullet[], trackCount: number): 
   })
 }
 
+/** 本会话内用户已拆开的红包消息 id：防止异步落库 / hydrate 用 opened:false 盖回未领样式 */
+const locallyOpenedRedPacketMessageIds = new Set<string>()
+
+function markWeChatRedPacketLocallyOpened(messageId: string) {
+  const id = messageId.trim()
+  if (id) locallyOpenedRedPacketMessageIds.add(id)
+}
+
+function isWeChatRedPacketLocallyOpened(messageId: string): boolean {
+  return locallyOpenedRedPacketMessageIds.has(messageId.trim())
+}
+
+function applyLocallyOpenedRedPacketToMsg(msg: ChatMsg): ChatMsg {
+  if (!msg.redPacket || msg.redPacket.opened) return msg
+  if (!isWeChatRedPacketLocallyOpened(msg.id)) return msg
+  return { ...msg, redPacket: { ...msg.redPacket, opened: true } }
+}
+
 /** hydrate / DB 回放与内存 patch 合并：优先保留已出图或已失败状态，避免 imageGenPending 盖掉成功结果 */
 function preferResolvedImageGenChatMsg(dbMsg: ChatMsg, liveMsg: ChatMsg): ChatMsg {
+  const mergeRedPacketOpened = (base: ChatMsg): ChatMsg => {
+    const dbRp = dbMsg.redPacket
+    const liveRp = liveMsg.redPacket
+    if (!dbRp && !liveRp) return base
+    const opened = Boolean(
+      dbRp?.opened || liveRp?.opened || isWeChatRedPacketLocallyOpened(base.id || liveMsg.id || dbMsg.id),
+    )
+    const src = liveRp ?? dbRp!
+    return {
+      ...base,
+      redPacket: {
+        packetId: src.packetId,
+        amountYuan: src.amountYuan,
+        remark: src.remark,
+        opened,
+        ...((dbRp?.expired || liveRp?.expired) && !opened ? { expired: true as const } : {}),
+      },
+    }
+  }
+
   const dbImg = dbMsg.images?.[0]?.base64?.trim()
   const liveImg = liveMsg.images?.[0]?.base64?.trim()
   if (liveImg && !dbImg) {
-    return {
+    return mergeRedPacketOpened({
       ...dbMsg,
       ...liveMsg,
       images: liveMsg.images,
       imageGenPending: undefined,
       imageGenFailed: liveMsg.imageGenFailed,
       imageGenPrompt: liveMsg.imageGenPrompt ?? dbMsg.imageGenPrompt,
-    }
+    })
   }
   if (dbImg) {
-    return {
+    return mergeRedPacketOpened({
       ...liveMsg,
       ...dbMsg,
       images: dbMsg.images,
       imageGenPending: undefined,
       imageGenFailed: dbMsg.imageGenFailed,
       imageGenPrompt: dbMsg.imageGenPrompt ?? liveMsg.imageGenPrompt,
-    }
+    })
   }
   if (!liveMsg.imageGenPending && liveMsg.imageGenFailed) {
-    return { ...dbMsg, ...liveMsg }
+    return mergeRedPacketOpened({ ...dbMsg, ...liveMsg })
   }
   if (!dbMsg.imageGenPending && dbMsg.imageGenFailed) {
-    return { ...liveMsg, ...dbMsg }
+    return mergeRedPacketOpened({ ...liveMsg, ...dbMsg })
   }
   if (liveMsg.imageGenPending && !dbMsg.imageGenPending) {
-    return { ...liveMsg, ...dbMsg }
+    return mergeRedPacketOpened({ ...liveMsg, ...dbMsg })
   }
   if (!liveMsg.imageGenPending && dbMsg.imageGenPending) {
-    return { ...dbMsg, ...liveMsg }
+    return mergeRedPacketOpened({ ...dbMsg, ...liveMsg })
   }
-  return { ...dbMsg, ...liveMsg }
+  return mergeRedPacketOpened({ ...dbMsg, ...liveMsg })
 }
 
 function applyImageGenUiPatchToMsg(
@@ -2189,10 +2266,10 @@ function mergeHydratedMsgsWithLivePrev(
   }
   const mergedMapped = mappedMsgs.map((dbMsg) => {
     const live = prevById.get(dbMsg.id)
-    const base = live ? preferResolvedImageGenChatMsg(dbMsg, live) : dbMsg
+    const base = live ? preferResolvedImageGenChatMsg(dbMsg, live) : applyLocallyOpenedRedPacketToMsg(dbMsg)
     return applyPending(base)
   })
-  const pendingOnly = prevMsgs.filter((m) => !mappedIds.has(m.id)).map(applyPending)
+  const pendingOnly = prevMsgs.filter((m) => !mappedIds.has(m.id)).map((m) => applyPending(applyLocallyOpenedRedPacketToMsg(m)))
   return dedupeChatMsgsById([...mergedMapped, ...pendingOnly].sort(compareChatMsgByRevealOrder))
 }
 
@@ -2211,7 +2288,12 @@ function chatItemsMessageSnapshotEqual(prev: ChatItem[], next: ChatItem[]): bool
           m.images?.[0]?.base64?.length ?? 0,
           m.images?.[0]?.type ?? '',
         ].join(':')
-        return `${m.id}\0${m.from}\0${m.timestamp}\0${m.text ?? ''}\0${mgKey}\0${mediaKey}`
+        // 必须纳入红包 opened/expired：否则 hydrate 在「仅 opened 变化」时会 return prev，气泡卡死未领样式直到下一条消息
+        const rp = m.redPacket
+        const rpKey = rp
+          ? `${rp.packetId ?? ''}\0${rp.opened ? '1' : '0'}\0${rp.expired ? '1' : '0'}\0${rp.amountYuan ?? ''}`
+          : ''
+        return `${m.id}\0${m.from}\0${m.timestamp}\0${m.text ?? ''}\0${mgKey}\0${mediaKey}\0${rpKey}`
       })
       .join('\n')
   return pick(prev) === pick(next)
@@ -2251,6 +2333,8 @@ export function ChatRoomInner({
   thinkingChainEnabled = false,
   /** 会话设置：伪造聊天记录卡片协议（默认关） */
   forwardHistoryCardEnabled = false,
+  /** 会话设置：微博私信截图协议（默认关） */
+  pulseDmScreenshotEnabled = false,
   /** 会话设置：换头像/朋友圈背景协议（默认关） */
   profileImageChangeEnabled = false,
   /** 会话设置：网络玩梗轻量词库（默认关） */
@@ -2311,6 +2395,7 @@ export function ChatRoomInner({
   danmakuEnabled?: boolean
   thinkingChainEnabled?: boolean
   forwardHistoryCardEnabled?: boolean
+  pulseDmScreenshotEnabled?: boolean
   profileImageChangeEnabled?: boolean
   internetMemeLexiconEnabled?: boolean
   showGroupMemberNicknameInChat?: boolean
@@ -2418,33 +2503,8 @@ export function ChatRoomInner({
     [conversationCharacterId],
   )
 
-  useEffect(() => {
-    const acc = currentAccountId?.trim()
-    const pid = playerIdentityId.trim() || '__none__'
-    void (async () => {
-      try {
-        if (roomType === 'group') {
-          const gid = groupId?.trim() || parseGroupIdFromGroupPeerCharacterId(conversationCharacterId) || ''
-          if (!gid || !acc) return
-          await ensureAccountScopedGroupConversation({
-            wechatAccountId: acc,
-            groupId: gid,
-            appSessionPlayerIdentityId: pid,
-          })
-          return
-        }
-        const cid = conversationCharacterId.trim()
-        if (!cid || !acc) return
-        await ensureAccountScopedPrivateConversation({
-          wechatAccountId: acc,
-          characterId: cid,
-          appSessionPlayerIdentityId: pid,
-        })
-      } catch (err) {
-        console.warn('[wechat] account-scoped conversation migrate failed:', err)
-      }
-    })()
-  }, [conversationCharacterId, currentAccountId, groupId, playerIdentityId, roomType])
+  // 打开聊天室不做 ensure* 迁移（会整库 getAll + rekey，角色/消息一多进房就白屏卡死）。
+  // 马甲隔离键由 conversationKey / resolve* 同步计算；历史迁移改在切号/启动修复里做。
 
   /** 与 UI 当前会话一致；异步 hydrate 结束前若已切会话则丢弃结果，避免错写/空窗 */
   const conversationKeyLiveRef = useRef(conversationKey)
@@ -2926,6 +2986,8 @@ export function ChatRoomInner({
   itemsRef.current = items
   const pendingImageGenUiPatchesRef = useRef(new Map<string, WeChatImageGenUiPatch>())
   const [imageGenPatchVersion, bumpImageGenPatchVersion] = useState(0)
+  /** 本地已拆红包：驱动 itemsForDisplay 立刻刷新（不依赖 hydrate 快照相等） */
+  const [locallyOpenedRedPacketRev, setLocallyOpenedRedPacketRev] = useState(0)
   const scheduleReconcilePendingImageGenBubblesRef = useRef<() => void>(() => {})
   /** 仅在虚拟/真实日历日切换时重建时间分隔行，避免 currentTimeMs 每秒 tick 全量 setItems */
   const timeRebuildDayKeyRef = useRef('')
@@ -3158,6 +3220,16 @@ export function ChatRoomInner({
           imageGenFailed: msg.imageGenFailed ?? existingResolved.imageGenFailed,
         }
       }
+      // 同 id 重入队时保留已领取，避免角色晚落库 / 再入队用 opened:false 盖掉
+      const keepRpOpened =
+        Boolean(existingResolved?.redPacket?.opened) ||
+        Boolean(msg.redPacket?.opened) ||
+        isWeChatRedPacketLocallyOpened(msg.id)
+      if (keepRpOpened && msg.redPacket && !msg.redPacket.opened) {
+        msg = { ...msg, redPacket: { ...msg.redPacket, opened: true } }
+      } else if (keepRpOpened && !msg.redPacket && existingResolved?.redPacket) {
+        msg = { ...msg, redPacket: { ...existingResolved.redPacket, opened: true } }
+      }
       /**
        * 对方气泡必须与当前列表时间单调一致：否则 hydrate 合并时用 timestamp 排序，
        * 会把「虚拟时间倒退 / 同毫秒」的新消息排到旧消息前面，看起来像跑到列表顶部。
@@ -3170,7 +3242,7 @@ export function ChatRoomInner({
         }
         const incTs = typeof incoming.timestamp === 'number' ? incoming.timestamp : 0
         if (incTs <= maxTs) {
-          msg = { ...incoming, timestamp: maxTs + 1 }
+          msg = { ...msg, timestamp: maxTs + 1 }
         }
       }
       return rebuildWithCurrentTime([...base, msg])
@@ -3406,6 +3478,7 @@ export function ChatRoomInner({
                 itemsRef.current = next
                 return next
               })
+              markLumiRedPacketOpenedUi(packetMsgId)
             } catch {
               /* ignore */
             }
@@ -4171,9 +4244,8 @@ export function ChatRoomInner({
       if (!hydrateForKey) return
       const stillSameConv = () => conversationKeyLiveRef.current === hydrateForKey
       const stillThisRun = () => runId === hydrateRunIdRef.current && stillSameConv()
-      // 避免“偶发丢记录”观感：刷新/存储变更时按当前可见窗口动态拉取，
-      // 不要每次都硬回退到最近 50 条。
-      const recentLimit = Math.max(50, visibleMsgLimit + 20)
+      // 首屏只取可见窗口附近，勿过大；索引游标路径已支持任意 limit
+      const recentLimit = Math.max(CHAT_VISIBLE_MSG_INITIAL, Math.min(80, visibleMsgLimit + 20))
       let msgs = await personaDb.listWeChatChatMessagesRecent({
         conversationKey: hydrateForKey,
         limit: recentLimit,
@@ -4202,37 +4274,48 @@ export function ChatRoomInner({
       const isLumiAssistantSession =
         useLumiProjectAssistantPrompt && conversationCharacterId === WECHAT_LUMI_PEER_CHARACTER_ID
       if (isLumiAssistantSession && msgs.length === 0) {
-        const baseTs = getCurrentTimeMs()
-        const inserted: WeChatChatMessage[] = []
-        for (let i = 0; i < LUMI_DEFAULT_OPENING_BUBBLES.length; i += 1) {
-          const content = LUMI_DEFAULT_OPENING_BUBBLES[i]?.trim()
-          if (!content) continue
-          const ts = baseTs + i
-          const id = makeStableLumiOpeningId(hydrateForKey, i)
-          const row: WeChatChatMessage = {
-            id,
-            characterId: conversationCharacterId,
-            playerIdentityId,
-            type: 'character',
-            content,
-            timestamp: ts,
-            isRead: true,
+        const alreadyHas =
+          (await personaDb.peekLatestWeChatChatMessage(hydrateForKey)) != null ||
+          ((await personaDb.getChatConversationSettings(hydrateForKey))?.lastMessageTime ?? 0) > 0
+        if (alreadyHas) {
+          if (!stillThisRun()) return
+          msgs = await personaDb.listWeChatChatMessagesRecent({
             conversationKey: hydrateForKey,
+            limit: recentLimit,
+          })
+          if (!stillThisRun()) return
+        } else {
+          const baseTs = getCurrentTimeMs()
+          for (let i = 0; i < LUMI_DEFAULT_OPENING_BUBBLES.length; i += 1) {
+            const content = LUMI_DEFAULT_OPENING_BUBBLES[i]?.trim()
+            if (!content) continue
+            const id = makeStableLumiOpeningId(hydrateForKey, i)
+            // 已有同 id 开场白绝不可 put 重写——会把 timestamp 刷成「现在」挤到列表底部
+            const existed = await personaDb.getWeChatChatMessageById(id)
+            if (existed) continue
+            const row: WeChatChatMessage = {
+              id,
+              characterId: conversationCharacterId,
+              playerIdentityId,
+              type: 'character',
+              content,
+              timestamp: baseTs + i,
+              isRead: true,
+              conversationKey: hydrateForKey,
+            }
+            try {
+              await personaDb.appendWeChatChatMessage({ ...row, quiet: true })
+            } catch {
+              // ignore
+            }
           }
-          inserted.push(row)
-          try {
-            await personaDb.appendWeChatChatMessage({ ...row, quiet: true })
-          } catch {
-            // ignore
-          }
+          if (!stillThisRun()) return
+          msgs = await personaDb.listWeChatChatMessagesRecent({
+            conversationKey: hydrateForKey,
+            limit: recentLimit,
+          })
+          if (!stillThisRun()) return
         }
-        // 重新读取，确保使用库里最终结果（也避免并发/StrictMode 下的重复写入观感）
-        if (!stillThisRun()) return
-        msgs = await personaDb.listWeChatChatMessagesRecent({
-          conversationKey: hydrateForKey,
-          limit: recentLimit,
-        })
-        if (!stillThisRun()) return
       }
 
       // 普通角色会话：若首次进入且无历史，按人设开场白（每行一个气泡）写入一次。
@@ -4240,40 +4323,55 @@ export function ChatRoomInner({
         const cid = (personaCharacterId?.trim() || conversationCharacterId.trim()) || ''
         if (cid) {
           try {
-            const ch = await personaDb.getCharacter(cid)
-            if (!stillThisRun()) return
-            const openingBubbles = String(ch?.openingLines || '')
-              .split(/\r?\n/)
-              .map((s) => s.trim())
-              .filter(Boolean)
-              .slice(0, 8)
-            if (openingBubbles.length) {
-              const baseTs = getCurrentTimeMs()
-              for (let i = 0; i < openingBubbles.length; i += 1) {
-                const content = openingBubbles[i]!
-                const ts = baseTs + i
-                const id = makeStablePersonaOpeningId(hydrateForKey, i)
-                const row: WeChatChatMessage = {
-                  id,
-                  characterId: conversationCharacterId,
-                  playerIdentityId,
-                  type: 'character',
-                  content,
-                  timestamp: ts,
-                  isRead: true,
-                  conversationKey: hydrateForKey,
-                }
-                try {
-                  await personaDb.appendWeChatChatMessage(row)
-                } catch {
-                  // ignore
-                }
-              }
+            // 列表偶发读空 / 会话键瞬时不一致时，禁止把开场白按「新消息」写到最底
+            const alreadyHas =
+              (await personaDb.peekLatestWeChatChatMessage(hydrateForKey)) != null ||
+              ((await personaDb.getChatConversationSettings(hydrateForKey))?.lastMessageTime ?? 0) > 0 ||
+              (await personaDb.getWeChatChatMessageById(makeStablePersonaOpeningId(hydrateForKey, 0))) != null
+            if (alreadyHas) {
+              if (!stillThisRun()) return
               msgs = await personaDb.listWeChatChatMessagesRecent({
                 conversationKey: hydrateForKey,
                 limit: recentLimit,
               })
               if (!stillThisRun()) return
+            } else {
+              const ch = await personaDb.getCharacter(cid)
+              if (!stillThisRun()) return
+              const openingBubbles = String(ch?.openingLines || '')
+                .split(/\r?\n/)
+                .map((s) => s.trim())
+                .filter(Boolean)
+                .slice(0, 8)
+              if (openingBubbles.length) {
+                const baseTs = getCurrentTimeMs()
+                for (let i = 0; i < openingBubbles.length; i += 1) {
+                  const content = openingBubbles[i]!
+                  const id = makeStablePersonaOpeningId(hydrateForKey, i)
+                  const existed = await personaDb.getWeChatChatMessageById(id)
+                  if (existed) continue
+                  const row: WeChatChatMessage = {
+                    id,
+                    characterId: conversationCharacterId,
+                    playerIdentityId,
+                    type: 'character',
+                    content,
+                    timestamp: baseTs + i,
+                    isRead: true,
+                    conversationKey: hydrateForKey,
+                  }
+                  try {
+                    await personaDb.appendWeChatChatMessage({ ...row, quiet: true })
+                  } catch {
+                    // ignore
+                  }
+                }
+                msgs = await personaDb.listWeChatChatMessagesRecent({
+                  conversationKey: hydrateForKey,
+                  limit: recentLimit,
+                })
+                if (!stillThisRun()) return
+              }
             }
           } catch {
             // ignore
@@ -4319,21 +4417,32 @@ export function ChatRoomInner({
         msgsForWeChat.length > 0 &&
         !msgsForWeChat.some((m) => m.timestamp > effectiveUiCut!)
       ) {
-        /** 旧版用 Date.now() 写 cut、消息用 getCurrentTimeMs()：会导致列表有预览、聊天室全空 */
-        effectiveUiCut = null
-        uiOnlyHiddenCutTsRef.current = null
-        setUiOnlyHiddenCutForView(null)
-        const peerId = convSt?.peerCharacterId?.trim() || conversationCharacterId.trim()
-        const pid = convSt?.playerIdentityId?.trim() || playerIdentityId.trim()
-        if (peerId && pid) {
-          void personaDb
-            .upsertChatConversationSettings({
-              conversationKey: hydrateForKey,
-              peerCharacterId: peerId,
-              playerIdentityId: pid,
-              clearUiOnlyHiddenBeforeTimestamp: true,
-            })
-            .catch(() => {})
+        /**
+         * 旧版曾用 Date.now() 写 cut、消息用 getCurrentTimeMs()：cut 明显大于所有消息时会「全藏」。
+         * 「仅清空界面」则把 cut 设为会话内最大 timestamp，此时全藏是预期，**禁止**撤销。
+         * 仅当 cut 比最新消息还靠后超过 1s（墙钟/模拟时偏差）时才清掉坏 cut。
+         */
+        const maxMsgTs = Math.max(
+          ...msgsForWeChat.map((m) =>
+            typeof m.timestamp === 'number' && Number.isFinite(m.timestamp) ? m.timestamp : 0,
+          ),
+        )
+        if (effectiveUiCut > maxMsgTs + 1000) {
+          effectiveUiCut = null
+          uiOnlyHiddenCutTsRef.current = null
+          setUiOnlyHiddenCutForView(null)
+          const peerId = convSt?.peerCharacterId?.trim() || conversationCharacterId.trim()
+          const pid = convSt?.playerIdentityId?.trim() || playerIdentityId.trim()
+          if (peerId && pid) {
+            void personaDb
+              .upsertChatConversationSettings({
+                conversationKey: hydrateForKey,
+                peerCharacterId: peerId,
+                playerIdentityId: pid,
+                clearUiOnlyHiddenBeforeTimestamp: true,
+              })
+              .catch(() => {})
+          }
         }
       } else if (effectiveUiCut !== uiCut) {
         uiOnlyHiddenCutTsRef.current = effectiveUiCut
@@ -4341,28 +4450,8 @@ export function ChatRoomInner({
       }
       aiContextDbMessagesRef.current = msgsForWeChat
 
-      await ensureStickerStoreHydrated()
-      const repairedDisplayMsgs: WeChatChatMessage[] = []
-      for (const m of msgsForWeChat) {
-        const repaired = await repairStoredMediaMessageRow(m)
-        repairedDisplayMsgs.push(repaired)
-        if (
-          repaired.content !== m.content ||
-          repaired.voice !== m.voice ||
-          (repaired.images?.length && !m.images?.length)
-        ) {
-          void personaDb
-            .patchWeChatChatMessageById(m.id, {
-              content: repaired.content,
-              voice: repaired.voice ?? undefined,
-              images: repaired.images ?? undefined,
-            })
-            .catch(() => {})
-        }
-      }
-      if (!stillThisRun()) return
-
-      let mapped = rebuildWithCurrentTime(mapWeChatMessagesToChatItems(repairedDisplayMsgs))
+      // 先进房上屏：贴纸/语音修复改后台，避免串行 await 把聊天室卡成白屏
+      let mapped = rebuildWithCurrentTime(mapWeChatMessagesToChatItems(msgsForWeChat))
       if (roomType === 'group' && groupId?.trim()) {
         let gSnap = groupDocRef.current
         if (!gSnap) {
@@ -4376,14 +4465,8 @@ export function ChatRoomInner({
         mapped = filterGroupChatItemsHideModeratorOnlyBubbles(mapped, roomType, gSnap)
       }
       if (!stillThisRun()) return
-      /** 让本轮乐观 append 的 setState 先提交到 itemsRef，再读合并（缓解首条气泡偶发被 hydrate 覆盖） */
       await Promise.resolve()
-      await new Promise<void>((r) => requestAnimationFrame(() => r()))
       if (!stillThisRun()) return
-      /**
-       * 从 DB 拉取的列表可能比界面上的 items 少一拍（append 已 `setItems` 但存储事件触发的 hydrate 仍读到旧快照）。
-       * 若不合并，会把乐观更新的气泡「盖没」，直至退出再进才重新 hydrate 到。
-       */
       {
         const dbMsgs = extractMessages(mapped)
         const dbIds = new Set(msgsForWeChat.map((m) => m.id))
@@ -4422,16 +4505,20 @@ export function ChatRoomInner({
           setHistoryExhausted(true)
           setHasOlderHistory(false)
         } else {
-          const olderProbe = await personaDb.listWeChatChatMessagesRecent({
-            conversationKey: hydrateForKey,
-            limit: 1,
-            beforeTimestamp: oldestTs,
-          })
-          if (!stillThisRun()) return
-          const hasOlder = olderProbe.length > 0
-          historyExhaustedRef.current = !hasOlder
-          setHistoryExhausted(!hasOlder)
-          setHasOlderHistory(hasOlder)
+          void personaDb
+            .listWeChatChatMessagesRecent({
+              conversationKey: hydrateForKey,
+              limit: 1,
+              beforeTimestamp: oldestTs,
+            })
+            .then((olderProbe) => {
+              if (!stillThisRun()) return
+              const hasOlder = olderProbe.length > 0
+              historyExhaustedRef.current = !hasOlder
+              setHistoryExhausted(!hasOlder)
+              setHasOlderHistory(hasOlder)
+            })
+            .catch(() => {})
         }
       }
       if (!stillThisRun()) return
@@ -4460,6 +4547,67 @@ export function ChatRoomInner({
         itemsRef.current = finalItems
         return finalItems
       })
+
+      void (async () => {
+        try {
+          await ensureStickerStoreHydrated()
+          if (!stillThisRun()) return
+          const repairedDisplayMsgs = await Promise.all(
+            msgsForWeChat.map((m) => repairStoredMediaMessageRow(m)),
+          )
+          if (!stillThisRun()) return
+          let anyChanged = false
+          for (let i = 0; i < msgsForWeChat.length; i += 1) {
+            const m = msgsForWeChat[i]!
+            const repaired = repairedDisplayMsgs[i]!
+            if (
+              repaired.content !== m.content ||
+              repaired.voice !== m.voice ||
+              (repaired.images?.length && !m.images?.length)
+            ) {
+              anyChanged = true
+              void personaDb
+                .patchWeChatChatMessageById(m.id, {
+                  content: repaired.content,
+                  voice: repaired.voice ?? undefined,
+                  images: repaired.images ?? undefined,
+                })
+                .catch(() => {})
+            }
+          }
+          if (!anyChanged || !stillThisRun()) return
+          let remapped = rebuildWithCurrentTime(mapWeChatMessagesToChatItems(repairedDisplayMsgs))
+          if (roomType === 'group' && groupId?.trim()) {
+            remapped = filterGroupChatItemsHideModeratorOnlyBubbles(
+              remapped,
+              roomType,
+              groupDocRef.current,
+            )
+          }
+          if (!stillThisRun()) return
+          setItems((prev) => {
+            const mergedMsgs = mergeHydratedMsgsWithLivePrev(
+              extractMessages(remapped),
+              extractMessages(prev),
+              mergeImageGenUiPatchMaps(pendingImageGenUiPatchesRef.current),
+            )
+            let finalItems = rebuildWithCurrentTime(mergedMsgs)
+            if (roomType === 'group' && groupId?.trim()) {
+              finalItems = filterGroupChatItemsHideModeratorOnlyBubbles(
+                finalItems,
+                roomType,
+                groupDocRef.current,
+              )
+            }
+            if (chatItemsMessageSnapshotEqual(prev, finalItems)) return prev
+            itemsRef.current = finalItems
+            return finalItems
+          })
+        } catch {
+          /* ignore */
+        }
+      })()
+
       if (scrollToBottom) {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
@@ -5911,6 +6059,10 @@ export function ChatRoomInner({
             characterName: payload.notifyPeerTitle.trim() || 'TA',
             defaultRecipientName: playerDisplayName.trim() || state.profile.displayName.trim() || '我',
             userLabel: playerDisplayName.trim() || state.profile.displayName.trim() || '我',
+            playerIdentityId: payload.playerIdentityId || playerIdentityId,
+            playerDisplayName: playerDisplayName.trim() || state.profile.displayName.trim() || '用户',
+            playerAvatarUrl: playerAvatarResolved || undefined,
+            pulseDmScreenshotEnabled: pulseDmScreenshotEnabled === true,
           },
           recentStickerRefs,
         )
@@ -6091,6 +6243,9 @@ export function ChatRoomInner({
       }
 
       if (id === 'delete') {
+        // 先收起长按面板（portal 到 body，会盖住壳内确认框），保留 messageId 供确认删除
+        setActionPanelOpen(false)
+        setActionAnchor(null)
         setConfirmDeleteOpen(true)
         return
       }
@@ -6345,8 +6500,6 @@ export function ChatRoomInner({
   useEffect(() => {
     if (!actionPanelOpen) return
     const onDown = () => {
-      // 面板内会 stopPropagation；confirm 弹窗打开时不关闭面板（微信一致）
-      if (confirmDeleteOpen) return
       closeActionPanel()
     }
     const onKey = (e: KeyboardEvent) => {
@@ -6365,7 +6518,7 @@ export function ChatRoomInner({
       window.removeEventListener('popstate', onPop)
       scrollEl?.removeEventListener('scroll', onScroll)
     }
-  }, [actionPanelOpen, closeActionPanel, confirmDeleteOpen])
+  }, [actionPanelOpen, closeActionPanel])
 
   useEffect(() => {
     if (!isMultiSelectMode) return
@@ -8093,7 +8246,17 @@ export function ChatRoomInner({
               roomType !== 'group' && !lumiAssistantChat && !!personaCharacterId?.trim()
             if (isPrivatePersonaRound) {
               try {
-                const pack = await buildPrivateMemoryInjectionForAi(transcript, traceReplyBias)
+                // 记忆/向量召回卡住时不能挡死聊天模型；超时后降级为空记忆继续请求
+                const MEMORY_INJECT_TIMEOUT_MS = 28_000
+                const pack = await Promise.race([
+                  buildPrivateMemoryInjectionForAi(transcript, traceReplyBias),
+                  new Promise<never>((_, reject) => {
+                    window.setTimeout(
+                      () => reject(new Error('memory_inject_timeout')),
+                      MEMORY_INJECT_TIMEOUT_MS,
+                    )
+                  }),
+                ])
                 memoryRound = pack.memory
                 memoryMomentImagesRound = pack.momentImageUrls
                 unsPrivateRound = pack.unsPrivate
@@ -8112,7 +8275,10 @@ export function ChatRoomInner({
                 if (pack.offlineUnsummarizedForPrompt?.trim()) {
                   offlineDatingPlotsContext = pack.offlineUnsummarizedForPrompt
                 }
-              } catch {
+              } catch (memErr) {
+                if (memErr instanceof Error && memErr.message === 'memory_inject_timeout') {
+                  logger.log('error', '记忆注入超时，已跳过向量召回并继续请求回复模型')
+                }
                 memoryRound = ''
                 memoryMomentImagesRound = []
                 unsPrivateRound = ''
@@ -8150,6 +8316,7 @@ export function ChatRoomInner({
             // 按会话设置决定是否注入后台思维链 CoT（默认关）
             const includeThinkingChain = thinkingChainEnabled === true
             const includeForwardHistoryCard = forwardHistoryCardEnabled === true
+            const includePulseDmScreenshot = pulseDmScreenshotEnabled === true
             const includeProfileImageChange = profileImageChangeEnabled === true
             const includeInternetMemeLexicon = internetMemeLexiconEnabled === true
             const busyCfg =
@@ -8762,6 +8929,7 @@ export function ChatRoomInner({
                 busyContext,
                 includeThinkingChain,
                 includeForwardHistoryCard,
+                includePulseDmScreenshot,
                 includeProfileImageChange,
                 includeInternetMemeLexicon,
                 currentTimeMs: getCurrentTimeMs(),
@@ -8812,6 +8980,7 @@ export function ChatRoomInner({
                   busyContext,
                   includeThinkingChain,
                   includeForwardHistoryCard,
+                  includePulseDmScreenshot,
                   includeProfileImageChange,
                   includeInternetMemeLexicon,
                   currentTimeMs: getCurrentTimeMs(),
@@ -8870,6 +9039,7 @@ export function ChatRoomInner({
                 busyContext,
                 includeThinkingChain,
                 includeForwardHistoryCard,
+                includePulseDmScreenshot,
                 includeProfileImageChange,
                 includeInternetMemeLexicon,
                 currentTimeMs: getCurrentTimeMs(),
@@ -9276,6 +9446,63 @@ export function ChatRoomInner({
         }
         const bubbleExtraction = extractDanmakuFromBubbleText(bubbles)
         bubbles = expandMultilineReplyBubbles(bubbleExtraction.cleaned)
+        {
+          const pulseStripped = stripPulseCommentDirectivesFromBubbles(bubbles)
+          bubbles = pulseStripped.bubbles
+          if (pulseStripped.directives.length && roomType !== 'group') {
+            for (const directive of pulseStripped.directives) {
+              void applyPulseCommentDirective(directive, {
+                characterId: persistCharacterId,
+                characterName: notifyPeerRound.trim() || peerNotifyTitle.trim() || 'TA',
+                characterAvatarUrl: peerAvatarResolved,
+              }).catch(() => {
+                /* ignore */
+              })
+            }
+            logConsole(
+              'ai',
+              `[pulse] 已解析同轮微博评论指令 ×${pulseStripped.directives.length}`,
+            )
+          }
+          const pulseFollowStripped = stripPulseFollowDirectivesFromBubbles(bubbles)
+          bubbles = pulseFollowStripped.bubbles
+          if (pulseFollowStripped.directives.length && roomType !== 'group') {
+            for (const directive of pulseFollowStripped.directives) {
+              void applyPulseFollowDirective(directive, {
+                characterId: persistCharacterId,
+                characterName: notifyPeerRound.trim() || peerNotifyTitle.trim() || 'TA',
+                characterAvatarUrl: peerAvatarResolved,
+                playerIdentityId: fxPlayerIdentityId,
+                playerDisplayName: playerDisplayName.trim() || state.profile.displayName.trim() || '用户',
+                playerAvatarUrl: playerAvatarResolved || undefined,
+              }).catch(() => {
+                /* ignore */
+              })
+            }
+            logConsole(
+              'ai',
+              `[pulse] 已解析同轮微博关注指令 ×${pulseFollowStripped.directives.length}`,
+            )
+          }
+          {
+            const pulseDmShotStripped = stripPulseDmScreenshotDirectivesFromBubbles(bubbles)
+            if (pulseDmScreenshotEnabled === true && roomType !== 'group') {
+              bubbles = pulseDmShotStripped.bubbles
+              if (pulseDmShotStripped.pending.length) {
+                await preparePulseDmScreenshotPlaceholders(pulseDmShotStripped.pending)
+                logConsole(
+                  'ai',
+                  `[pulse] 已解析同轮微博私信截图 ×${pulseDmShotStripped.pending.length}`,
+                )
+              }
+            } else {
+              // 开关关闭时剥离块且丢弃占位行，避免原文泄漏到气泡
+              bubbles = pulseDmShotStripped.bubbles.filter(
+                (ln) => !parsePulseDmScreenshotPlaceholderId(ln),
+              )
+            }
+          }
+        }
         let pendingMusicSyncInvitesThisRound: PendingCharacterMusicSyncInvite[] = []
         let pendingMusicSyncSeeksThisRound: PendingCharacterMusicSyncSeek[] = []
         let pendingMusicSyncPlaysThisRound: PendingCharacterMusicSyncPlay[] = []
@@ -10079,6 +10306,9 @@ export function ChatRoomInner({
               if (isCharacterMusicSyncDirectiveArtifactLine(String(segForStore))) continue
               if (isCharacterMiniGameInviteDirectiveArtifactLine(String(segForStore))) continue
               if (isLocationShareDirectiveArtifactLine(String(segForStore))) continue
+              if (isTakeoutOrderDirectiveArtifactLine(String(segForStore))) continue
+              if (isPulseCommentDirectiveArtifactLine(String(segForStore))) continue
+              if (isPulseFollowDirectiveArtifactLine(String(segForStore))) continue
               if (
                 roomType === 'group' &&
                 groupId?.trim() &&
@@ -10819,6 +11049,84 @@ export function ChatRoomInner({
               }
               continue
             }
+            const pulseCommentDirective = parsePulseCommentDirective(currentLine)
+            if (pulseCommentDirective && roomType !== 'group') {
+              void applyPulseCommentDirective(pulseCommentDirective, {
+                characterId: persistCharacterId,
+                characterName: peerNotifyTitle.trim() || 'TA',
+                characterAvatarUrl: peerAvatarResolved,
+              }).catch(() => {
+                /* ignore */
+              })
+              continue
+            }
+            const pulseFollowDirective = parsePulseFollowDirective(currentLine)
+            if (pulseFollowDirective && roomType !== 'group') {
+              void applyPulseFollowDirective(pulseFollowDirective, {
+                characterId: persistCharacterId,
+                characterName: peerNotifyTitle.trim() || 'TA',
+                characterAvatarUrl: peerAvatarResolved,
+                playerIdentityId: fxPlayerIdentityId,
+                playerDisplayName: playerDisplayName.trim() || state.profile.displayName.trim() || '用户',
+                playerAvatarUrl: playerAvatarResolved || undefined,
+              }).catch(() => {
+                /* ignore */
+              })
+              continue
+            }
+            const pulseDmShotId = parsePulseDmScreenshotPlaceholderId(currentLine)
+            if (pulseDmShotId && roomType !== 'group') {
+              const payloadShot = takePulseDmScreenshotCachedImage(pulseDmShotId)
+              if (!payloadShot) continue
+              if (isFlushQueueStopped()) break bubbleRunLoop
+              const replyToShot = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
+              pendingReplyMessageId = undefined
+              const tsShot = getCurrentTimeMs()
+              const oidShot = `wxm-${tsShot}-pdms-${i}-${Math.random().toString(36).slice(2, 6)}`
+              const thinkingForShot = !thinkingAttached && thinking ? thinking : undefined
+              if (thinkingForShot) thinkingAttached = true
+              const incomingShot: ChatMsg = {
+                id: oidShot,
+                kind: 'msg',
+                from: 'other',
+                senderCharacterId: persistCharacterId,
+                text: PULSE_DM_SCREENSHOT_TRANSCRIPT,
+                thinking: thinkingForShot,
+                timestamp: tsShot,
+                replyTo: replyToShot ?? undefined,
+                images: [{ base64: payloadShot.base64, type: payloadShot.mime }],
+                otherAnimated: true,
+              }
+              const shotStep = markEmittedThisRound(oidShot, tsShot, PULSE_DM_SCREENSHOT_TRANSCRIPT)
+              enqueueOpponentMessagesSequential([
+                {
+                  forConversationKey: revealConvKey,
+                  msg: incomingShot,
+                  persist: () => {
+                    void personaDb
+                      .appendWeChatChatMessage({
+                        id: oidShot,
+                        characterId: persistCharacterId,
+                        playerIdentityId: fxPlayerIdentityId,
+                        type: 'character',
+                        content: PULSE_DM_SCREENSHOT_TRANSCRIPT,
+                        thinking: thinkingForShot,
+                        replyTo: replyToShot ?? undefined,
+                        timestamp: incomingShot.timestamp,
+                        isRead: true,
+                        conversationKey: revealConvKey,
+                        notifyPeerTitle: notifyPeerRound.trim() || undefined,
+                        images: [{ base64: payloadShot.base64, type: payloadShot.mime }],
+                      })
+                      .catch(() => {
+                        /* ignore */
+                      })
+                  },
+                  afterReveal: withMusicSyncFlushOnBubbleRevealed(shotStep),
+                },
+              ])
+              continue
+            }
             if (rpDirective || tfDirective || vcDirective) {
               const ts = getCurrentTimeMs()
               const mid = `wxm-${ts}-o-${i}-${Math.random().toString(36).slice(2, 6)}`
@@ -11222,6 +11530,9 @@ export function ChatRoomInner({
             if (isCharacterMusicSyncDirectiveArtifactLine(String(segForStore))) continue
             if (isCharacterMiniGameInviteDirectiveArtifactLine(String(segForStore))) continue
             if (isLocationShareDirectiveArtifactLine(String(segForStore))) continue
+            if (isTakeoutOrderDirectiveArtifactLine(String(segForStore))) continue
+            if (isPulseCommentDirectiveArtifactLine(String(segForStore))) continue
+            if (isPulseFollowDirectiveArtifactLine(String(segForStore))) continue
             characterPlainTextsThisRound.push(String(segForStore).trim())
             if (isFlushQueueStopped()) break bubbleRunLoop
 
@@ -13083,6 +13394,7 @@ export function ChatRoomInner({
         })
       }
       const reopenRpIdSet = new Set(selfOpenedRpIds)
+      if (selfOpenedRpIds.length) clearLumiRedPacketOpenedUi(selfOpenedRpIds)
       // 与 DB 同步：删对方稿 + 夹在中间的系统灰条；仅撤回锚点及以前本人红包的「已拆」态（不误伤更早历史）
       aiContextDbMessagesRef.current = aiContextDbMessagesRef.current
         .filter((m) => !kill.has(m.id))
@@ -13572,10 +13884,10 @@ export function ChatRoomInner({
   const msgById = useMemo(() => {
     const map = new Map<string, ChatMsg>()
     for (const it of items) {
-      if (it.kind === 'msg') map.set(it.id, it)
+      if (it.kind === 'msg') map.set(it.id, applyLocallyOpenedRedPacketToMsg(it))
     }
     return map
-  }, [items])
+  }, [items, locallyOpenedRedPacketRev])
 
   const actionPanelTargetMsg = useMemo(() => {
     const id = actionMessageId?.trim()
@@ -13633,7 +13945,8 @@ export function ChatRoomInner({
     if (!redPacketModalMessageId) return null
     const cm = msgById.get(redPacketModalMessageId)
     const rp = cm?.redPacket
-    if (!cm || !rp || rp.opened) return null
+    // 领取过程中会先把 opened 写成 true；弹层须靠 messageId 保持挂载到 onFlowComplete
+    if (!cm || !rp) return null
     if (cm.from === 'self') return null
     return {
       amountYuan: rp.amountYuan,
@@ -13642,12 +13955,6 @@ export function ChatRoomInner({
       senderAvatarUrl: peerAvatarResolved,
     }
   }, [redPacketModalMessageId, msgById, peerNotifyTitle, peerAvatarResolved])
-
-  useEffect(() => {
-    if (!redPacketModalMessageId) return
-    const cm = msgById.get(redPacketModalMessageId)
-    if (cm?.redPacket?.opened) setRedPacketModalMessageId(null)
-  }, [redPacketModalMessageId, msgById])
 
   const [expandedThinkingIds, setExpandedThinkingIds] = useState<Set<string>>(() => new Set())
   const toggleThinkingFold = useCallback((id: string) => {
@@ -13665,11 +13972,40 @@ export function ChatRoomInner({
   /** 渲染兜底：生图完成后即使 items state 未及时合并，也从全局 patch 直接展示（同生图预览 setState） */
   const itemsForDisplay = useMemo(() => {
     const patchMap = mergeImageGenUiPatchMaps(pendingImageGenUiPatchesRef.current)
-    if (patchMap.size === 0) return items
-    return items.map((it) =>
-      it.kind === 'msg' ? applyImageGenUiPatchToChatMsgIfAny(it, patchMap) : it,
-    )
-  }, [items, imageGenPatchVersion])
+    const hasLocalRp = locallyOpenedRedPacketMessageIds.size > 0
+    if (patchMap.size === 0 && !hasLocalRp) return items
+    return items.map((it) => {
+      if (it.kind !== 'msg') return it
+      let msg = applyImageGenUiPatchToChatMsgIfAny(it, patchMap)
+      msg = applyLocallyOpenedRedPacketToMsg(msg)
+      return msg
+    })
+  }, [items, imageGenPatchVersion, locallyOpenedRedPacketRev])
+
+  const markRedPacketOpenedInUi = useCallback(
+    (messageId: string) => {
+      const id = messageId.trim()
+      if (!id) return
+      // 与转账 emitLumiTransferChanged 同构：先写独立 store 并广播，气泡立刻变样
+      markLumiRedPacketOpenedUi(id)
+      markWeChatRedPacketLocallyOpened(id)
+      setLocallyOpenedRedPacketRev((n) => n + 1)
+      flushSync(() => {
+        setItems((prev) => {
+          const next = rebuildWithCurrentTime(
+            extractMessages(prev).map((it) => {
+              if (it.id !== id || !it.redPacket) return it
+              if (it.redPacket.opened) return it
+              return { ...it, redPacket: { ...it.redPacket, opened: true } }
+            }),
+          )
+          itemsRef.current = next
+          return next
+        })
+      })
+    },
+    [extractMessages, rebuildWithCurrentTime],
+  )
 
   /** 列表展示用：会话设置「仅 UI 清空」时屏蔽截止时间前的气泡（与回收站快照同源）；查找锚点定位期间临时展示全量。 */
   const itemsAfterUiOnlyHide = useMemo(() => {
@@ -13681,13 +14017,18 @@ export function ChatRoomInner({
     })
   }, [itemsForDisplay, uiOnlyHiddenCutForView, scrollToMessageId])
 
-  /** hydrate 已修旧 cut；此处兜底：内存里仍有消息但 cut 把它们全藏了（只剩时间条）时立刻撤销隐藏 */
+  /**
+   * hydrate 已修「墙钟 cut 偏大」；此处同规则兜底。
+   * 注意：「仅清空界面」cut=最新消息时间，全藏是预期，cut≈maxTs 时切勿撤销（否则清空后会闪回全部历史）。
+   */
   useEffect(() => {
     const cut = uiOnlyHiddenCutForView
     if (cut == null || scrollToMessageId?.trim() || ignoreUiOnlyHiddenInListRef.current) return
     const msgs = extractMessages(items)
     if (msgs.length === 0) return
     if (msgs.some((m) => (m.timestamp ?? 0) > cut)) return
+    const maxMsgTs = Math.max(...msgs.map((m) => m.timestamp ?? 0))
+    if (!(cut > maxMsgTs + 1000)) return
     clearUiOnlyHiddenCutLocal()
   }, [items, uiOnlyHiddenCutForView, scrollToMessageId, extractMessages, clearUiOnlyHiddenCutLocal])
 
@@ -13772,6 +14113,7 @@ export function ChatRoomInner({
     playerDisplayName,
     peerNotifyTitle,
     peerAvatarResolved,
+    playerAvatarResolved,
     expandedThinkingIds,
     recallAnimatingIds,
     roomType,
@@ -13788,7 +14130,6 @@ export function ChatRoomInner({
     const toggleSelect = toggleSelectRef.current
     const openActionPanelFor = openActionPanelForRef.current
     const jumpToMessage = jumpToMessageRef.current
-    const showCenterToast = showCenterToastRef.current
     const requestVoiceMessageAudio = requestVoiceMessageAudioRef.current
     const resolveGroupQuoteSenderLabel = resolveGroupQuoteSenderLabelRef.current
     const scrollToBottomSmooth = scrollToBottomSmoothRef.current
@@ -14766,6 +15107,36 @@ export function ChatRoomInner({
             chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
             chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
             groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+            onOpen={() => {
+              const returnToChat =
+                roomType === 'group'
+                  ? {
+                      kind: 'group' as const,
+                      groupId:
+                        groupId?.trim() ||
+                        conversationCharacterId.replace(/^group:/, '').trim(),
+                    }
+                  : useLumiProjectAssistantPrompt
+                    ? { kind: 'lumi' as const }
+                    : isSelfMemoChat
+                      ? { kind: 'self' as const }
+                      : {
+                          kind: 'persona' as const,
+                          characterId: (
+                            personaCharacterId?.trim() ||
+                            conversationCharacterId.trim()
+                          ).trim(),
+                        }
+              if (returnToChat.kind === 'group' && !returnToChat.groupId) {
+                openLumiPulseApp({ postId: pulseData.postId })
+                return
+              }
+              if (returnToChat.kind === 'persona' && !returnToChat.characterId) {
+                openLumiPulseApp({ postId: pulseData.postId })
+                return
+              }
+              openLumiPulseApp({ postId: pulseData.postId, returnToChat })
+            }}
           />
         )
         const rowWrapped =
@@ -14803,46 +15174,54 @@ export function ChatRoomInner({
             selected={actionPanelOpen && actionMessageId === m.id}
             replyPreview={buildInlineReplyPreview(m)}
             onOpen={() => {
-              if (rp.expired && !rp.opened) {
-                showCenterToast('该红包已过期')
+              const live = msgById.get(m.id)
+              const liveRp = live?.redPacket ?? rp
+              const liveIsSelf = live ? live.from === 'self' : isSelf
+              if (!liveRp) return
+              const openedNow = Boolean(liveRp.opened || isLumiRedPacketOpenedUi(m.id))
+              if (liveRp.expired && !openedNow) {
+                showCenterToastRef.current('该红包已过期')
                 return
               }
-              if (rp.opened) {
+              // 已领取：必须进详情。若误走拆红包弹层，会因 opened 立刻被关掉，表现为「点了没反应」
+              if (openedNow) {
                 if (onNavigateRedPacketDetailRef.current) {
-                  const senderName = isSelf
+                  const senderName = liveIsSelf
                     ? playerDisplayName.trim() || '我'
                     : peerNotifyTitle.trim() || '对方'
-                  const senderAvatarUrl = isSelf
-                    ? playerAvatarResolved
-                    : peerAvatarResolved
-                  onNavigateRedPacketDetailRef.current?.({
+                  const senderAvatarUrl = liveIsSelf ? playerAvatarResolved : peerAvatarResolved
+                  onNavigateRedPacketDetailRef.current({
                     messageId: m.id,
-                    amountYuan: rp.amountYuan,
-                    remark: rp.remark,
+                    amountYuan: liveRp.amountYuan,
+                    remark: liveRp.remark,
                     senderName,
                     senderAvatarUrl,
                     chatPeerName: peerNotifyTitle.trim() || '聊天',
-                    claimerName: isSelf
+                    claimerName: liveIsSelf
                       ? peerNotifyTitle.trim() || '对方'
                       : playerDisplayName.trim() || '我',
-                    fromSelf: isSelf,
+                    fromSelf: liveIsSelf,
                     opened: true,
                   })
+                } else {
+                  showCenterToastRef.current('暂时无法打开红包详情')
                 }
                 return
               }
-              if (isSelf) {
+              if (liveIsSelf) {
                 if (onNavigateRedPacketDetailRef.current) {
-                  onNavigateRedPacketDetailRef.current?.({
+                  onNavigateRedPacketDetailRef.current({
                     messageId: m.id,
-                    amountYuan: rp.amountYuan,
-                    remark: rp.remark,
+                    amountYuan: liveRp.amountYuan,
+                    remark: liveRp.remark,
                     senderName: playerDisplayName.trim() || '我',
                     senderAvatarUrl: playerAvatarResolved,
                     chatPeerName: peerNotifyTitle.trim() || '聊天',
                     fromSelf: true,
                     opened: false,
                   })
+                } else {
+                  showCenterToastRef.current('暂时无法打开红包详情')
                 }
                 return
               }
@@ -15132,6 +15511,7 @@ export function ChatRoomInner({
     playerDisplayName,
     peerNotifyTitle,
     peerAvatarResolved,
+    playerAvatarResolved,
     expandedThinkingIds,
     recallAnimatingIds,
     roomType,
@@ -16051,49 +16431,64 @@ export function ChatRoomInner({
           senderName={redPacketModalSender.senderName}
           senderAvatarUrl={redPacketModalSender.senderAvatarUrl}
           onClose={() => setRedPacketModalMessageId(null)}
+          onClaimIntent={() => {
+            const id = redPacketModalIdRef.current
+            if (id) markRedPacketOpenedInUi(id)
+          }}
           onFlowComplete={async () => {
             const id = redPacketModalIdRef.current
             if (!id) return
-            const fromDb = await personaDb.getWeChatChatMessageById(id)
-            const cur = fromDb?.redPacket
-            const rp = fromDb?.redPacket ?? cur
-            if (cur) {
-              await personaDb.patchWeChatChatMessageById(id, { redPacket: { ...cur, opened: true } })
+            const liveBefore = extractMessages(itemsRef.current).find((it) => it.id === id)
+            const liveRp = liveBefore?.redPacket
+            // 拆封点击时可能已标过；此处再刷一次保证样式与 ref 一致
+            markRedPacketOpenedInUi(id)
+            setRedPacketModalMessageId(null)
+
+            const amountYuan = liveRp?.amountYuan
+            if (onNavigateRedPacketDetailRef.current && liveRp) {
+              const isSelfMsg = liveBefore?.from === 'self'
+              onNavigateRedPacketDetailRef.current({
+                messageId: id,
+                amountYuan: liveRp.amountYuan,
+                remark: liveRp.remark,
+                senderName: isSelfMsg ? playerDisplayName.trim() || '我' : peerNotifyTitle.trim() || '对方',
+                senderAvatarUrl: isSelfMsg ? playerAvatarResolved : peerAvatarResolved,
+                chatPeerName: peerNotifyTitle.trim() || '聊天',
+                claimerName: isSelfMsg
+                  ? peerNotifyTitle.trim() || '对方'
+                  : playerDisplayName.trim() || '我',
+                fromSelf: isSelfMsg,
+                opened: true,
+              })
             }
-            // 领取对方红包入账
+
+            // 角色红包可能尚未落库：短重试，避免只写了系统条、气泡仍是未领
+            let patched = false
+            for (let attempt = 0; attempt < 10; attempt += 1) {
+              const fromDb = await personaDb.getWeChatChatMessageById(id)
+              const cur = fromDb?.redPacket
+              if (cur) {
+                await personaDb.patchWeChatChatMessageById(id, {
+                  redPacket: { ...cur, opened: true },
+                })
+                patched = true
+                break
+              }
+              await new Promise((r) => window.setTimeout(r, 80 + attempt * 60))
+            }
+            if (!patched && liveRp) {
+              // 仍无行时：靠 locallyOpened + hydrate 合并保住样式
+            }
+
             void appendSystemNote(`【系统】你领取了${peerNotifyTitle.trim() || '对方'}的红包`)
-            if (rp?.amountYuan && Number.isFinite(rp.amountYuan) && rp.amountYuan > 0) {
-              walletAdjustBalance(rp.amountYuan)
+            if (amountYuan && Number.isFinite(amountYuan) && amountYuan > 0) {
+              walletAdjustBalance(amountYuan)
               walletAddTransaction({
                 type: 'topup',
                 title: `收到${peerNotifyTitle.trim() || '对方'}的红包`,
-                amount: rp.amountYuan,
+                amount: amountYuan,
               })
             }
-            setItems((prev) =>
-              rebuildWithCurrentTime(
-                extractMessages(prev).map((it) => {
-                  if (it.id !== id || !it.redPacket) return it
-                  return { ...it, redPacket: { ...it.redPacket, opened: true } }
-                }),
-              ),
-            )
-            setRedPacketModalMessageId(null)
-            if (!rp || !onNavigateRedPacketDetailRef.current) return
-            const isSelfMsg = fromDb?.type === 'player'
-            onNavigateRedPacketDetailRef.current?.({
-              messageId: id,
-              amountYuan: rp.amountYuan,
-              remark: rp.remark,
-              senderName: isSelfMsg ? playerDisplayName.trim() || '我' : peerNotifyTitle.trim() || '对方',
-              senderAvatarUrl: isSelfMsg ? playerAvatarResolved : peerAvatarResolved,
-              chatPeerName: peerNotifyTitle.trim() || '聊天',
-              claimerName: isSelfMsg
-                ? peerNotifyTitle.trim() || '对方'
-                : playerDisplayName.trim() || '我',
-              fromSelf: isSelfMsg,
-              opened: true,
-            })
           }}
         />
       ) : null}
@@ -16222,12 +16617,21 @@ export function ChatRoomInner({
         description="确定要删除这条消息吗？"
         cancelText="取消"
         confirmText="删除"
-        onCancel={() => setConfirmDeleteOpen(false)}
+        onCancel={() => {
+          setConfirmDeleteOpen(false)
+          setActionMessageId(null)
+          setActionMessageText('')
+          setActionMessageCanRecall(false)
+          setActionMessageModeratorRecall(false)
+        }}
         onConfirm={() => {
           const mid = actionMessageId?.trim() || ''
           if (!mid) {
             setConfirmDeleteOpen(false)
-            closeActionPanel()
+            setActionMessageId(null)
+            setActionMessageText('')
+            setActionMessageCanRecall(false)
+            setActionMessageModeratorRecall(false)
             return
           }
           void (async () => {

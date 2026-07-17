@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import { LISTEN_TOGETHER_TOAST_MS } from '../components/discoverListen/ListenTogetherActionToast'
+import { persistFloatingOrbDismissed } from '../components/discoverListen/listenTogetherFloatingOrbDismiss'
 import type { ParsedLyricLine } from '../components/discoverListen/listenLyricParse'
 import type { ListenPlayMode } from '../components/discoverListen/listenPlayMode'
 
@@ -54,7 +55,7 @@ type MusicStoreState = {
   listenPlayMode: ListenPlayMode
   /** 悬浮球是否可见（离开听一听且有曲目时） */
   isFloatingOrbVisible: boolean
-  /** 用户从悬浮面板主动隐藏悬浮球（音乐仍播放；下次手动播歌再显示） */
+  /** 用户从悬浮面板主动隐藏悬浮球（音乐仍播放；持久化，直至再进听一听） */
   floatingOrbUserDismissed: boolean
   isInsideListenTogether: boolean
   progress: number
@@ -79,10 +80,12 @@ type MusicStoreState = {
   setInsideListenTogether: (inside: boolean) => void
   setPopoverOpen: (open: boolean) => void
   setOrbEdgeHidden: (hidden: boolean) => void
-  /** 隐藏悬浮球（不暂停/停止播放） */
+  /** 隐藏悬浮球（不暂停/停止播放），并持久化 */
   dismissFloatingOrb: () => void
-  /** 用户手动发起播放时恢复悬浮球 */
+  /** @deprecated 关闭后不再因切歌/播歌自动恢复；仅进听一听清除 */
   notifyUserPlaybackIntent: () => void
+  /** 启动时从 KV 灌入关闭状态 */
+  hydrateFloatingOrbDismissedFlag: (dismissed: boolean) => void
   setSyncListening: (state: SyncListeningState | null) => void
   setDesktopLyricOpen: (open: boolean) => void
   openDesktopLyricsKeepOrb: () => void
@@ -131,10 +134,19 @@ export const useMusicStore = create<MusicStoreState>((set, get) => ({
   setInsideListenTogether: (inside) => {
     const prev = get()
     if (prev.isInsideListenTogether === inside) return
-    set({
-      isInsideListenTogether: inside,
-      popoverOpen: inside ? false : prev.popoverOpen,
-    })
+    if (inside && prev.floatingOrbUserDismissed) {
+      set({
+        isInsideListenTogether: true,
+        floatingOrbUserDismissed: false,
+        popoverOpen: false,
+      })
+      void persistFloatingOrbDismissed(false)
+    } else {
+      set({
+        isInsideListenTogether: inside,
+        popoverOpen: inside ? false : prev.popoverOpen,
+      })
+    }
     get()._recomputeFloatingVisible()
   },
 
@@ -149,11 +161,15 @@ export const useMusicStore = create<MusicStoreState>((set, get) => ({
       orbEdgeHidden: false,
     })
     get()._recomputeFloatingVisible()
+    void persistFloatingOrbDismissed(true)
   },
 
   notifyUserPlaybackIntent: () => {
-    if (!get().floatingOrbUserDismissed) return
-    set({ floatingOrbUserDismissed: false })
+    // 主动关闭后不再因切歌/续播自动浮出；需进入听一听才能恢复
+  },
+
+  hydrateFloatingOrbDismissedFlag: (dismissed) => {
+    set({ floatingOrbUserDismissed: Boolean(dismissed) })
     get()._recomputeFloatingVisible()
   },
 

@@ -1,9 +1,22 @@
 import type { PlotItem, WorldBookAfterRevertEntry } from '../dating/types'
 import type { Character, WorldBook, WorldBookItem, WeChatChatMessage } from './types'
-import { buildEpilogueExtensionArchiveToneRules } from './epilogueExtensionToneRules'
+import {
+  buildEpilogueExtensionArchiveToneRules,
+  sanitizeEpilogueExtensionNewContent,
+} from './epilogueExtensionToneRules'
 
-/** 与 wechatChatAi 中约会合并记忆分隔符一致，用于从混合输出中切出 JSON 段 */
+/** 与 wechatChatAi 中约会合并记忆分隔符一致，用于从混合输出中切出记忆段（新 markup + 旧 JSON） */
+export const DATING_MEMORY_MARKUP_DELIMITER = '<<<DATING_UNIFIED_MEMORY>>>'
+/** @deprecated 旧 JSON 分隔符；切分时仍兼容 */
 export const DATING_MEMORY_JSON_DELIMITER = '<<<DATING_UNIFIED_MEMORY_JSON>>>'
+
+function findDatingMemoryDelimiterIndex(tail: string): number {
+  const markup = tail.indexOf(DATING_MEMORY_MARKUP_DELIMITER)
+  const json = tail.indexOf(DATING_MEMORY_JSON_DELIMITER)
+  if (markup < 0) return json
+  if (json < 0) return markup
+  return Math.min(markup, json)
+}
 
 export const WB_AFTER_PATCH_MARKER = '\n---WB_AFTER_PATCH---\n'
 
@@ -167,6 +180,7 @@ export function buildWorldBookAfterPatchOutputAppendix(): string {
 - **不要**为了凑数而改写；无变化则**不要**输出 ---WB_AFTER_PATCH--- 整段。
 - **不要**在此 JSON 中修改**序言介入**条目（数据字段 priority 为 before）。
 - newContent 长度建议不超过 ${MAX_ITEM_CONTENT_CHARS} 字；精简表述即可。
+- **禁止极端化**：勿写宿命、绝对排他、交手机示弱、日常顺从等偏执献身语；{{char}} 须保持独立个体。
 
 ${buildEpilogueExtensionArchiveToneRules()}
 ---------------------
@@ -202,7 +216,7 @@ function normalizePatch(raw: unknown): WorldBookAfterPatch | null {
   const o = raw as Record<string, unknown>
   const worldBookId = String(o.worldBookId ?? '').trim()
   const itemId = String(o.itemId ?? '').trim()
-  const newContent = String(o.newContent ?? '').trim()
+  const newContent = sanitizeEpilogueExtensionNewContent(String(o.newContent ?? '').trim())
   const characterId = o.characterId != null ? String(o.characterId).trim() : undefined
   if (!worldBookId || !itemId || !newContent) return null
   if (newContent.length > MAX_ITEM_CONTENT_CHARS) return null
@@ -239,7 +253,7 @@ export function extractWorldBookAfterPatchBlock(raw: string): { rest: string; pa
   const head = src.slice(0, idx)
   const tail = src.slice(idx + marker.length).trimStart()
 
-  const memPos = tail.indexOf(DATING_MEMORY_JSON_DELIMITER)
+  const memPos = findDatingMemoryDelimiterIndex(tail)
   const jsonSection = memPos >= 0 ? tail.slice(0, memPos) : tail
   const afterMemory = memPos >= 0 ? tail.slice(memPos) : ''
 
@@ -266,10 +280,15 @@ function patchItemContent(
     const next = String(nextContent ?? '')
     if (cur.trim() === next.trim()) return it
     const recordPrevious = opts?.recordPrevious !== false
+    const hadInitial = String(it.contentInitial ?? '').trim().length > 0
+    // 首次被改写且尚无出厂稿：把改写前正文记为最初尾声（兼容旧档）
+    const shouldSeedInitial =
+      it.priority === 'after' && !hadInitial && cur.trim().length > 0
     return {
       ...it,
       content: nextContent,
       ...(recordPrevious ? { contentPrevious: cur } : {}),
+      ...(shouldSeedInitial ? { contentInitial: cur } : {}),
       updatedAt: now,
     }
   })
@@ -294,7 +313,11 @@ export function applyWorldBookAfterPatchesToCharacter(
     const it = wb?.items?.find((i) => i.id === p.itemId)
     if (!wb || !it || it.priority !== 'after') continue
     if (String(it.content ?? '').trim() === String(p.newContent ?? '').trim()) continue
-    const nextItems = patchItemContent(wb.items, p.itemId, p.newContent)
+    const nextItems = patchItemContent(
+      wb.items,
+      p.itemId,
+      sanitizeEpilogueExtensionNewContent(p.newContent),
+    )
     worldBooks = worldBooks.map((w) => (w.id === wb!.id ? { ...w, items: nextItems } : w))
     changed = true
   }
@@ -470,6 +493,80 @@ export function revertWorldBookAfterUsingContentPrevious(character: Character): 
     }
   }
   if (!changed) return null
+  return {
+    ...character,
+    worldBooks,
+    updatedAt: Math.max(character.updatedAt ?? 0, Date.now()),
+  }
+}
+
+/** 统计：有出厂稿、且当前正文与出厂稿不同的尾声条目数 */
+export function countWorldBookAfterResettable(character: Character): number {
+  let n = 0
+  for (const wb of character.worldBooks ?? []) {
+    for (const it of wb.items ?? []) {
+      if (it.priority !== 'after') continue
+      const initial = String(it.contentInitial ?? '').trim()
+      if (!initial) continue
+      if (String(it.content ?? '').trim() === initial) continue
+      n += 1
+    }
+  }
+  return n
+}
+
+/**
+ * 一键将所有尾声延展条目恢复为 contentInitial（人设初次落定 / 首次补丁前快照）。
+ * 无出厂稿的条目跳过。恢复后仍保留 contentInitial；contentPrevious 记为重置前正文便于对照。
+ */
+export function resetWorldBookAfterToInitial(character: Character): Character | null {
+  const now = Date.now()
+  let changed = false
+  const worldBooks = (character.worldBooks ?? []).map((wb) => {
+    let itemsChanged = false
+    const nextItems = (wb.items ?? []).map((it) => {
+      if (it.priority !== 'after') return it
+      const initial = String(it.contentInitial ?? '')
+      if (!initial.trim()) return it
+      const cur = String(it.content ?? '')
+      if (cur.trim() === initial.trim()) return it
+      itemsChanged = true
+      return {
+        ...it,
+        contentPrevious: cur,
+        content: initial,
+        updatedAt: now,
+      }
+    })
+    if (!itemsChanged) return wb
+    changed = true
+    return { ...wb, items: nextItems }
+  })
+  if (!changed) return null
+  return {
+    ...character,
+    worldBooks,
+    updatedAt: Math.max(character.updatedAt ?? 0, now),
+  }
+}
+
+/** 单条尾声恢复为出厂稿 */
+export function resetWorldBookAfterItemToInitial(
+  character: Character,
+  worldBookId: string,
+  itemId: string,
+): Character | null {
+  const wb = (character.worldBooks ?? []).find((w) => w.id === worldBookId)
+  const it = wb?.items?.find((i) => i.id === itemId)
+  if (!wb || !it || it.priority !== 'after') return null
+  const initial = String(it.contentInitial ?? '')
+  if (!initial.trim()) return null
+  if (String(it.content ?? '').trim() === initial.trim()) return null
+  const nextItems = patchItemContent(wb.items ?? [], itemId, initial, { recordPrevious: true })
+  // patchItemContent 会再写 contentPrevious；保持 contentInitial 不变
+  const worldBooks = (character.worldBooks ?? []).map((w) =>
+    w.id === wb.id ? { ...w, items: nextItems } : w,
+  )
   return {
     ...character,
     worldBooks,

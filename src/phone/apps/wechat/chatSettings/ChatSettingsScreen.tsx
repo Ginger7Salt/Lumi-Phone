@@ -17,6 +17,7 @@ import {
   isRoundTriggerCustomized,
   VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT,
 } from '../wechatMediaSendFrequency'
+import { CommitOnReleaseRangeInput } from './CommitOnReleaseRangeInput'
 import { resolveProactiveMessageIntervalSeconds, hasProactiveMessageScheduleSaved } from '../proactivePrivateMessageTypes'
 import {
   drawProactiveVariableIntervalSeconds,
@@ -87,15 +88,23 @@ function RoundTriggerPercentControl({
   onChange: (percent: number) => void
   onResetDefault: () => void
 }) {
-  const display = displayRoundTriggerPercent(stored, 'voice')
-  const customized = isRoundTriggerCustomized(stored)
+  const committed = displayRoundTriggerPercent(stored, 'voice')
+  const customizedStored = isRoundTriggerCustomized(stored)
+  const [uiValue, setUiValue] = useState(committed)
+  const [dragging, setDragging] = useState(false)
+
+  useEffect(() => {
+    setUiValue(committed)
+  }, [committed])
+
+  const showCustom = dragging || customizedStored
 
   return (
     <div className="mt-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[14px] font-medium text-black">
-          {customized ? (
-            <span style={phoneNumStyle}>{display}%</span>
+          {showCustom ? (
+            <span style={phoneNumStyle}>{uiValue}%</span>
           ) : (
             <>
               系统默认约{' '}
@@ -103,7 +112,7 @@ function RoundTriggerPercentControl({
             </>
           )}
         </span>
-        {customized ? (
+        {customizedStored && !dragging ? (
           <button
             type="button"
             onClick={onResetDefault}
@@ -113,13 +122,14 @@ function RoundTriggerPercentControl({
           </button>
         ) : null}
       </div>
-      <input
-        type="range"
+      <CommitOnReleaseRangeInput
         min={0}
         max={100}
         step={1}
-        value={display}
-        onChange={(e) => onChange(Number(e.target.value))}
+        value={committed}
+        onDraftChange={setUiValue}
+        onDragStateChange={setDragging}
+        onCommit={onChange}
         className="mt-2 w-full accent-black"
         aria-label="语音消息每轮触发概率"
       />
@@ -273,6 +283,7 @@ export function ChatSettingsScreen({
       notifyEnabled: true,
       showThinkingChain: false,
       forwardHistoryCardEnabled: false,
+      pulseDmScreenshotEnabled: false,
       profileImageChangeEnabled: false,
       internetMemeLexiconEnabled: false,
       isDanmakuMode: false,
@@ -344,6 +355,7 @@ export function ChatSettingsScreen({
           | 'isDanmakuMode'
           | 'showThinkingChain'
           | 'forwardHistoryCardEnabled'
+          | 'pulseDmScreenshotEnabled'
           | 'profileImageChangeEnabled'
           | 'internetMemeLexiconEnabled'
           | 'chatBackground'
@@ -845,6 +857,20 @@ export function ChatSettingsScreen({
             <WxSwitch
               on={effective.forwardHistoryCardEnabled}
               onToggle={() => void patch({ forwardHistoryCardEnabled: !effective.forwardHistoryCardEnabled })}
+            />
+          </ListRow>
+          <ListRow borderBottom>
+            <div className="min-w-0 flex-1">
+              <span className="text-[16px] text-black">微博私信截图</span>
+              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                开启后角色可把「微博私信」对话合成截图发到本聊天（吃瓜/举证）；关闭则不注入协议，省 token。
+              </p>
+            </div>
+            <WxSwitch
+              on={effective.pulseDmScreenshotEnabled}
+              onToggle={() =>
+                void patch({ pulseDmScreenshotEnabled: !effective.pulseDmScreenshotEnabled })
+              }
             />
           </ListRow>
           <ListRow borderBottom>

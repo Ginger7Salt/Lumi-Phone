@@ -20,7 +20,10 @@ function isEditableFocusedInBar(bar: HTMLElement | null): boolean {
   if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
     return !active.disabled
   }
-  return !!active.closest('textarea, input:not([type=hidden]):not([disabled])')
+  if (active.isContentEditable) return true
+  return !!active.closest(
+    '[contenteditable="true"], textarea, input:not([type=hidden]):not([disabled])',
+  )
 }
 
 /**

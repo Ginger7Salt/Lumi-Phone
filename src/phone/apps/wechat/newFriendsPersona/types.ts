@@ -28,6 +28,11 @@ export type WorldBookItem = {
   updatedAt: number
   /** 上一次自动/补丁写库前的正文（仅保留上一版，供档案馆对照） */
   contentPrevious?: string
+  /**
+   * 尾声延展「出厂稿」：条目首次落定正文时写入，之后补丁/手改不覆盖。
+   * 用于一键回到最初关系快照（重开对话前重置）。
+   */
+  contentInitial?: string
   collapsed?: boolean
   /** 与正文中从左到右每个 `{{user}}` 一一对应 */
   userPlaceholderBindings?: WorldBookUserPlaceholderBinding[]
@@ -211,6 +216,8 @@ export type ChatConversationSettingsRow = {
   showThinkingChain: boolean
   /** 是否注入「伪造聊天记录卡片」能力协议（默认关） */
   forwardHistoryCardEnabled: boolean
+  /** 是否注入「微博私信截图」能力协议（默认关；开后角色可发私信 UI 截图到微信） */
+  pulseDmScreenshotEnabled: boolean
   /** 是否注入「换头像/朋友圈背景」能力协议（默认关） */
   profileImageChangeEnabled: boolean
   /** 是否注入「网络玩梗轻量词库」附录（默认关） */
@@ -450,8 +457,8 @@ export type GroupChatRow = {
   memberIds?: string[]
 }
 
-/** 长期记忆来源：私聊 / 群聊 / 约会关联 / 遇见临时邂逅 / 朋友圈刻录 */
-export type CharacterMemoryScope = 'private' | 'group' | 'linked' | 'meet' | 'moment'
+/** 长期记忆来源：私聊 / 群聊 / 约会关联 / 遇见临时邂逅 / 朋友圈刻录 / 微博广场刻录 */
+export type CharacterMemoryScope = 'private' | 'group' | 'linked' | 'meet' | 'moment' | 'pulse'
 
 /** 朋友圈记忆 UI 复原与侧写备份 */
 export type MomentMemoryPayload = {
@@ -477,6 +484,13 @@ export type MomentMemoryPayload = {
   privacyMode?: string
   /** 用户朋友圈：该条是否 @ 了当前观众角色 */
   mentionedViewer?: boolean
+  /**
+   * 剧情时序说明（如「发表于剧情日 2030年… 之后」）。
+   * 当剧情日已超前、且剧情推进的系统时间早于发帖墙钟时写入。
+   */
+  storyPublishLabel?: string
+  /** 系统落库时间（与 publishedAt 同为墙钟；有剧情锚定时常与展示文案分离） */
+  systemPublishedAt?: number
 }
 
 /** 朋友圈记忆在角色记忆库中的角色：发布者刻录 / 互动者侧写 / 用户动态观众 */
@@ -542,6 +556,50 @@ export type CharacterMemory = {
   momentLinkedInteractorCharIds?: string[]
   /** 用户朋友圈写入观众角色记忆库；不在记忆管理页展示 */
   momentUserAuthored?: boolean
+  /** memoryScope === 'pulse'：来源微博帖子 id */
+  pulseSourcePostId?: string
+  /** 微博记忆元数据（原文 / 热度 / 评论区快照） */
+  pulsePayload?: PulseMemoryPayload
+  /** 微博记忆角色：缺省为发布者（角色自己的帖） */
+  pulseMemoryRole?: 'publisher' | 'viewer'
+  /** 用户微博写入观众角色记忆库；不在记忆管理页展示 */
+  pulseUserAuthored?: boolean
+  /** 剧情日（故事内；记忆摘要卡片展示用） */
+  storyDay?: string
+  /** 剧情时段/时刻 */
+  storyTime?: string
+  /** 剧情时间展示文案（用户可见；系统落库时间不进此字段） */
+  storyTimeLabel?: string
+}
+
+/** 微博广场帖子记忆元数据 */
+export type PulseMemoryPayload = {
+  originalText: string
+  /** 微博发布时间（系统墙钟；剧情锚定后仍可保留作落库参照） */
+  publishedAt?: number
+  location?: string
+  imagesCount: number
+  /** 各张配图的中文画面描述（占位文案 / 生图依据） */
+  imageDescriptions?: string[]
+  likeCount: number
+  repostCount: number
+  commentCount: number
+  /** 评论区原文快照 */
+  interactionsSnapshot: string
+  trendingTopic?: string
+  /** 用户帖观众记忆：发布者展示名 */
+  publisherDisplayName?: string
+  /** 可见范围文案 */
+  visibilityLabel?: string
+  /** 正文是否提到该观众 */
+  mentionedViewer?: boolean
+  /**
+   * 剧情时序说明（如「发表于剧情日 2030年… 之后」）。
+   * 当剧情日已超前、且剧情推进的系统时间早于发帖墙钟时写入。
+   */
+  storyPublishLabel?: string
+  /** 系统落库时间（与 publishedAt 同为墙钟；有剧情锚定时常与展示文案分离） */
+  systemPublishedAt?: number
 }
 
 /** 全局记忆设置（IndexedDB `memorySettings`，主键 id 固定为 `default`） */
@@ -1075,8 +1133,17 @@ export type WeChatChatMessage = {
   /** 发起撤回的身份（群主/管理员代撤回他人消息为 `moderator`） */
   recalledBy?: 'player' | 'character' | 'moderator'
   timestamp: number
-  /** 本条消息在本机真实落库的公历毫秒（与 timestamp 剧情/展示时钟独立；缺省时回退 timestamp） */
+  /**
+   * 本条消息在本机真实落库的公历毫秒（后台时序专用，不对用户展示）。
+   * 缺省写入时由 idb 补 Date.now()。
+   */
   systemRecordedAt?: number
+  /** 剧情日（故事内公历/日锚，用户可见） */
+  storyDay?: string
+  /** 剧情时段/时刻（用户可见） */
+  storyTime?: string
+  /** 剧情时间展示文案（前端气泡/摘要优先用此字段） */
+  storyTimeLabel?: string
   isRead: boolean
   /** `${characterId}::${playerIdentityId}`，便于索引 */
   conversationKey: string

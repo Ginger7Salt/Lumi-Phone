@@ -88,6 +88,7 @@ const DIRECTED_DUAL_OUTPUT_APPENDIX = `
 - 禁止 Emoji；勿编造与记忆、人脉关系明显冲突的事实；
 - 写某角色台词前须对照 system 中该角色的【记忆参考】节（与微信私聊同源），禁止角色间串台；
 - 答主与羁绊围观均**不得认定或直呼提问者**；若想试探只能用含糊语气，禁止「就是你」类断言；
+- 禁止在回答/评论中写出 MBTI 四字母或「快乐修勾」「INFJ 清冷感」等类型学套话；
 ${DIRECTED_COMMENT_DRAMA_RULES}
 `.trim()
 

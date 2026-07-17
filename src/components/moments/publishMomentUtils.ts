@@ -76,6 +76,8 @@ export function characterPostToMomentItem(params: {
   postType: CharacterMomentPostType
   content: string
   imageUrls: string[]
+  /** 与 imageUrls 对齐的生图提示词 */
+  imagePrompts?: string[]
   location?: string
   privacy: CharacterMomentPrivacyDraft
   userContact?: MomentContactRef
@@ -114,6 +116,10 @@ export function characterPostToMomentItem(params: {
     authorAvatar: params.authorAvatar,
     content: params.content,
     images: params.imageUrls.length ? params.imageUrls : undefined,
+    imagePrompts:
+      params.imageUrls.length && params.imagePrompts?.length
+        ? params.imageUrls.map((_, i) => String(params.imagePrompts?.[i] ?? '').trim())
+        : undefined,
     attachedMusic: params.attachedMusic,
     location: params.location,
     timestamp: ts,
